@@ -8,9 +8,11 @@ dynamic = ["version"]
 dependencies = [
     "pycifrw",
     "numpy",
+    "pandas",
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.13"
 authors = [
+    {name = "Jaden Yon", email = "jyon7@gatech.edu"},
     {name = "Carlos Borca", email = "carlosborca@gmail.com"},
 ]
 description = "Automated calculation of crystal lattice energies with the many-body expansion"
@@ -34,8 +36,8 @@ crystalatte = "crystalatte:cli"
 psithonyzer = "psithonyzer:psz_process_args_and_run"
 
 [project.urls]
-"Homepage" = "https://github.com/carlosborca/CrystaLattE"
-"Bug Tracker" = "https://github.com/carlosborca/CrystaLattE/issues"
+"Homepage" = "https://github.com/j-yon/CrystaLattE"
+"Bug Tracker" = "https://github.com/j-yon/CrystaLattE/issues"
 
 [tool.setuptools.packages]
 find = {}
