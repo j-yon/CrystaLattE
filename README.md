@@ -1,12 +1,12 @@
-# <img align="center" src="https://github.com/carlosborca/CrystaLattE/blob/master/media/logo/Logo.png" height=260>
+# <img align="center" src="https://github.com/j-yon/CrystaLattE/blob/master/media/logo/Logo.png" height=260>
 
 Automated calculation of crystal lattice energies with the many-body expansion.
 
 | Category | Badges |
 |-------------|-------------|
-| **Status** | [![GitHub Actitus](https://img.shields.io/github/actions/workflow/status/carlosborca/CrystaLattE/CI.yaml?logo=github)](https://github.com/carlosborca/CrystaLattE/actions?query=workflow%3ACI) [![codecov](https://codecov.io/gh/carlosborca/CrystaLattE/branch/master/graph/badge.svg)](https://codecov.io/gh/carlosborca/CrystaLattE/branch/master) ![python](https://img.shields.io/badge/python-3.8+-blue.svg) |
-| **Foundation** | [![License](https://img.shields.io/github/license/carlosborca/CrystaLattE.svg)](https://opensource.org/licenses/LGPL-3.0) [![GitHub Top Languages](https://img.shields.io/github/languages/top/carlosborca/CrystaLattE)](https://github.com/carlosborca/CrystaLattE/) |
-| **GitHub Info** | [![GitHub Code Size](https://img.shields.io/github/languages/code-size/carlosborca/CrystaLattE)](https://github.com/carlosborca/CrystaLattE/) [![GitHub Commits per Month](https://img.shields.io/github/commit-activity/m/carlosborca/CrystaLattE)](https://github.com/carlosborca/CrystaLattE/) [![GitHub Last Commit](https://img.shields.io/github/last-commit/carlosborca/CrystaLattE)](https://github.com/carlosborca/CrystaLattE/) |
+| **Status** | [![GitHub Actitus](https://img.shields.io/github/actions/workflow/status/j-yon/CrystaLattE/CI.yaml?logo=github)](https://github.com/j-yon/CrystaLattE/actions?query=workflow%3ACI) [![codecov](https://codecov.io/gh/j-yon/CrystaLattE/branch/master/graph/badge.svg)](https://codecov.io/gh/j-yon/CrystaLattE/branch/master) ![python](https://img.shields.io/badge/python-3.8+-blue.svg) |
+| **Foundation** | [![License](https://img.shields.io/github/license/j-yon/CrystaLattE.svg)](https://opensource.org/licenses/LGPL-3.0) [![GitHub Top Languages](https://img.shields.io/github/languages/top/j-yon/CrystaLattE)](https://github.com/j-yon/CrystaLattE/) |
+| **GitHub Info** | [![GitHub Code Size](https://img.shields.io/github/languages/code-size/j-yon/CrystaLattE)](https://github.com/j-yon/CrystaLattE/) [![GitHub Commits per Month](https://img.shields.io/github/commit-activity/m/j-yon/CrystaLattE)](https://github.com/j-yon/CrystaLattE/) [![GitHub Last Commit](https://img.shields.io/github/last-commit/j-yon/CrystaLattE)](https://github.com/j-yon/CrystaLattE/) |
 | **Citation** | [![doi](https://img.shields.io/badge/DOI-10.1063%2F1.5120520-blue)](http://dx.doi.org/10.1063/1.5120520) |
 
 ## Overview
