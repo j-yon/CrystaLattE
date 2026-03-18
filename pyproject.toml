@@ -6,9 +6,9 @@ build-backend = "setuptools.build_meta"
 name = "crystalatte"
 dynamic = ["version"]
 dependencies = [
-    "pycifrw",
     "numpy",
     "pandas",
+    "pycifrw",
 ]
 requires-python = ">=3.13"
 authors = [
@@ -31,16 +31,12 @@ tests = [
     "pytest",
 ]
 
-[project.scripts]
-crystalatte = "crystalatte:cli"
-psithonyzer = "psithonyzer:psz_process_args_and_run"
-
 [project.urls]
 "Homepage" = "https://github.com/j-yon/CrystaLattE"
 "Bug Tracker" = "https://github.com/j-yon/CrystaLattE/issues"
 
 [tool.setuptools.packages]
-find = {}
+find = {where = ["src"]}
 
 [tool.coverage.run]
 omit = ["*/tests/*"]
