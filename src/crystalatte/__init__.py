@@ -4,5 +4,6 @@ TODO: fill this out
 """
 
 from .io.cif import from_cif
+from .work.generate import generate
 
-__all__ = ["from_cif"]
+__all__ = ["from_cif", "generate"]

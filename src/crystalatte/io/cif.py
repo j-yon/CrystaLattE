@@ -1,6 +1,7 @@
 import math
 import re
 from pathlib import Path
+from typing import Generator
 
 import numpy as np
 from CifFile import ReadCif
@@ -87,7 +88,7 @@ def read_cif(fNameIn):
     return data
 
 
-def from_cif(cif_file: str) -> list[tuple[Crystal, Monomer]]:
+def from_cif(cif_file: str) -> Generator[tuple[Crystal, Monomer], None, None]:
     """Takes the name of a CIF input file and the name of a .xyz output
     file, and optionally the number of replicas of the rectangular cell in
     each direction (A, B, and C) --- if those are not given, then it
@@ -126,8 +127,6 @@ def from_cif(cif_file: str) -> list[tuple[Crystal, Monomer]]:
         shape, or in the same shape as the unit cell.  We have been always
         using TRUE for this so far.
     """
-    crystals = []
-    reference_monomers = []
 
     # will check if file exists
     cif = ReadCif(cif_file)
@@ -140,9 +139,9 @@ def from_cif(cif_file: str) -> list[tuple[Crystal, Monomer]]:
         a = float(block["_cell_length_a"])
         b = float(block["_cell_length_b"])
         c = float(block["_cell_length_c"])
-        alpha = math.radians(float(block["_cell_angle_alpha"]))
-        beta = math.radians(float(block["_cell_angle_beta"]))
-        gamma = math.radians(float(block["_cell_angle_gamma"]))
+        alpha = float(block["_cell_angle_alpha"])
+        beta = float(block["_cell_angle_beta"])
+        gamma = float(block["_cell_angle_gamma"])
 
         # basic declarations
         space_group = SpaceGroup(int(block["_symmetry_int_tables_number"]))
@@ -154,9 +153,6 @@ def from_cif(cif_file: str) -> list[tuple[Crystal, Monomer]]:
             ]
         ).T
         asu = ASU(block["_atom_site_type_symbol"], coords)
-        # TODO: determine if ASU contains complete molecules, or if we need to use connectivity to identify them
-        # if more than one molecule, need to identify which one is the reference monomer (e.g. the one closest to the center of the unit cell)
-
         crystal = Crystal(a, b, c, alpha, beta, gamma, space_group, asu)
 
         # as a precaution, check that the volume of the unit cell is consistent
@@ -166,6 +162,4 @@ def from_cif(cif_file: str) -> list[tuple[Crystal, Monomer]]:
                 f"Discordant unit cell volumes:\nDeclared in CIF: {volume:.2f} A^3\nCalculated from primitive vectors: {crystal.volume:.2f} A^3"
             )
 
-        crystals.append(crystal)
-
-    return list(zip(crystals, reference_monomers))
+        yield crystal, crystal.get_reference()

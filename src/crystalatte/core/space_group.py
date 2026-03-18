@@ -5,7 +5,7 @@ from pathlib import Path
 from enum import Enum
 import json
 
-from .sym_ops import SymOp
+from .sym_ops import SymOp, SymOpList
 
 conventions: Final = ["Hermann-Mauguin", "Schoenflies", "PDB", "Hall", "short"]
 
@@ -37,7 +37,7 @@ class LatticeSystem(Enum):
 @dataclass
 class SpaceGroup:
     _registry: ClassVar[dict[int, SpaceGroup]] = {}
-    _data: ClassVar[list[dict]] = []
+    _data: ClassVar[dict[str, dict]] = {}
 
     def __new__(cls, number: int) -> SpaceGroup:
         """Create a SpaceGroup instance from a space group number."""
@@ -52,14 +52,14 @@ class SpaceGroup:
         if hasattr(self, "_initialized"):
             return  # Avoid re-initialization
 
-        if SpaceGroup._data == []:
+        if SpaceGroup._data == {}:
             SpaceGroup._load_data()
 
         # TODO: turn this back to dict, will have multiple entries for some space groups
-        if number < 1 or number > len(SpaceGroup._data):
+        if str(number) not in SpaceGroup._data.keys():
             raise ValueError(f"Space group number {number} not found in data.")
 
-        data = SpaceGroup._data[number - 1]
+        data = SpaceGroup._data[str(number)]
 
         self._number = data["number"]
         self._symbol = data["symbol"]
