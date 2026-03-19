@@ -21,6 +21,28 @@
       "gamma": null
     }
   },
+  "4": {
+    "number": 4,
+    "symbol": {
+      "Hermann-Mauguin": "P 21",
+      "Schoenflies": "C2^2",
+      "PDB": "P 21",
+      "Hall": " P 21",
+      "short": "P21"
+    },
+    "point_group": "1",
+    "crystal_system": "monoclinic",
+    "lattice_system": "monoclinic",
+    "sym_ops": ["x,y,z", "-x,y+1/2,-z"],
+    "lattice_constraints": {
+      "a": null,
+      "b": null,
+      "c": null,
+      "alpha": 90,
+      "beta": null,
+      "gamma": 90
+    }
+  },
   "61": {
     "number": 61,
     "symbol": {
