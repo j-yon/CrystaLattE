@@ -1,6 +1,4 @@
-import math
 import re
-from pathlib import Path
 from typing import Generator
 
 import numpy as np
@@ -152,7 +150,16 @@ def from_cif(cif_file: str) -> Generator[tuple[Crystal, Monomer], None, None]:
                 block["_atom_site_fract_z"],
             ]
         ).T
-        asu = ASU(block["_atom_site_type_symbol"], coords)
+        if "_atom_site_type_symbol" in block:
+            asu = ASU(block["_atom_site_type_symbol"], coords)
+        elif "_atom_site_label" in block:
+            labels = block["_atom_site_label"]
+            symbols = [re.sub(r"[\d\(\)]", "", label) for label in labels]
+            asu = ASU(symbols, coords)
+        else:
+            raise ValueError(
+                "CIF file must contain either _atom_site_type_symbol or _atom_site_label to determine atomic symbols."
+            )
         crystal = Crystal(a, b, c, alpha, beta, gamma, space_group, asu)
 
         # as a precaution, check that the volume of the unit cell is consistent
