@@ -146,6 +146,15 @@ class SymOp:
 
         return symop
 
+    def translate(self, translation: NDArray) -> SymOp:
+        """Return a new SymOp with the same rotation but translated by the given vector
+
+        :param translation: A 3D vector in fractional coordinates to translate the symmetry operation by
+        :type translation: NDArray
+        """
+        new_tr = self._tr + translation
+        return SymOp.from_components(self._rot, new_tr, self._op)
+
     def compose(self, other: SymOp) -> SymOp:
         """Return the composition of this symmetry operation with another: self * other
 
@@ -192,7 +201,7 @@ class SymOp:
         return hash(self._augment.tobytes())
 
     def __repr__(self) -> str:
-        return f"SymOp(op='{self._op}', augment=\n{self._augment})"
+        return f"SymOp(op='{self._op}', rot='{self._rot}', tr='{self._tr}', augment=\n{self._augment})"
 
 
 @dataclass
@@ -228,21 +237,41 @@ class SymOpList:
     def multiplicity(self, value: int):
         self._multiplicity = value
 
+    @property
+    def rotations(self) -> list[NDArray[np.int8]]:
+        """Return a list of the rotational components of the symmetry operations."""
+        return [sym_op.rot for sym_op in self._sym_ops]
+
+    @property
+    def translations(self) -> list[NDArray]:
+        """Return a list of the translational components of the symmetry operations."""
+        return [sym_op.tr for sym_op in self._sym_ops]
+
     def translate_list(
         self, translation: NDArray, exclude_reference: bool = False
     ) -> SymOpList:
         """Return a new SymOpList with all symmetry operations translated by the given vector
 
-        :param translation: A 3D vector in fractional coordinates to translate all symmetry operations by
+        :param translation: A 3D matrix of translations in fractional coordinates to translate all symmetry operations by
         :type translation: NDArray
         """
         new_sym_ops = []
-        for i, sym_op in enumerate(self._sym_ops):
-            if exclude_reference and sym_op == SymOp.identity() and i == 0:
-                new_sym_ops.append(sym_op)
-                continue
+        if exclude_reference and translation.shape[0] == len(self._sym_ops):
+            translation[0] = np.zeros(3)
+        elif exclude_reference and translation.shape[0] == len(self._sym_ops) - 1:
+            translation = np.vstack((np.zeros(3), translation))
+        elif not exclude_reference and translation.shape[0] != len(self._sym_ops):
+            print(translation)
+            raise ValueError(
+                "Translation matrix must have the same number of rows as the number of symmetry operations, or one row for all operations."
+            )
 
-            new_tr = sym_op.tr + translation
+        for i, sym_op in enumerate(self._sym_ops):
+            # if exclude_reference and sym_op == SymOp.identity() and i == 0:
+            #     new_sym_ops.append(sym_op)
+            #     continue
+
+            new_tr = sym_op.tr + translation[i]
             new_sym_op = SymOp.from_components(sym_op.rot, new_tr, sym_op.op)
             new_sym_ops.append(new_sym_op)
 

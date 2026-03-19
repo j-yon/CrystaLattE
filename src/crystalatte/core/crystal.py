@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
-from time import time
-import itertools
+from itertools import product
 
-import numpy as np
 import qcelemental as qcel
+import numpy as np
 from numpy.typing import NDArray
+from scipy.spatial import cKDTree
 
-from .sym_ops import SymOp
 from .space_group import SpaceGroup
 from .multimer import ASU, Monomer
 
@@ -117,6 +115,16 @@ class Crystal:
         # TODO: check lattice parameters and other stuff
 
     @property
+    def lattice_parameters(self) -> tuple[float, float, float, float, float, float]:
+        """Return lattice parameters (a, b, c, alpha, beta, gamma)."""
+        return self._a, self._b, self._c, self._alpha, self._beta, self._gamma
+
+    @property
+    def lattice_vectors(self) -> NDArray[np.float64]:
+        """Return lattice vectors as a 3x3 array (columns are a, b, c)."""
+        return self._frac_to_cart
+
+    @property
     def volume(self) -> float:
         """Calculate unit cell volume in cubic Angstroms."""
         return abs(np.linalg.det(self._frac_to_cart))
@@ -172,7 +180,7 @@ class Crystal:
         self,
         symbols: list[str],
         cart_coords: NDArray[np.float64],
-        bond_tolerance: float = 0.4,
+        bond_tolerance: float = 1.2,
     ) -> list[list[int]]:
         """Build adjacency list for atoms based on covalent bonding.
 
@@ -200,7 +208,7 @@ class Crystal:
         for i in range(n_atoms):
             for j in range(i + 1, n_atoms):
                 dist = np.linalg.norm(cart_coords[i] - cart_coords[j])
-                max_bond = radii[i] + radii[j] + bond_tolerance
+                max_bond = (radii[i] + radii[j]) * bond_tolerance
                 if dist < max_bond:
                     adj[i].append(j)
                     adj[j].append(i)
@@ -259,185 +267,125 @@ class Crystal:
 
         return distm, r_min
 
-    def _bfs(self, geom, elems, bfs_thresh):
-        """Linear scaling breadth first search for partitioning a set of atoms into covalently bound molecules"""
+    def _bfs(self, coords: NDArray, elements: list[str], cell: NDArray, tol=1.2):
+        coords = np.asarray(coords)
+        # cell = np.asarray(cell)
+        # inv_cell = np.linalg.inv(cell)
 
-        natom = geom.shape[0]
+        N = len(coords)
+        radii = np.array([self._get_covalent_radius(elem) for elem in elements])
 
-        # van der waals radii of each atom type
-        radii = np.array([qcel.covalentradii.get(elem) for elem in elems])
+        # --- KD-tree ---
+        tree = cKDTree(coords)
         max_radius = np.max(radii)
+        global_cutoff = tol * (2 * max_radius)
 
-        # this is the max distance between any two covalently bound atoms
-        blocksize = int(np.ceil(2.0 * bfs_thresh * max_radius))
+        pairs = tree.query_pairs(r=global_cutoff)
 
-        # map each atom to a "cube" with dimension blocksize ** 3
-        geom_floor = np.floor(geom).astype(int)
-        atomkeys = [
-            (pos[0], pos[1], pos[2])
-            for pos in geom_floor - (np.mod(geom_floor, blocksize))
-        ]
-        atomkey_to_atoms = dict.fromkeys(atomkeys)
+        adjacency = [[] for _ in range(N)]
 
-        for k, _ in atomkey_to_atoms.items():
-            atomkey_to_atoms[k] = []
+        # --- Build graph ---
+        for i, j in pairs:
+            cutoff = tol * (radii[i] + radii[j])
+            if np.linalg.norm(coords[i] - coords[j]) <= cutoff:
+                adjacency[i].append(j)
+                adjacency[j].append(i)
 
-        for atomind, atomkey in enumerate(atomkeys):
-            atomkey_to_atoms[atomkey].append(atomind)
-
-        # list of covalently bonded neighbors for each atom
-        neighborlist = [[] for atomind in range(natom)]
-
-        for atomkey, atoms in atomkey_to_atoms.items():
-            # within the loop, we'll find neighbors of the atoms in "cube" atomkey
-            # neighbors have to be in the same cube, or one cube over
-            otherkeys = []
-            for keyx in [atomkey[0] - blocksize, atomkey[0], atomkey[0] + blocksize]:
-                for keyy in [
-                    atomkey[1] - blocksize,
-                    atomkey[1],
-                    atomkey[1] + blocksize,
-                ]:
-                    for keyz in [
-                        atomkey[2] - blocksize,
-                        atomkey[2],
-                        atomkey[2] + blocksize,
-                    ]:
-                        otherkey = (keyx, keyy, keyz)
-                        if otherkey in atomkey_to_atoms:
-                            otherkeys.append(otherkey)
-
-            # the atoms in either our cube or the neighboring cube
-            otheratoms = list(
-                itertools.chain(*[atomkey_to_atoms[otherkey] for otherkey in otherkeys])
-            )
-
-            geom_atoms = geom[atoms]
-            geom_others = geom[otheratoms]
-
-            rad_atoms = radii[atoms]
-            rad_others = radii[otheratoms]
-
-            dist, _ = self._distance_matrix(geom_atoms, geom_others)
-            bound = 1.2 * (rad_atoms.reshape(-1, 1) + rad_others.reshape(1, -1))
-
-            # list of all bonds involving atoms from our cube
-            bond_sources, bond_targets = np.where(dist < bound)
-
-            # update the neighbor list with bonds
-            for bond_ind, bond_source in enumerate(bond_sources):
-                bond_target = bond_targets[bond_ind]
-                atomind = atoms[bond_source]
-                otheratomind = otheratoms[bond_target]
-                atomkey = atomkeys[atomind]
-                if otheratomind != atomind:
-                    neighborlist[atomind].append(otheratomind)
-
-        # now that we have the neighborlist, we need to perform BFS to get fragments
-
-        # has the atom already been assigned to a fragment?
-        in_fragment = [False] * natom
-
-        # list of complete fragments
+        # --- BFS with shift propagation ---
         fragments = []
+        visited = np.zeros(N, dtype=bool)
 
-        # this index traverses all atoms, looking for atoms not in a fragment
-        outerind = 0
-        while outerind < natom:
-            # atom outerind already in a fragment
-            if in_fragment[outerind]:
-                outerind += 1
+        for start in range(N):
+            if visited[start]:
                 continue
 
-            # make a new fragment, containing outerind
-            fragment = [outerind]
+            # BFS
+            stack = [start]
+            visited[start] = True
+            fragment = [start]
 
-            # this indexes traverses neighbors of outerind, adding them to this fragment
-            innerind = 0
+            while stack:
+                node = stack.pop()
+                for neighbor in adjacency[node]:
+                    if not visited[neighbor]:
+                        visited[neighbor] = True
+                        stack.append(neighbor)
+                        fragment.append(neighbor)
 
-            while innerind < len(fragment):
-                # we've already added the neighbor to this fragment
-                if in_fragment[fragment[innerind]]:
-                    innerind += 1
-                    continue
-
-                in_fragment[fragment[innerind]] = True
-                fragment.extend(neighborlist[fragment[innerind]])
-                innerind += 1
-
-            fragment = sorted(set(fragment))
             fragments.append(fragment)
-            outerind += 1
 
         return fragments
 
-    def get_reference(self, tol: float = 0.1) -> Monomer:
-        """Identify a reference monomer in the crystal by finding the connected component of atoms closest to the center of the unit cell (0.5, 0.5, 0.5) in fractional coordinates."""
+    def get_reference(self, tol: float = 1.2) -> Monomer:
+        """Identify a reference monomer in the crystal by finding the connected component of atoms closest to the origin"""
         all_symbols = []
         all_frac = []
-        all_cart = []
-
-        # Generate atoms in a 3x3x3 supercell to capture molecules that cross unit cell boundaries
-        for di in range(-1, 2):
-            for dj in range(-1, 2):
-                for dk in range(-1, 2):
-                    translation = np.array([float(di), float(dj), float(dk)])
-                    for symop in self._space_group.sym_ops:
-                        for sym, frac in zip(self._asu.atoms, self._asu.positions):
-                            new_frac = symop.apply(frac) + translation
-                            new_cart = self.to_cartesian(new_frac)
-                            all_symbols.append(sym)
-                            all_frac.append(new_frac)
-                            all_cart.append(new_cart)
+        for d in product(range(-1, 2), repeat=3):
+            translation = np.array(d)
+            for i, symop in enumerate(self._space_group.sym_ops):
+                for atom, pos in zip(self._asu.atoms, self._asu.positions):
+                    new_pos = symop.apply(pos) + translation
+                    all_symbols.append(atom)
+                    all_frac.append(new_pos)
 
         all_frac = np.array(all_frac)
-        all_cart = np.array(all_cart)
 
-        # Remove duplicate atoms (same position)
-        unique_indices = []
-        for i in range(len(all_symbols)):
-            is_dup = False
-            for j in unique_indices:
-                if np.linalg.norm(all_cart[i] - all_cart[j]) < 0.01:
-                    is_dup = True
-                    break
-            if not is_dup:
-                unique_indices.append(i)
+        unique_symbols = []
+        unique_frac = []
+        for symbol, frac in zip(all_symbols, all_frac):
+            if any(np.abs(frac) > 2.0):
+                continue
 
-        symbols = [all_symbols[i] for i in unique_indices]
-        frac_coords = all_frac[unique_indices]
-        cart_coords = all_cart[unique_indices]
+            if not any(np.linalg.norm(frac - uf) < 1e-3 for uf in unique_frac):
+                unique_frac.append(frac)
+                unique_symbols.append(symbol)
 
-        # Build bond graph and find molecules
-        adj = self._build_bond_graph(symbols, cart_coords, tol)
-        components = self._find_connected_components(adj)
+        unique_frac = np.array(unique_frac)
+        unique_cart = self.to_cartesian(unique_frac)
 
-        # TODO: improve bfs algorithm
-        # components = self._bfs(frac_coords, symbols, tol)
+        components = self._bfs(unique_cart, unique_symbols, self.lattice_vectors, tol)
+
+        # NOTE: always assumes a full molecule is formed (which should be true)
+        mol_len = max(len(c) for c in components)
 
         min_d = np.inf
-        close_idx = 0
+        ref_idx = 0
         for i, component in enumerate(components):
-            mol_symbols = [symbols[j] for j in component]
-            mol_frac = frac_coords[component]
-            mol_cart = cart_coords[component]
-            centroid_frac = np.mean(mol_frac, axis=0)
-            centroid_cart = np.mean(mol_cart, axis=0)
+            if len(component) < mol_len:
+                continue
 
-            # Check if centroid is new closest to center (0.5, 0.5, 0.5)
-            curr_d = np.linalg.norm(centroid_frac - np.array([0.5, 0.5, 0.5]))
+            mol_frac = unique_frac[component]
+
+            # needed for mass-accurate CoM
+            masses = np.array(
+                [
+                    qcel.periodictable.to_mass(sym)
+                    for sym in [unique_symbols[j] for j in component]
+                ]
+            )
+            centroid_frac = np.average(mol_frac, axis=0, weights=masses)
+
+            # Check if centroid is new closest to origin
+            curr_d = np.linalg.norm(centroid_frac)
             if curr_d < min_d:
                 min_d = curr_d
-                close_idx = i
+                ref_idx = i
+
+        ref_component = components[ref_idx]
+        masses = np.array(
+            [
+                qcel.periodictable.to_mass(sym)
+                for sym in [unique_symbols[j] for j in ref_component]
+            ]
+        )
 
         # create Monomer from closest molecule
-        ref_component = components[close_idx]
         monomer = Monomer(
-            symbols=[symbols[j] for j in ref_component],
-            frac_coords=frac_coords[ref_component],
-            cart_coords=cart_coords[ref_component],
-            centroid_frac=np.mean(frac_coords[ref_component], axis=0),
-            centroid_cart=np.mean(cart_coords[ref_component], axis=0),
+            [unique_symbols[j] for j in ref_component],
+            unique_frac[ref_component],
+            unique_cart[ref_component],
+            np.average(unique_frac, axis=0, weights=masses),
+            np.average(unique_cart, axis=0, weights=masses),
         )
 
         return monomer

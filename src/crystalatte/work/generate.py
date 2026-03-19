@@ -1,6 +1,7 @@
-from itertools import combinations, combinations_with_replacement, product
+from itertools import combinations, product
 import numpy as np
-from copy import deepcopy
+from numpy.typing import NDArray
+import qcelemental as qcel
 
 from ..core.crystal import Crystal
 from ..core.multimer import Monomer, Multimer
@@ -24,7 +25,9 @@ def _is_bijection(g_N: SymOpList, h_N: SymOpList) -> bool:
     return bijection
 
 
-def _generate_central(crystal: Crystal, N: int) -> list[SymOpList]:
+def _generate_central(
+    crystal: Crystal, N: int
+) -> tuple[list[SymOpList], list[SymOpList]]:
     # generate all combinations of N-1 symmetry operations from the space group
     symop_lists = combinations(crystal._space_group.sym_ops, N - 1)
     symop_lists = [
@@ -32,67 +35,84 @@ def _generate_central(crystal: Crystal, N: int) -> list[SymOpList]:
         for symop_list in symop_lists
     ]
 
-    # check for duplicates in each SymOpList
-    # for symop_list in symop_lists:
-    #     if len(set(symop_list)) != len(symop_list):
-    #         symop_lists.remove(symop_list)
+    combos = combinations(symop_lists, 2)
+    duplicates = []
+    for g_N, h_N in combos:
+        if _is_bijection(g_N, h_N):
+            symop_lists.remove(h_N)
+            duplicates.append(h_N)
+            g_N.multiplicity += 1
 
-    unique = []
-    for g_N, h_N in combinations(symop_lists, 2):
-        # determine ordering of g_N and h_N for comparison, so that we always compare the new multimer to the representative
-        if g_N in unique:
-            # if g_N is already in the unique list, it should be the representative
-            rep = g_N
-            new = h_N
-        else:
-            # if h_N is already in the unique list, it should be the representative
-            # if neither, representative does not matter, so just pick one
-            rep = h_N
-            new = g_N
-
-        if rep not in unique:
-            unique.append(rep)
-
-        if not _is_bijection(rep, new):
-            if new not in unique:
-                unique.append(new)
-        else:
-            # print(f"Found bijection between:\n {rep} \nand\n {new}")
-            rep.multiplicity += 1
-
-    return unique
+    print(
+        f"Found {len(duplicates)} equivalent multimers from central unit cell search."
+    )
+    return symop_lists, duplicates
 
 
 def _generate_neighbors(
     crystal: Crystal,
-    symop_list: list[SymOpList],
-) -> list[SymOpList]:
-    directions = product([-1, 0, 1], repeat=3)
-
-    unique = []
-    for g_N, h_N in combinations(symop_list, 2):
-        for d in combinations(directions, 2):
-            rep = max(g_N, h_N, key=lambda x: x.multiplicity)
-            new = min(g_N, h_N, key=lambda x: x.multiplicity)
-
-            rep_t = rep.translate_list(
-                np.array(d[0], dtype=np.float64), exclude_reference=True
-            )
-            new_t = new.translate_list(
-                np.array(d[1], dtype=np.float64), exclude_reference=True
+    symop_lists: list[SymOpList],
+    N: int,
+) -> tuple[list[SymOpList], list[SymOpList]]:
+    # add translation to all symop lists and check for bijections with other symop lists
+    translated = []
+    for g_N in symop_lists:
+        for d in product(product([-1, 0, 1], repeat=3), repeat=N - 1):
+            g_t = g_N.translate_list(
+                np.array(d, dtype=np.float64), exclude_reference=True
             )
 
-            if rep_t not in unique:
-                unique.append(rep_t)
+            translated.append(g_t)
 
-            if not _is_bijection(rep_t, new_t):
-                if new_t not in unique:
-                    unique.append(new_t)
-            else:
-                # print(f"Found bijection between:\n {rep_t} \nand\n {new_t}")
-                rep_t.multiplicity += 1
+    duplicates = []
+    for g_t, h_t in combinations(translated, 2):
+        if _is_bijection(g_t, h_t):
+            translated.remove(h_t)
+            duplicates.append(h_t)
+            g_t.multiplicity += 1
 
-    return unique
+    print(
+        f"Found {len(duplicates)} equivalent multimers from neighboring unit cell search."
+    )
+    return translated, duplicates
+
+
+def _is_multiple_translation(
+    rot: list[NDArray], tr: NDArray, neighbor: SymOpList
+) -> bool:
+    for rot_i, rot_neighbor in zip(rot, neighbor.rotations):
+        if not all(
+            np.array_equal(rot_i, rot_neighbor_i)
+            for rot_i, rot_neighbor_i in zip(rot, neighbor.rotations)
+        ):
+            return False
+
+    for tr_i, tr_neighbor in zip(tr, neighbor.translations):
+        # only check nonzero translation components to avoid division by zero
+        nonzero_i = np.abs(tr_i) > 1e-6
+        nonzero_n = np.abs(tr_neighbor) > 1e-6
+
+        # if the nonzero components are different, they can't be multiples
+        if not np.array_equal(nonzero_i, nonzero_n):
+            return False
+
+        # if there are no nonzero components, then the translations are effectively the same and we can skip the ratio check
+        if not np.any(nonzero_i):
+            continue
+
+        # check to see if all ratios are equivalent
+        if not np.allclose(
+            tr_i[nonzero_i] / tr_neighbor[nonzero_n],
+            tr_i[nonzero_i][0] / tr_neighbor[nonzero_n][0],
+            1e-6,
+        ):
+            return False
+
+        # ratios are equivalent, but if they are negative then the translations are in opposite directions and can't be multiples
+        if tr_i[nonzero_i][0] / tr_neighbor[nonzero_n][0] < 0:
+            return False
+
+    return True
 
 
 def generate(crystal: Crystal, monomer: Monomer, N: int, R: float) -> list[Multimer]:
@@ -117,12 +137,65 @@ def generate(crystal: Crystal, monomer: Monomer, N: int, R: float) -> list[Multi
     """
 
     # first identify equivalencies in the central unit cell and neighboring cells
-    unique = _generate_central(crystal, N)
-    unique = _generate_neighbors(crystal, unique)
+    unique_central, duplicate_central = _generate_central(crystal, N)
+    unique_neighbors, duplicate_neighbors = _generate_neighbors(
+        crystal, unique_central, N
+    )
 
-    # propagate outwards, actually creating multimers
+    # given cell dimensions and R, calculate how far you have to go in each direction to find all monomers within R of the reference monomer
+    # this is a loose overestimate, but is further pruned once multimers are formed
+    cutoff = [1] * 3
+    a, b, c, _, _, _ = crystal.lattice_parameters
+    for i, v in enumerate((a, b, c)):
+        if v > 0:
+            cutoff[i] = max(cutoff[i], int(np.ceil(R / v)))
+
+    # finally, generate all translations of the unique central unit cell multimers within the cutoff
+    # using previous neighbor translations to determine further equivalencies
+    final_unique = []
+    for g_N in unique_central:
+        for d in product(
+            product(range(-max(cutoff), max(cutoff) + 1), repeat=3), repeat=N - 1
+        ):
+            # TODO: avoid this check by only generating translations within cutoff in the first place
+            outside = False
+            for d_i in d:
+                if any(abs(d_i_j) > cutoff_j for d_i_j, cutoff_j in zip(d_i, cutoff)):
+                    outside = True
+                    break
+
+            if outside:
+                continue
+            d = np.array(d, dtype=np.float64)
+            d = np.insert(d, 0, [0, 0, 0], axis=0)
+
+            # now check if translations are a multiple of a duplicate neighbor translation and if rotations are equal, if so skip
+            if any(
+                _is_multiple_translation(
+                    g_N.rotations,
+                    d,
+                    duplicate_neighbor,
+                )
+                for duplicate_neighbor in duplicate_neighbors
+            ):
+                continue
+
+            g_T = g_N.translate_list(d)
+            for neighbor in unique_neighbors:
+                if _is_multiple_translation(g_T.rotations, d, neighbor):
+                    g_T.multiplicity = max(g_T.multiplicity, neighbor.multiplicity)
+                    break
+
+            final_unique.append(g_T)
+
+    # actually create multimers to return
     multimers = []
-    for g_N in unique:
+    masses = np.array([qcel.periodictable.to_mass(sym) for sym in monomer.symbols])
+    for i, g_N in enumerate(final_unique):
+        # if there are any monomers with identical symops, skip multimer (multiple identities)
+        if len(set(g_N)) != len(g_N):
+            continue
+
         # create multimers in current SymOpList
         mons = []
 
@@ -130,21 +203,23 @@ def generate(crystal: Crystal, monomer: Monomer, N: int, R: float) -> list[Multi
         for g in g_N:
             mon_g_frac = g.apply(monomer.frac_coords)
             mon_g_cart = crystal.to_cartesian(mon_g_frac)
-            com_g_frac = np.mean(mon_g_frac, axis=0)
-            com_g_cart = np.mean(mon_g_cart, axis=0)
+            com_g_frac = np.average(mon_g_frac, axis=0, weights=masses)
+            com_g_cart = crystal.to_cartesian(com_g_frac)
 
-            # check if mon_g is within R of the reference monomer
+            # check if mon_g is within R of the reference monomer based on center of mass distance
+            # TODO: make checking available for closest contact as well
             dist = np.linalg.norm(com_g_cart - monomer.centroid_cart)
             if dist > R:
                 bounded = False
                 break
 
             mon_g = Monomer(
-                symbols=monomer.symbols,
-                frac_coords=mon_g_frac,
-                cart_coords=mon_g_cart,
-                centroid_frac=com_g_frac,
-                centroid_cart=com_g_cart,
+                monomer.symbols,
+                mon_g_frac,
+                mon_g_cart,
+                com_g_frac,
+                com_g_cart,
+                g,
             )
 
             mons.append(mon_g)
@@ -152,14 +227,11 @@ def generate(crystal: Crystal, monomer: Monomer, N: int, R: float) -> list[Multi
         if not bounded:
             continue
 
-        # sanity check, make sure no overlapping monomers in any of [mons]
-        if any(
-            np.linalg.norm(m1.centroid_cart - m2.centroid_cart) < 1.0
-            for m1, m2 in combinations(mons, 2)
-        ):
-            continue
-
         # if we made it here, we have a valid multimer
         multimers.append(Multimer(mons, g_N.multiplicity))
+
+        if len(multimers) == 1:
+            print(multimers[-1].monomers[-1].symop)
+            print(multimers[-1].monomers[-1].cart_coords)
 
     return multimers
