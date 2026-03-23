@@ -105,6 +105,10 @@ class Monomer:
             geometry=cart_bohr.flatten(),
         )
 
+    def __repr__(self) -> str:
+        """Return a string representation of the monomer."""
+        return f"Monomer(symbols={self._symbols}, centroid_cart={self._centroid_cart}, SymOp={self._symop})"
+
 
 @dataclass
 class Multimer:
@@ -158,35 +162,33 @@ class Multimer:
         return self._geometric_mean
 
     def to_molecule(self) -> qcel.models.Molecule:
-        """Convert dimer to QCElemental Molecule object."""
+        """Convert multimer to QCElemental Molecule object."""
         symbols = [monomer._symbols for monomer in self._monomers]
         coords = [monomer._cart_coords for monomer in self._monomers]
+        symbols = np.array(symbols)
         coords = np.vstack(coords)
-        cart_bohr = coords / qcel.constants.bohr2angstroms
 
-        # TODO: does this return a fragmented molecule?
+        fragments = []
+        cnt = 0
+        for monomer in self._monomers:
+            fragments.append(list(range(cnt, cnt + len(monomer._symbols))))
+            cnt += len(monomer._symbols)
+
+        cart_bohr = coords / qcel.constants.bohr2angstroms
         return qcel.models.Molecule(
-            symbols=symbols,
+            symbols=symbols.flatten(),
             geometry=cart_bohr.flatten(),
+            fragments=fragments,
         )
 
-    def get_molecules(self) -> list[qcel.models.Molecule]:
+    def to_monomer_molecules(self) -> list[qcel.models.Molecule]:
         """Return the monomers as separate QCElemental Molecules."""
         return [monomer.to_molecule() for monomer in self._monomers]
 
-    def to_qcel_molecule(self) -> qcel.models.Molecule:
-        """Convert the multimer to a single QCElemental Molecule object."""
-        symbols = []
-        coords = []
+    def __repr__(self) -> str:
+        """Return a string representation of the multimer."""
+        return f"Multimer(Monomers={self._monomers}, multiplicity={self._multiplicity}, geometric_mean={self._geometric_mean:.2f} Å)"
 
-        for monomer in self._monomers:
-            symbols.extend(monomer._symbols)
-            coords.append(monomer._cart_coords)
-        coords = np.vstack(coords)
-        print(coords)
-        cart_bohr = coords / qcel.constants.bohr2angstroms
 
-        return qcel.models.Molecule(
-            symbols=symbols,
-            geometry=cart_bohr.flatten(),
-        )
+if __name__ == "__main__":
+    pass

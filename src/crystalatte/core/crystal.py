@@ -92,7 +92,7 @@ class Crystal:
         )
 
         # Cartesian to fractional matrix
-        self._cart_to_frac = np.linalg.inv(self._frac_to_cart)
+        self._cart_to_frac = np.linalg.inv(self._frac_to_cart)  # type: ignore
 
     def _validate_crystal(self):
         """Things to validate
@@ -113,6 +113,11 @@ class Crystal:
         asu = self._asu
 
         # TODO: check lattice parameters and other stuff
+
+    @property
+    def space_group(self) -> SpaceGroup:
+        """Return the space group of the crystal."""
+        return self._space_group
 
     @property
     def lattice_parameters(self) -> tuple[float, float, float, float, float, float]:
@@ -174,98 +179,7 @@ class Crystal:
         """
         # qcelemental returns covalent radii in Bohr
         radius_bohr = qcel.covalentradii.get(symbol)
-        return radius_bohr * qcel.constants.bohr2angstroms
-
-    def _build_bond_graph(
-        self,
-        symbols: list[str],
-        cart_coords: NDArray[np.float64],
-        bond_tolerance: float = 1.2,
-    ) -> list[list[int]]:
-        """Build adjacency list for atoms based on covalent bonding.
-
-        Two atoms are considered bonded if their distance is less than
-        the sum of their covalent radii plus a tolerance.
-
-        Parameters:
-        symbols : List[str]
-            Atom symbols.
-        cart_coords : NDArray[np.float64]
-            Cartesian coordinates, shape (N, 3).
-        bond_tolerance : float, default=0.4
-            Tolerance in Angstroms added to sum of covalent radii.
-
-        Returns:
-        List[List[int]]
-            Adjacency list where adj[i] contains indices of atoms bonded to atom i.
-        """
-        n_atoms = len(symbols)
-        adj = [[] for _ in range(n_atoms)]
-
-        # Get covalent radii
-        radii = [self._get_covalent_radius(s) for s in symbols]
-
-        for i in range(n_atoms):
-            for j in range(i + 1, n_atoms):
-                dist = np.linalg.norm(cart_coords[i] - cart_coords[j])
-                max_bond = (radii[i] + radii[j]) * bond_tolerance
-                if dist < max_bond:
-                    adj[i].append(j)
-                    adj[j].append(i)
-
-        return adj
-
-    def _find_connected_components(self, adj: list[list[int]]) -> list[list[int]]:
-        """Find connected components in a graph using BFS.
-
-        Parameters:
-        adj : List[List[int]]
-            Adjacency list representation of the graph.
-
-        Returns:
-        List of components, where each component is a list of atom indices.
-        """
-        n = len(adj)
-        visited = [False] * n
-        components = []
-
-        for start in range(n):
-            if visited[start]:
-                continue
-
-            # BFS from this node
-            component = []
-            queue = [start]
-            visited[start] = True
-
-            while queue:
-                node = queue.pop(0)
-                component.append(node)
-                for neighbor in adj[node]:
-                    if not visited[neighbor]:
-                        visited[neighbor] = True
-                        queue.append(neighbor)
-
-            components.append(sorted(component))
-
-        return components
-
-    def _distance_matrix(self, a, b):
-        """Euclidean distance matrix between rows of arrays `a` and `b`.
-        Equivalent to `scipy.spatial.distance.cdist(a, b, 'euclidean')`.
-        Returns a.shape[0] x b.shape[0] array. It also returns the shortest
-        distance between the atoms of `a` and of `b`.
-        """
-
-        assert a.shape[1] == b.shape[1]
-
-        distm = np.sqrt(
-            np.sum((a[:, np.newaxis, :] - b[np.newaxis, :, :]) ** 2, axis=2)
-        )
-
-        r_min = np.min(distm)
-
-        return distm, r_min
+        return radius_bohr * qcel.constants.bohr2angstroms  # type: ignore
 
     def _bfs(self, coords: NDArray, elements: list[str], cell: NDArray, tol=1.2):
         coords = np.asarray(coords)
@@ -365,7 +279,7 @@ class Crystal:
             )
             centroid_frac = np.average(mol_frac, axis=0, weights=masses)
 
-            # Check if centroid is new closest to origin
+            # Check if centroid is new closest to origin (NOT center of cell, can mess with symops)
             curr_d = np.linalg.norm(centroid_frac)
             if curr_d < min_d:
                 min_d = curr_d
@@ -384,8 +298,8 @@ class Crystal:
             [unique_symbols[j] for j in ref_component],
             unique_frac[ref_component],
             unique_cart[ref_component],
-            np.average(unique_frac, axis=0, weights=masses),
-            np.average(unique_cart, axis=0, weights=masses),
+            np.average(unique_frac[ref_component], axis=0, weights=masses),
+            np.average(unique_cart[ref_component], axis=0, weights=masses),
         )
 
         return monomer
@@ -396,3 +310,7 @@ class Crystal:
             f"alpha={self._alpha}, beta={self._beta}, gamma={self._gamma}, "
             f"space_group={self._space_group})"
         )
+
+
+if __name__ == "__main__":
+    pass

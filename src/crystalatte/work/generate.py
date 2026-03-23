@@ -1,7 +1,9 @@
-from itertools import combinations, product
+from itertools import product
+from collections import defaultdict
+
 import numpy as np
-from numpy.typing import NDArray
 import qcelemental as qcel
+from tqdm import tqdm
 
 from ..core.crystal import Crystal
 from ..core.multimer import Monomer, Multimer
@@ -9,138 +11,228 @@ from ..core.sym_ops import SymOp, SymOpList
 
 
 def _is_bijection(g_N: SymOpList, h_N: SymOpList) -> bool:
-    # test for bijection with new reference monomer
-    bijection = False
-    for g in g_N:
-        map = [h.compose_augment(g) for h in h_N]
+    """Check if there exists a bijection between the sets of symmetry operations g_N and h_N.
 
-        if (
-            all(m in g_N for m in map)
-            and len(set(map)) == len(h_N)
-            and set(map) == set(g_N)
-        ):
-            bijection = True
-            break
+    :param g_N: A SymOpList representing the first set of symmetry operations.
+    :type g_N: SymOpList
 
-    return bijection
+    :param h_N: A SymOpList representing the second set of symmetry operations.
+    :type h_N: SymOpList
+
+    :returns: True if there exists a bijection between g_N and h_N, False otherwise.
+    :rtype: bool
+    """
+    n = len(g_N)
+
+    # Precompute augment matrix caches for g_N for fast comparison
+    g_aug = g_N.aug_cache.copy()
+    g_fp = g_aug.reshape(n, -1)
+
+    for i in range(n):
+        # composed = h_N.aug_cache @ g_N.aug_cache[i]  # (n, 4, 4) # doesnt work
+
+        # Need to multiply h_rot by g_tr to get correct composed translation
+        g_tr_rotated = np.tile(np.eye(4), (n, 1, 1))  # (n, 4, 4)
+        g_tr_rotated[:, :3, :3] = g_N.rot_cache[i]
+        g_tr_rotated[:, :3, 3] = h_N.rot_cache @ g_N.tr_cache[i]
+        composed = h_N.aug_cache @ g_tr_rotated  # (n, 4, 4)
+        composed_fp = composed.reshape(n, -1)
+
+        # Check each composed result is in g_N:
+        in_g = np.all(composed_fp[:, None, :] == g_fp[None, :, :], axis=-1).any(axis=-1)
+
+        if not in_g.all():
+            continue
+
+        # Injectivity check
+        unique_rows = np.unique(composed_fp, axis=0)
+        if len(unique_rows) == n:
+            return True  # Surjectivity is implied since |composed| == |g_N| == n
+
+    return False
 
 
-def _generate_central(
-    crystal: Crystal, N: int
-) -> tuple[list[SymOpList], list[SymOpList]]:
-    # generate all combinations of N-1 symmetry operations from the space group
-    symop_lists = combinations(crystal._space_group.sym_ops, N - 1)
-    symop_lists = [
-        SymOpList([SymOp.identity()] + list(symop_list), 1)
-        for symop_list in symop_lists
-    ]
-
-    combos = combinations(symop_lists, 2)
-    duplicates = []
-    for g_N, h_N in combos:
-        if _is_bijection(g_N, h_N):
-            symop_lists.remove(h_N)
-            duplicates.append(h_N)
-            g_N.multiplicity += 1
-
-    print(
-        f"Found {len(duplicates)} equivalent multimers from central unit cell search."
-    )
-    return symop_lists, duplicates
+def _process_bucket(bucket: list[SymOpList]) -> tuple[list[SymOpList], list[SymOpList]]:
+    local_unique: list[SymOpList] = []
+    local_dup: list[SymOpList] = []
+    for g_t in bucket:
+        for u in local_unique:
+            if _is_bijection(g_t, u):
+                local_dup.append(g_t)
+                u.multiplicity += 1
+                break
+        else:
+            local_unique.append(g_t)
+    return local_unique, local_dup
 
 
 def _generate_neighbors(
     crystal: Crystal,
-    symop_lists: list[SymOpList],
     N: int,
 ) -> tuple[list[SymOpList], list[SymOpList]]:
-    # add translation to all symop lists and check for bijections with other symop lists
-    translated = []
-    for g_N in symop_lists:
-        for d in product(product([-1, 0, 1], repeat=3), repeat=N - 1):
-            g_t = g_N.translate_list(
-                np.array(d, dtype=np.float64), exclude_reference=True
+    """Generate all unique multimers in the central unit cell and neighboring cells, and identify duplicates among them.
+
+    :param crystal: The crystal structure containing the monomer.
+    :type crystal: Crystal
+
+    :param N: The number of monomers in the multimer (e.g. N=2 for dimers).
+    :type N: int
+
+    :returns: A tuple of (unique_multimers, duplicate_multimers) where each is a list of SymOpList representing the unique and duplicate multimers found in the central and neighboring unit cells.
+    :rtype: tuple[list[SymOpList], list[SymOpList]]
+    """
+    sym_ops = crystal.space_group.sym_ops  # TODO: get power/inverse too
+    translations = list(product([-1, 0, 1], repeat=3))  # 27 options
+
+    # Generate candidates in the neighboring unit cells, skipping invalid (duplicate op) entries early using a set-based check.
+    candidates: list[SymOpList] = []
+
+    # very expensive for large N, but its the price we pay
+    for g_N in product(sym_ops, repeat=N - 1):
+        base_ops = [SymOp.identity()] + list(g_N)
+
+        for d in product(translations, repeat=N - 1):
+            d_arr = np.array(d, dtype=np.int16) * 12
+            g_t = SymOpList(base_ops, 1).translate_list(d_arr, exclude_reference=True)
+
+            # Skip if any two ops are identical (cheap set check)
+            if len(set(g_t)) == len(g_t):
+                candidates.append(g_t)
+
+    # Group candidates by a fast structural key (sorted tuple of translation norms), then only run _is_bijection within each bucket.
+    buckets: dict[int, list[SymOpList]] = defaultdict(list)
+    for g_t in candidates:
+        key = g_t.translation_fp
+        buckets[key].append(g_t)
+
+    # Buckets are independent, so we can process in parallel and then combine results at the end
+    from concurrent.futures import ProcessPoolExecutor
+
+    unique: list[SymOpList] = []
+    duplicate: list[SymOpList] = []
+
+    with ProcessPoolExecutor() as ex:
+        results = list(
+            tqdm(
+                ex.map(_process_bucket, buckets.values()),
+                total=len(buckets),
+                desc="Processing buckets",
             )
+        )
 
-            translated.append(g_t)
-
-    duplicates = []
-    for g_t, h_t in combinations(translated, 2):
-        if _is_bijection(g_t, h_t):
-            translated.remove(h_t)
-            duplicates.append(h_t)
-            g_t.multiplicity += 1
+    for local_unique, local_dup in results:
+        unique.extend(local_unique)
+        duplicate.extend(local_dup)
 
     print(
-        f"Found {len(duplicates)} equivalent multimers from neighboring unit cell search."
+        f"Found {len(duplicate)} equivalent multimers from neighboring unit cell search."
     )
-    return translated, duplicates
+    return unique, duplicate
 
 
-def _is_multiple_translation(
-    rot: list[NDArray], tr: NDArray, neighbor: SymOpList
-) -> bool:
-    for rot_i, rot_neighbor in zip(rot, neighbor.rotations):
-        if not all(
-            np.array_equal(rot_i, rot_neighbor_i)
-            for rot_i, rot_neighbor_i in zip(rot, neighbor.rotations)
-        ):
-            return False
+# def _generate_distant(
+#     unique_neighbors: list[SymOpList],
+#     duplicate_neighbors: list[SymOpList],
+#     cutoff: list[int],
+#     N: int,
+# ) -> list[SymOpList]:
+#     # finally, generate all translations of the unique central unit cell multimers within the cutoff using previous neighbor translations to determine further equivalencies
+#     final_unique = []
+#     distances = product(*[range(-c, c) for c in cutoff])
 
-    for tr_i, tr_neighbor in zip(tr, neighbor.translations):
-        # only check nonzero translation components to avoid division by zero
-        nonzero_i = np.abs(tr_i) > 1e-6
-        nonzero_n = np.abs(tr_neighbor) > 1e-6
+#     for i, g_N in enumerate(unique_neighbors):
+#         duplicate_d = []
+#         for d in product(distances, repeat=N - 1):
+#             d = np.array(d, dtype=np.float64)
+#             d = np.insert(d, 0, [0, 0, 0], axis=0)
 
-        # if the nonzero components are different, they can't be multiples
-        if not np.array_equal(nonzero_i, nonzero_n):
-            return False
+#             # now check if translations are a multiple of a duplicate neighbor translation and if rotations are equal, if so skip
+#             dup = False
+#             for neighbor in duplicate_neighbors:
+#                 if g_N.rotation_equality(neighbor) and any(
+#                     np.array_equal(d, dup_d) for dup_d in neighbor_translations
+#                 ):
+#                     dup = True
+#                     break
+#             if dup:
+#                 continue
 
-        # if there are no nonzero components, then the translations are effectively the same and we can skip the ratio check
-        if not np.any(nonzero_i):
-            continue
+#             # check for duplicates in opposite directions by pure translation
+#             if any(np.array_equal(d, duplicate_d_i) for duplicate_d_i in duplicate_d):
+#                 continue
+#             else:
+#                 duplicate_d.append(-d)
 
-        # check to see if all ratios are equivalent
-        if not np.allclose(
-            tr_i[nonzero_i] / tr_neighbor[nonzero_n],
-            tr_i[nonzero_i][0] / tr_neighbor[nonzero_n][0],
-            1e-6,
-        ):
-            return False
+#             g_T = g_N.translate_list(d)
+#             for neighbor in unique_neighbors:
+#                 if _is_multiple_translation(g_T.rotations, d, neighbor):
+#                     g_T.multiplicity = max(g_T.multiplicity, neighbor.multiplicity)
+#                     break
 
-        # ratios are equivalent, but if they are negative then the translations are in opposite directions and can't be multiples
-        if tr_i[nonzero_i][0] / tr_neighbor[nonzero_n][0] < 0:
-            return False
+#             final_unique.append(g_T)
 
-    return True
+#         return final_unique
+
+
+# def _is_multiple_translation(
+#     rot: list[NDArray], tr: NDArray, neighbor: SymOpList
+# ) -> bool:
+#     for rot_i, rot_neighbor in zip(rot, neighbor.rotations):
+#         if not all(
+#             np.array_equal(rot_i, rot_neighbor_i)
+#             for rot_i, rot_neighbor_i in zip(rot, neighbor.rotations)
+#         ):
+#             return False
+
+#     for tr_i, tr_neighbor in zip(tr, neighbor.translations):
+#         # only check nonzero translation components to avoid division by zero
+#         nonzero_i = np.abs(tr_i) > 1e-6
+#         nonzero_n = np.abs(tr_neighbor) > 1e-6
+
+#         # if the nonzero components are different, they can't be multiples
+#         if not np.array_equal(nonzero_i, nonzero_n):
+#             return False
+
+#         # if there are no nonzero components, then the translations are effectively the same and we can skip the ratio check
+#         if not np.any(nonzero_i):
+#             continue
+
+#         # check to see if all ratios are equivalent
+#         if not np.allclose(
+#             tr_i[nonzero_i] / tr_neighbor[nonzero_n],
+#             tr_i[nonzero_i][0] / tr_neighbor[nonzero_n][0],
+#             1e-6,
+#         ):
+#             return False
+
+#         # ratios are equivalent, but if they are negative then the translations are in opposite directions and can't be multiples
+#         if tr_i[nonzero_i][0] / tr_neighbor[nonzero_n][0] < 0:
+#             return False
+
+#     return True
 
 
 def generate(crystal: Crystal, monomer: Monomer, N: int, R: float) -> list[Multimer]:
     """
     Generate unique multimers of the given monomer in the crystal.
 
-    Parameters
-    ----------
-    crystal : Crystal
-        The crystal structure containing the monomer.
-    monomer : Monomer
-        The reference monomer to generate multimers from.
-    N : int
-        The number of monomers in the multimer (e.g. N=2 for dimers).
-    R : float
-        The maximum center-to-center distance in Angstroms for monomers to be considered part of the same multimer.
+    :param crystal: The crystal structure containing the monomer.
+    :type crystal: Crystal
 
-    Returns
-    -------
-    List[Multimer]
-        A list of unique multimers generated from the reference monomer.
+    :param monomer: The reference monomer to generate multimers from.
+    :type monomer: Monomer
+
+    :param N: The number of monomers in the multimer (e.g. N=2 for dimers).
+    :type N: int
+
+    :param R: The maximum center-to-center distance in Angstroms for monomers to be considered part of the same multimer.
+    :type R: float
+
+    :returns: A list of unique Multimer objects representing the multimers found in the crystal.
+    :rtype: list[Multimer]
     """
-
     # first identify equivalencies in the central unit cell and neighboring cells
-    unique_central, duplicate_central = _generate_central(crystal, N)
-    unique_neighbors, duplicate_neighbors = _generate_neighbors(
-        crystal, unique_central, N
-    )
+    unique_neighbors, duplicate_neighbors = _generate_neighbors(crystal, N)
 
     # given cell dimensions and R, calculate how far you have to go in each direction to find all monomers within R of the reference monomer
     # this is a loose overestimate, but is further pruned once multimers are formed
@@ -150,48 +242,19 @@ def generate(crystal: Crystal, monomer: Monomer, N: int, R: float) -> list[Multi
         if v > 0:
             cutoff[i] = max(cutoff[i], int(np.ceil(R / v)))
 
-    # finally, generate all translations of the unique central unit cell multimers within the cutoff
-    # using previous neighbor translations to determine further equivalencies
-    final_unique = []
-    for g_N in unique_central:
-        for d in product(
-            product(range(-max(cutoff), max(cutoff) + 1), repeat=3), repeat=N - 1
-        ):
-            # TODO: avoid this check by only generating translations within cutoff in the first place
-            outside = False
-            for d_i in d:
-                if any(abs(d_i_j) > cutoff_j for d_i_j, cutoff_j in zip(d_i, cutoff)):
-                    outside = True
-                    break
+    neighbor_translations = []
+    for neighbor in unique_neighbors:
+        # get integer translations for each neighbor relative to the central unit cell
+        tr = []
+        for g in neighbor:
+            tr.append([np.floor(x) if x >= 0 else np.ceil(x) for x in g.tr])
 
-            if outside:
-                continue
-            d = np.array(d, dtype=np.float64)
-            d = np.insert(d, 0, [0, 0, 0], axis=0)
-
-            # now check if translations are a multiple of a duplicate neighbor translation and if rotations are equal, if so skip
-            if any(
-                _is_multiple_translation(
-                    g_N.rotations,
-                    d,
-                    duplicate_neighbor,
-                )
-                for duplicate_neighbor in duplicate_neighbors
-            ):
-                continue
-
-            g_T = g_N.translate_list(d)
-            for neighbor in unique_neighbors:
-                if _is_multiple_translation(g_T.rotations, d, neighbor):
-                    g_T.multiplicity = max(g_T.multiplicity, neighbor.multiplicity)
-                    break
-
-            final_unique.append(g_T)
+        neighbor_translations.append(tr)
 
     # actually create multimers to return
     multimers = []
     masses = np.array([qcel.periodictable.to_mass(sym) for sym in monomer.symbols])
-    for i, g_N in enumerate(final_unique):
+    for i, g_N in enumerate(unique_neighbors):
         # if there are any monomers with identical symops, skip multimer (multiple identities)
         if len(set(g_N)) != len(g_N):
             continue
@@ -230,8 +293,18 @@ def generate(crystal: Crystal, monomer: Monomer, N: int, R: float) -> list[Multi
         # if we made it here, we have a valid multimer
         multimers.append(Multimer(mons, g_N.multiplicity))
 
-        if len(multimers) == 1:
-            print(multimers[-1].monomers[-1].symop)
-            print(multimers[-1].monomers[-1].cart_coords)
+        # if len(multimers) == 13 or len(multimers) == 57:
+        #     print(multimers[-1])
 
     return multimers
+
+
+if __name__ == "__main__":
+    pass
+
+"""
+things to add still:
+    computation of powers of symops
+    inverses (would come with powers)
+    molecular symmetry
+"""
