@@ -102,8 +102,5 @@ ENV/
 .mypy_cache/
 
 # psi4 files
-timer.dat
-main.py
-examples/ammonia_results.csv
 *.dat
-crystalatte/data/cif/Ammonia.xyz
+data/test

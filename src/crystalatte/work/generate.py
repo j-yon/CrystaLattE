@@ -3,6 +3,7 @@ from collections import defaultdict
 
 import numpy as np
 import qcelemental as qcel
+from scipy.spatial.distance import cdist
 from tqdm import tqdm
 
 from ..core.crystal import Crystal
@@ -105,24 +106,44 @@ def _generate_neighbors(
         key = g_t.translation_fp
         buckets[key].append(g_t)
 
-    # Buckets are independent, so we can process in parallel and then combine results at the end
-    from concurrent.futures import ProcessPoolExecutor
-
+    # Buckets are independent, process is parallelized if desired
     unique: list[SymOpList] = []
     duplicate: list[SymOpList] = []
 
-    with ProcessPoolExecutor() as ex:
-        results = list(
-            tqdm(
-                ex.map(_process_bucket, buckets.values()),
-                total=len(buckets),
-                desc="Processing buckets",
-            )
-        )
+    if "n_jobs" in kwargs and kwargs["n_jobs"] > 1:
+        from concurrent.futures import ProcessPoolExecutor
+        from multiprocessing import cpu_count
 
-    for local_unique, local_dup in results:
-        unique.extend(local_unique)
-        duplicate.extend(local_dup)
+        # make sure n_jobs is a reasonable number
+        if kwargs["n_jobs"] > len(buckets):
+            kwargs["n_jobs"] = len(buckets)
+        elif kwargs["n_jobs"] > cpu_count():
+            kwargs["n_jobs"] = cpu_count() - 1
+
+        with ProcessPoolExecutor(max_workers=kwargs["n_jobs"]) as ex:
+            results = list(
+                tqdm(
+                    ex.map(_process_bucket, buckets.values()),
+                    total=len(buckets),
+                    desc="Processing across unique translation buckets",
+                    leave=False,
+                )
+            )
+
+        for local_unique, local_dup in results:
+            unique.extend(local_unique)
+            duplicate.extend(local_dup)
+
+    else:
+        for bucket in tqdm(
+            buckets.values(),
+            total=len(buckets),
+            desc="Processing across unique translations",
+            leave=False,
+        ):
+            local_unique, local_dup = _process_bucket(bucket)
+            unique.extend(local_unique)
+            duplicate.extend(local_dup)
 
     print(
         f"Found {len(duplicate)} equivalent multimers from neighboring unit cell search."
@@ -212,7 +233,9 @@ def _generate_neighbors(
 #     return True
 
 
-def generate(crystal: Crystal, monomer: Monomer, N: int, R: float) -> list[Multimer]:
+def generate(
+    crystal: Crystal, monomer: Monomer, N: int, R: float, **kwargs
+) -> list[Multimer]:
     """
     Generate unique multimers of the given monomer in the crystal.
 
@@ -232,24 +255,27 @@ def generate(crystal: Crystal, monomer: Monomer, N: int, R: float) -> list[Multi
     :rtype: list[Multimer]
     """
     # first identify equivalencies in the central unit cell and neighboring cells
-    unique_neighbors, duplicate_neighbors = _generate_neighbors(crystal, N)
-
-    # given cell dimensions and R, calculate how far you have to go in each direction to find all monomers within R of the reference monomer
-    # this is a loose overestimate, but is further pruned once multimers are formed
-    cutoff = [1] * 3
+    cutoff = [0] * 3
     a, b, c, _, _, _ = crystal.lattice_parameters
     for i, v in enumerate((a, b, c)):
         if v > 0:
-            cutoff[i] = max(cutoff[i], int(np.ceil(R / v)))
+            cutoff[i] = int(np.ceil(R / v)) + 1
+        # with CoM, don't need to search as far
+        if "use_com" in kwargs and kwargs["use_com"]:
+            cutoff[i] = max(0, cutoff[i] - 1)
 
-    neighbor_translations = []
-    for neighbor in unique_neighbors:
-        # get integer translations for each neighbor relative to the central unit cell
-        tr = []
-        for g in neighbor:
-            tr.append([np.floor(x) if x >= 0 else np.ceil(x) for x in g.tr])
+    unique_neighbors, duplicate_neighbors = _generate_neighbors(
+        crystal, cutoff, N, **kwargs
+    )
 
-        neighbor_translations.append(tr)
+    # neighbor_translations = []
+    # for neighbor in unique_neighbors:
+    #     # get integer translations for each neighbor relative to the central unit cell
+    #     tr = []
+    #     for g in neighbor:
+    #         tr.append([np.floor(x) if x >= 0 else np.ceil(x) for x in g.tr])
+
+    #     neighbor_translations.append(tr)
 
     # actually create multimers to return
     multimers = []
@@ -259,7 +285,6 @@ def generate(crystal: Crystal, monomer: Monomer, N: int, R: float) -> list[Multi
         if len(set(g_N)) != len(g_N):
             continue
 
-        # create multimers in current SymOpList
         mons = []
 
         bounded = True
@@ -269,9 +294,12 @@ def generate(crystal: Crystal, monomer: Monomer, N: int, R: float) -> list[Multi
             com_g_frac = np.average(mon_g_frac, axis=0, weights=masses)
             com_g_cart = crystal.to_cartesian(com_g_frac)
 
-            # check if mon_g is within R of the reference monomer based on center of mass distance
-            # TODO: make checking available for closest contact as well
-            dist = np.linalg.norm(com_g_cart - monomer.centroid_cart)
+            # check if mon_g is within R of the reference monomer based on center of mass distance or minimum atomic distance, depending on user preference
+            if "use_com" in kwargs and kwargs["use_com"]:
+                dist = np.linalg.norm(com_g_cart - monomer.centroid_cart)
+            else:
+                dist = cdist(monomer.cart_coords, mon_g_cart).min()
+
             if dist > R:
                 bounded = False
                 break
@@ -292,9 +320,6 @@ def generate(crystal: Crystal, monomer: Monomer, N: int, R: float) -> list[Multi
 
         # if we made it here, we have a valid multimer
         multimers.append(Multimer(mons, g_N.multiplicity))
-
-        # if len(multimers) == 13 or len(multimers) == 57:
-        #     print(multimers[-1])
 
     return multimers
 

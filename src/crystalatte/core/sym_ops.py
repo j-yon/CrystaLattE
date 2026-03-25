@@ -147,7 +147,7 @@ class SymOp:
         return symop
 
     def translate(self, translation: NDArray[np.int16]) -> SymOp:
-        """Return a new SymOp with the same rotation but translated by the given vector. The vector must be given as a multiple of 1/12 in fractional coordinates, since translations are stored as integers multiplied by 12.
+        """Return a new SymOp with the same rotation but translated by the given vector. The original vector in fractional coordinates must be given multiplied by 12, since translations are stored as integers for efficiency.
 
         :param translation: A 3D vector in fractional coordinates to translate the symmetry operation by
         :type translation: NDArray
