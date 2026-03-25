@@ -1,4 +1,5 @@
-from itertools import product
+import math
+from itertools import combinations, product
 from collections import defaultdict
 
 import numpy as np
@@ -69,7 +70,9 @@ def _process_bucket(bucket: list[SymOpList]) -> tuple[list[SymOpList], list[SymO
 
 def _generate_neighbors(
     crystal: Crystal,
+    cutoff: list[int],
     N: int,
+    **kwargs,
 ) -> tuple[list[SymOpList], list[SymOpList]]:
     """Generate all unique multimers in the central unit cell and neighboring cells, and identify duplicates among them.
 
@@ -83,22 +86,27 @@ def _generate_neighbors(
     :rtype: tuple[list[SymOpList], list[SymOpList]]
     """
     sym_ops = crystal.space_group.sym_ops  # TODO: get power/inverse too
-    translations = list(product([-1, 0, 1], repeat=3))  # 27 options
+    translations = list(product(*[range(-c, c + 1) for c in cutoff]))
+    op_tr_pairs = list(product(sym_ops, translations))
 
-    # Generate candidates in the neighboring unit cells, skipping invalid (duplicate op) entries early using a set-based check.
+    # drop the identity operation with zero translation since it will be the reference multimer we compare against and doesn't need to be generated
+    op_tr_pairs = [
+        (pair[0], np.array(pair[1], dtype=np.int16) * 12)
+        for pair in op_tr_pairs
+        if not (pair[0] == SymOp.identity() and all(t == 0 for t in pair[1]))
+    ]
+    # actually translate the symops
+    full_ops: list[SymOp] = [pair[0].translate(pair[1]) for pair in op_tr_pairs]
     candidates: list[SymOpList] = []
 
-    # very expensive for large N, but its the price we pay
-    for g_N in product(sym_ops, repeat=N - 1):
-        base_ops = [SymOp.identity()] + list(g_N)
-
-        for d in product(translations, repeat=N - 1):
-            d_arr = np.array(d, dtype=np.int16) * 12
-            g_t = SymOpList(base_ops, 1).translate_list(d_arr, exclude_reference=True)
-
-            # Skip if any two ops are identical (cheap set check)
-            if len(set(g_t)) == len(g_t):
-                candidates.append(g_t)
+    # Expensive for large N, but its the price we pay
+    for g_N in tqdm(
+        combinations(full_ops, N - 1),
+        total=len(op_tr_pairs) ** (N - 1) // math.factorial(N - 1),
+        desc="Generating candidates",
+        leave=False,
+    ):
+        candidates.append(SymOpList([SymOp.identity()] + list(g_N), 1))
 
     # Group candidates by a fast structural key (sorted tuple of translation norms), then only run _is_bijection within each bucket.
     buckets: dict[int, list[SymOpList]] = defaultdict(list)
