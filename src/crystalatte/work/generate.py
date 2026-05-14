@@ -31,8 +31,6 @@ def _is_bijection(g_N: SymOpList, h_N: SymOpList) -> bool:
     g_fp = g_aug.reshape(n, -1)
 
     for i in range(n):
-        # composed = h_N.aug_cache @ g_N.aug_cache[i]  # (n, 4, 4) # doesnt work
-
         # Need to multiply h_rot by g_tr to get correct composed translation
         g_tr_rotated = np.tile(np.eye(4), (n, 1, 1))  # (n, 4, 4)
         g_tr_rotated[:, :3, :3] = g_N.rot_cache[i]
@@ -55,22 +53,43 @@ def _is_bijection(g_N: SymOpList, h_N: SymOpList) -> bool:
 
 
 def _process_bucket(bucket: list[SymOpList]) -> tuple[list[SymOpList], list[SymOpList]]:
+    """Given a bucket of SymOpLists that share the same translation fingerprint, identify which are unique multimers and which are duplicates based on bijections between their symmetry operations.
+
+    :param bucket: A list of SymOpList objects that share the same translation fingerprint.
+    :type bucket: list[SymOpList]
+
+    :returns: A tuple of (unique_multimers, duplicate_multimers) where each is a list of SymOpList representing the unique and duplicate multimers found in the bucket.
+    :rtype: tuple[list[SymOpList], list[SymOpList]]
+    """
     local_unique: list[SymOpList] = []
     local_dup: list[SymOpList] = []
     for g_t in bucket:
         for u in local_unique:
             if _is_bijection(g_t, u):
-                local_dup.append(g_t)
-                u.multiplicity += 1
+                # sometimes g_t can be closer (even though the distance matrix is the same) and this can lead to a missed unique multimer when filtering by radius
+                g_dist = np.linalg.norm(g_t.translations, axis=1).sum()
+                u_dist = np.linalg.norm(u.translations, axis=1).sum()
+                if g_dist < u_dist:
+                    local_dup.append(u)
+                    local_unique.remove(u)
+                    local_unique.append(g_t)
+                    g_t.multiplicity = u.multiplicity + 1
+                else:
+                    local_dup.append(g_t)
+                    u.multiplicity += 1
+
                 break
         else:
             local_unique.append(g_t)
+
     return local_unique, local_dup
 
 
 def _generate_neighbors(
     crystal: Crystal,
-    cutoff: list[int],
+    monomer: Monomer,
+    cutoff: list[tuple[int, int]],
+    R: float,
     N: int,
     **kwargs,
 ) -> tuple[list[SymOpList], list[SymOpList]]:
@@ -86,7 +105,12 @@ def _generate_neighbors(
     :rtype: tuple[list[SymOpList], list[SymOpList]]
     """
     sym_ops = crystal.space_group.sym_ops  # TODO: get power/inverse too
-    translations = list(product(*[range(-c, c + 1) for c in cutoff]))
+    if "debug" in kwargs and kwargs["debug"]:
+        translations = list(product([-1, 0, 1], repeat=3))
+        # cutoff = [(-3, 3), (-6, 6), (-2, 2)]
+        # translations = list(product(*[range(cm - 1, cp + 2) for cm, cp in cutoff]))
+    else:
+        translations = list(product(*[range(cm, cp + 1) for cm, cp in cutoff]))
     op_tr_pairs = list(product(sym_ops, translations))
 
     # drop the identity operation with zero translation since it will be the reference multimer we compare against and doesn't need to be generated
@@ -122,7 +146,7 @@ def _generate_neighbors(
     # Expensive for large N, but its the price we pay
     for g_N in tqdm(
         combinations(full_ops, N - 1),
-        total=len(op_tr_pairs) ** (N - 1) // math.factorial(N - 1),
+        total=len(full_ops) ** (N - 1) // math.factorial(N - 1),
         desc="Generating candidates",
         leave=False,
     ):
@@ -176,6 +200,7 @@ def _generate_neighbors(
     print(
         f"Found {len(duplicate)} equivalent multimers from neighboring unit cell search."
     )
+
     return unique, duplicate
 
 
