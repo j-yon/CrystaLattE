@@ -109,8 +109,8 @@ class Crystal:
         ):
             raise ValueError("Lattice angles must be between 0 and 180 degrees.")
 
-        sg = self._space_group
-        asu = self._asu
+        # sg = self._space_group
+        # asu = self._asu
 
         # TODO: check lattice parameters and other stuff
 
@@ -181,10 +181,8 @@ class Crystal:
         radius_bohr = qcel.covalentradii.get(symbol)
         return radius_bohr * qcel.constants.bohr2angstroms  # type: ignore
 
-    def _bfs(self, coords: NDArray, elements: list[str], cell: NDArray, tol=1.2):
+    def _bfs(self, coords: NDArray, elements: NDArray, tol=1.2):
         coords = np.asarray(coords)
-        # cell = np.asarray(cell)
-        # inv_cell = np.linalg.inv(cell)
 
         N = len(coords)
         radii = np.array([self._get_covalent_radius(elem) for elem in elements])
@@ -243,21 +241,28 @@ class Crystal:
                     all_frac.append(new_pos)
 
         all_frac = np.array(all_frac)
+        all_symbols = np.array(all_symbols)
 
-        unique_symbols = []
-        unique_frac = []
-        for symbol, frac in zip(all_symbols, all_frac):
-            if any(np.abs(frac) > 2.0):
+        mask = ~np.any(np.abs(all_frac) > 2.0, axis=1)
+        all_frac = all_frac[mask]
+        all_symbols = all_symbols[mask]
+
+        unique_indices = []
+        for i in range(len(all_frac)):
+            if not unique_indices:
+                unique_indices.append(i)
                 continue
+            accepted = all_frac[unique_indices]
+            diffs = accepted - all_frac[i]
+            dists = np.linalg.norm(diffs, axis=1)
+            if np.all(dists >= 1e-3):
+                unique_indices.append(i)
 
-            if not any(np.linalg.norm(frac - uf) < 1e-3 for uf in unique_frac):
-                unique_frac.append(frac)
-                unique_symbols.append(symbol)
+        unique_frac = all_frac[unique_indices]
+        unique_symbols = all_symbols[unique_indices]
 
-        unique_frac = np.array(unique_frac)
         unique_cart = self.to_cartesian(unique_frac)
-
-        components = self._bfs(unique_cart, unique_symbols, self.lattice_vectors, tol)
+        components = self._bfs(unique_cart, unique_symbols, tol)
 
         # NOTE: always assumes a full molecule is formed (which should be true)
         mol_len = max(len(c) for c in components)
@@ -273,7 +278,7 @@ class Crystal:
             # needed for mass-accurate CoM
             masses = np.array(
                 [
-                    qcel.periodictable.to_mass(sym)
+                    qcel.periodictable.to_mass(str(sym))
                     for sym in [unique_symbols[j] for j in component]
                 ]
             )
@@ -288,14 +293,14 @@ class Crystal:
         ref_component = components[ref_idx]
         masses = np.array(
             [
-                qcel.periodictable.to_mass(sym)
+                qcel.periodictable.to_mass(str(sym))
                 for sym in [unique_symbols[j] for j in ref_component]
             ]
         )
 
         # create Monomer from closest molecule
         monomer = Monomer(
-            [unique_symbols[j] for j in ref_component],
+            [str(unique_symbols[j]) for j in ref_component],
             unique_frac[ref_component],
             unique_cart[ref_component],
             np.average(unique_frac[ref_component], axis=0, weights=masses),
