@@ -286,6 +286,47 @@ def _generate_neighbors(
 #     return True
 
 
+def _init_multimers(crystal_, monomer_, R_, masses_, use_com_):
+    # This is needed to avoid issues with pickling large objects like the crystal and monomer when using ProcessPoolExecutor
+    global crystal, monomer, R, masses, use_com
+    crystal = crystal_
+    monomer = monomer_
+    R = R_
+    masses = masses_
+    use_com = use_com_
+
+
+def _process_multimer(
+    g_N: SymOpList,
+) -> Multimer | None:
+    global crystal, monomer, R, masses, use_com
+
+    # if there are any refs with identical symops, skip multimer (multiple identities)
+    if len(set(g_N)) != len(g_N):
+        return None
+
+    mons = []
+
+    for g in g_N:
+        mon_g_frac = g.apply(monomer.frac_coords)
+        mon_g_cart = crystal.to_cartesian(mon_g_frac)
+        com_g_frac = np.average(mon_g_frac, axis=0, weights=masses)
+        com_g_cart = crystal.to_cartesian(com_g_frac)
+
+        mon_g = Monomer(
+            monomer.symbols,
+            mon_g_frac,
+            mon_g_cart,
+            com_g_frac,
+            com_g_cart,
+            g,
+        )
+
+        mons.append(mon_g)
+
+    return Multimer(mons, g_N, g_N.multiplicity)
+
+
 def generate(
     crystal: Crystal, monomer: Monomer, N: int, R: float, **kwargs
 ) -> list[Multimer]:
@@ -307,19 +348,47 @@ def generate(
     :returns: A list of unique Multimer objects representing the multimers found in the crystal.
     :rtype: list[Multimer]
     """
-    # first identify equivalencies in the central unit cell and neighboring cells
-    cutoff = [0] * 3
-    a, b, c, _, _, _ = crystal.lattice_parameters
-    for i, v in enumerate((a, b, c)):
-        if v > 0:
-            cutoff[i] = int(np.ceil(R / v)) + 1
-        # with CoM, don't need to search as far
-        if "use_com" in kwargs and kwargs["use_com"]:
-            cutoff[i] = max(0, cutoff[i] - 1)
+    lat_vecs = crystal.lattice_vectors
+
+    V = crystal.volume
+    b1 = np.cross(lat_vecs[:, 1], lat_vecs[:, 2]) / V
+    b2 = np.cross(lat_vecs[:, 2], lat_vecs[:, 0]) / V
+    b3 = np.cross(lat_vecs[:, 0], lat_vecs[:, 1]) / V
+
+    # Perpendicular face-to-face distances
+    d = np.array(
+        [
+            1.0 / np.linalg.norm(b1),
+            1.0 / np.linalg.norm(b2),
+            1.0 / np.linalg.norm(b3),
+        ]
+    )
+
+    # Distance from reference point to each face (+ and - sides)
+    # t[i] * d[i]         = distance to the "lower" face in direction i
+    # (1 - t[i]) * d[i]   = distance to the "upper" face in direction i
+    t = monomer.centroid_frac
+    dist_lower = t * d  # gap between ref and the face behind it
+    dist_upper = (1 - t) * d  # gap between ref and the face ahead of it
+
+    # effective radius to account for monomer extent
+    R_eff = R + pdist(monomer.cart_coords).max()
+
+    bounds = []
+    for i in range(3):
+        n_minus = (
+            int(np.ceil((R_eff - dist_lower[i]) / d[i])) if R_eff > dist_lower[i] else 0
+        )
+        n_plus = (
+            int(np.ceil((R_eff - dist_upper[i]) / d[i])) if R_eff > dist_upper[i] else 0
+        )
+        bounds.append((-n_minus, n_plus))
 
     unique_neighbors, duplicate_neighbors = _generate_neighbors(
-        crystal, cutoff, N, **kwargs
+        crystal, monomer, bounds, R, N, **kwargs
     )
+    if "v1" in kwargs and kwargs["v1"]:
+        return []
 
     # neighbor_translations = []
     # for neighbor in unique_neighbors:
@@ -330,49 +399,48 @@ def generate(
 
     #     neighbor_translations.append(tr)
 
-    # actually create multimers to return
-    multimers = []
     masses = np.array([qcel.periodictable.to_mass(sym) for sym in monomer.symbols])
-    for i, g_N in enumerate(unique_neighbors):
-        # if there are any monomers with identical symops, skip multimer (multiple identities)
-        if len(set(g_N)) != len(g_N):
-            continue
+    _init_multimers(crystal, monomer, R, masses, kwargs.get("use_com", False))
 
-        mons = []
+    # if requested, process multimers in parallel
+    # only do in parallel if there are a large number of unique neighbors to process, otherwise the overhead of parallelization may outweigh the benefits
+    # TODO: determine when this is actually faster
+    if "n_jobs" in kwargs and kwargs["n_jobs"] > 1 and False:
+        from concurrent.futures import ProcessPoolExecutor
+        from multiprocessing import cpu_count
 
-        bounded = True
-        for g in g_N:
-            mon_g_frac = g.apply(monomer.frac_coords)
-            mon_g_cart = crystal.to_cartesian(mon_g_frac)
-            com_g_frac = np.average(mon_g_frac, axis=0, weights=masses)
-            com_g_cart = crystal.to_cartesian(com_g_frac)
+        # make sure n_jobs is a reasonable number
+        if kwargs["n_jobs"] > len(unique_neighbors):
+            kwargs["n_jobs"] = len(unique_neighbors)
+        elif kwargs["n_jobs"] > cpu_count():
+            kwargs["n_jobs"] = cpu_count() - 1
 
-            # check if mon_g is within R of the reference monomer based on center of mass distance or minimum atomic distance, depending on user preference
-            if "use_com" in kwargs and kwargs["use_com"]:
-                dist = np.linalg.norm(com_g_cart - monomer.centroid_cart)
-            else:
-                dist = cdist(monomer.cart_coords, mon_g_cart).min()
-
-            if dist > R:
-                bounded = False
-                break
-
-            mon_g = Monomer(
-                monomer.symbols,
-                mon_g_frac,
-                mon_g_cart,
-                com_g_frac,
-                com_g_cart,
-                g,
+        with ProcessPoolExecutor(
+            initializer=_init_multimers,
+            initargs=(crystal, monomer, R, masses, kwargs.get("use_com", False)),
+            max_workers=kwargs["n_jobs"],
+        ) as ex:
+            multimers = list(
+                tqdm(
+                    ex.map(_process_multimer, unique_neighbors),
+                    total=len(unique_neighbors),
+                    desc="Processing unique multimers",
+                    leave=False,
+                )
             )
+            multimers = [m for m in multimers if m is not None]
 
-            mons.append(mon_g)
-
-        if not bounded:
-            continue
-
-        # if we made it here, we have a valid multimer
-        multimers.append(Multimer(mons, g_N.multiplicity))
+    else:
+        multimers = []
+        for g_N in tqdm(
+            unique_neighbors,
+            total=len(unique_neighbors),
+            desc="Processing unique multimers",
+            leave=False,
+        ):
+            multimer = _process_multimer(g_N)
+            if multimer is not None:
+                multimers.append(multimer)
 
     return multimers
 
