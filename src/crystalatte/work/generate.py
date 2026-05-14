@@ -4,7 +4,7 @@ from collections import defaultdict
 
 import numpy as np
 import qcelemental as qcel
-from scipy.spatial.distance import cdist
+from scipy.spatial.distance import cdist, pdist
 from tqdm import tqdm
 
 from ..core.crystal import Crystal
@@ -98,6 +98,26 @@ def _generate_neighbors(
     # actually translate the symops
     full_ops: list[SymOp] = [pair[0].translate(pair[1]) for pair in op_tr_pairs]
     candidates: list[SymOpList] = []
+
+    # further prune based on distance to reference monomer
+    frac_mons = [op.apply(monomer.frac_coords) for op in full_ops]
+    cart_mons = [crystal.to_cartesian(m) for m in frac_mons]
+
+    delete_indices = []
+    for i, cart_mon in enumerate(cart_mons):
+        if kwargs.get("use_com", False):
+            masses = np.array(
+                [qcel.periodictable.to_mass(sym) for sym in monomer.symbols]
+            )
+            com_mon = np.average(cart_mon, axis=0, weights=masses)
+            dist = np.linalg.norm(com_mon - monomer.centroid_cart)
+        else:
+            dist = cdist(monomer.cart_coords, cart_mon).min()
+
+        if dist > R:
+            delete_indices.append(i)
+
+    full_ops = [op for i, op in enumerate(full_ops) if i not in delete_indices]
 
     # Expensive for large N, but its the price we pay
     for g_N in tqdm(
