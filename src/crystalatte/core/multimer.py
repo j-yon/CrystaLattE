@@ -6,7 +6,7 @@ import numpy as np
 import qcelemental as qcel
 from numpy.typing import NDArray
 
-from .sym_ops import SymOp
+from .sym_ops import SymOp, SymOpList
 
 
 @dataclass
@@ -122,6 +122,7 @@ class Multimer:
     """
 
     _monomers: list[Monomer]
+    _sym_ops: SymOpList
     _multiplicity: int = 1
     _geometric_mean: float = field(init=False)
 
@@ -145,6 +146,11 @@ class Multimer:
     def monomers(self) -> list[Monomer]:
         """Return the list of monomers in the multimer."""
         return self._monomers
+
+    @property
+    def sym_ops(self) -> SymOpList:
+        """Return the list of symmetry operations that generate the monomers in the multimer."""
+        return self._sym_ops
 
     @property
     def multiplicity(self) -> int:
@@ -184,6 +190,24 @@ class Multimer:
     def to_monomer_molecules(self) -> list[qcel.models.Molecule]:
         """Return the monomers as separate QCElemental Molecules."""
         return [monomer.to_molecule() for monomer in self._monomers]
+
+    def __eq__(self, value: object, /) -> bool:
+        """Determine if two multimers are equivalent based on their monomers and symmetry operations."""
+        if not isinstance(value, Multimer):
+            return NotImplemented
+
+        if len(self._monomers) != len(value._monomers):
+            return False
+
+        for m1, m2 in zip(self._monomers, value._monomers):
+            if m1._symbols != m2._symbols:
+                return False
+            if not np.allclose(m1._centroid_cart, m2._centroid_cart, atol=1e-3):
+                return False
+            if m1._symop != m2._symop:
+                return False
+
+        return True
 
     def __repr__(self) -> str:
         """Return a string representation of the multimer."""
