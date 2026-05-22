@@ -5,7 +5,10 @@ from pathlib import Path
 from enum import Enum
 import json
 
-from .sym_ops import SymOp, SymOpList
+import numpy as np
+from numpy.typing import NDArray
+
+from .sym_ops import SymOp
 
 conventions: Final = ["Hermann-Mauguin", "Schoenflies", "PDB", "Hall", "short"]
 
@@ -81,6 +84,10 @@ class SpaceGroup:
         self._lattice_system = data["lattice_system"]
         self._sym_ops = [SymOp(op) for op in data["sym_ops"]]
         self._lattice_constraints = data["lattice_constraints"]
+        self._special_positions = data["special_wyckoff_positions"]
+
+    def __reduce__(self) -> tuple[type[SpaceGroup], tuple[int]]:
+        return (self.__class__, (self._number,))
 
     @classmethod
     def _load_data(cls):
@@ -124,6 +131,32 @@ class SpaceGroup:
     def lattice_constraints(self) -> dict:
         """Return the lattice constraints for the space group."""
         return self._lattice_constraints
+
+    def get_unique_sym_ops(self, coords: NDArray) -> list[SymOp]:
+        """Return a list of unique symmetry operations in the space group given a center of mass. Used to account for special Wyckoff positions.
+
+        :param coords: The fractional coordinates of the center of mass of the monomer. Should be a 3-element array of floats between 0 and 1
+        :returns: A list of unique symmetry operations that should be applied to the monomer to generate full multimers, accounting for any special Wyckoff positions
+        :raises ValueError: If the number of unique symmetry operations found does not match the expected multiplicity for the special position
+        """
+        for letter, pos in self._special_positions.items():
+            for site in pos["coordinates"]:
+                if np.allclose(coords, site):
+                    unique = {}
+                    for op in self._sym_ops:
+                        res = op.apply(coords)
+                        res = tuple(np.round(res, decimals=8) % 1)
+
+                        if res not in unique:
+                            unique[res] = op
+
+                    if len(unique) != pos["multiplicity"]:
+                        raise ValueError(
+                            f"Expected {pos['multiplicity']} unique symmetry operations for position {letter}, but found {len(unique)}."
+                        )
+                    return list(unique.values())
+
+        return self._sym_ops
 
     def __repr__(self) -> str:
         return f"SpaceGroup(number={self._number}, symbol='{self._symbol}')"
