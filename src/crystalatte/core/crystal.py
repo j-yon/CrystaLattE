@@ -135,7 +135,7 @@ class Crystal:
         :param symbol: The atomic symbol of the element (e.g., 'C', 'O', 'N').
         :returns: The covalent radius of the element in Angstroms.
         """
-        # qcelemental returns covalent radii in Bohr
+        # TODO: dont use qcel
         radius_bohr = qcel.covalentradii.get(symbol)
         return radius_bohr * qcel.constants.bohr2angstroms  # type: ignore
 

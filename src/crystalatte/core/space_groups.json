@@ -12,6 +12,7 @@
     "crystal_system": "triclinic",
     "lattice_system": "triclinic",
     "sym_ops": ["x,y,z"],
+    "special_wyckoff_positions": {},
     "lattice_constraints": {
       "a": null,
       "b": null,
@@ -34,6 +35,7 @@
     "crystal_system": "monoclinic",
     "lattice_system": "monoclinic",
     "sym_ops": ["x,y,z", "-x,y+1/2,-z"],
+    "special_wyckoff_positions": {},
     "lattice_constraints": {
       "a": null,
       "b": null,
@@ -65,6 +67,28 @@
       "-x-1/2,y-1/2,z",
       "x,-y-1/2,z-1/2"
     ],
+    "special_wyckoff_positions": {
+      "a": {
+        "multiplicity": 4,
+        "site_symmetry": "-1",
+        "coordinates": [
+          [0, 0, 0],
+          [0.5, 0, 0.5],
+          [0, 0.5, 0.5],
+          [0.5, 0.5, 0]
+        ]
+      },
+      "b": {
+        "multiplicity": 4,
+        "site_symmetry": "-1",
+        "coordinates": [
+          [0, 0, 0.5],
+          [0.5, 0, 0],
+          [0, 0.5, 0],
+          [0.5, 0.5, 0.5]
+        ]
+      }
+    },
     "lattice_constraints": {
       "a": null,
       "b": null,
