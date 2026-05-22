@@ -41,8 +41,8 @@ class Crystal:
 
     def _update_matrices(self):
         """Compute fractional <-> Cartesian transformation matrices."""
-        # Convert angles to radians
-        alpha, beta, gamma = np.radians([self._alpha, self._beta, self._gamma])
+        a, b, c = self._vectors
+        alpha, beta, gamma = np.radians(self._angles)
 
         cos_alpha = np.cos(alpha)
         cos_beta = np.cos(beta)
@@ -61,12 +61,12 @@ class Crystal:
         # Fractional to Cartesian matrix (column vectors are lattice vectors)
         # Using the standard crystallographic convention:
         # a along x, b in xy plane, c general
-        c_y = self._c * (cos_alpha - cos_beta * cos_gamma) / sin_gamma
+        c_y = c * (cos_alpha - cos_beta * cos_gamma) / sin_gamma
         self._frac_to_cart = np.array(
             [
-                [self._a, self._b * cos_gamma, self._c * cos_beta],
-                [0.0, self._b * sin_gamma, c_y],
-                [0.0, 0.0, self._c * omega / sin_gamma],
+                [a, b * cos_gamma, c * cos_beta],
+                [0.0, b * sin_gamma, c_y],
+                [0.0, 0.0, c * omega / sin_gamma],
             ]
         )
 
@@ -78,14 +78,12 @@ class Crystal:
 
         :raises ValueError: If lattice parameters are non-positive or if angles are not between 0 and 180 degrees
         """
-        if self._a <= 0 or self._b <= 0 or self._c <= 0:
+        a, b, c = self._vectors
+        alpha, beta, gamma = self._angles
+        if a <= 0 or b <= 0 or c <= 0:
             raise ValueError("Lattice parameters must be positive.")
 
-        if (
-            not (0 < self._alpha < 180)
-            or not (0 < self._beta < 180)
-            or not (0 < self._gamma < 180)
-        ):
+        if not (0 < alpha < 180) or not (0 < beta < 180) or not (0 < gamma < 180):
             raise ValueError("Lattice angles must be between 0 and 180 degrees.")
 
         # sg = self._space_group
@@ -282,8 +280,7 @@ class Crystal:
 
     def __repr__(self) -> str:
         return (
-            f"Crystal(a={self._a}, b={self._b}, c={self._c}, "
-            f"alpha={self._alpha}, beta={self._beta}, gamma={self._gamma}, "
+            f"Crystal(vectors={self._vectors}, angles={self._angles}, "
             f"space_group={self._space_group})"
         )
 
