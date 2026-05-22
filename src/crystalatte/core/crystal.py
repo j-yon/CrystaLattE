@@ -17,37 +17,16 @@ class Crystal:
     """
     Represents a crystal unit cell with lattice parameters and space group symmetry.
 
-    :param a: Lattice parameter a in Angstroms
-    :type a: np.float64
-
-    :param b: Lattice parameter b in Angstroms
-    :type b: np.float64
-
-    :param c: Lattice parameter c in Angstroms
-    :type c: np.float64
-
-    :param alpha: Lattice angle alpha in degrees
-    :type alpha: np.float64
-
-    :param beta: Lattice angle beta in degrees
-    :type beta: np.float64
-
-    :param gamma: Lattice angle gamma in degrees
-    :type gamma: np.float64
-
-    :param space_group: The crystal's space group
-    :type space_group: SpaceGroup
-
-    :param symops: List of symmetry operations for the space group
-    :type symops: List[SymOp]
+    :param _vectors: Lattice vectors (a, b, c) in Angstroms
+    :param _angles: Lattice angles (alpha, beta, gamma) in degrees
+    :param _space_group: The crystal's space group
+    :param _asu: The asymmetric unit of the crystal, containing the unique atoms and their positions
+    :ivar _frac_to_cart: A 3x3 matrix for converting fractional coordinates to Cartesian coordinates
+    :ivar _cart_to_frac: A 3x3 matrix for converting Cartesian coordinates to fractional coordinates
     """
 
-    _a: float
-    _b: float
-    _c: float
-    _alpha: float
-    _beta: float
-    _gamma: float
+    _vectors: tuple[float, float, float]
+    _angles: tuple[float, float, float]
     _space_group: SpaceGroup
     _asu: ASU
 
@@ -56,7 +35,7 @@ class Crystal:
     _cart_to_frac: NDArray[np.float64] = field(init=False, repr=False)
 
     def __post_init__(self):
-        """Initialize transformation matrices."""
+        """Validate crystal attributes and initialize transformation matrices."""
         self._validate_crystal()
         self._update_matrices()
 
@@ -95,9 +74,9 @@ class Crystal:
         self._cart_to_frac = np.linalg.inv(self._frac_to_cart)  # type: ignore
 
     def _validate_crystal(self):
-        """Things to validate
-        - Space group must be consistent with lattice parameters
-        - ASU atoms must be within the ASU region of space group
+        """Validate the provided crystal attributes.
+
+        :raises ValueError: If lattice parameters are non-positive or if angles are not between 0 and 180 degrees
         """
         if self._a <= 0 or self._b <= 0 or self._c <= 0:
             raise ValueError("Lattice parameters must be positive.")
@@ -120,9 +99,11 @@ class Crystal:
         return self._space_group
 
     @property
-    def lattice_parameters(self) -> tuple[float, float, float, float, float, float]:
-        """Return lattice parameters (a, b, c, alpha, beta, gamma)."""
-        return self._a, self._b, self._c, self._alpha, self._beta, self._gamma
+    def lattice_parameters(
+        self,
+    ) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+        """Return lattice parameters (a, b, c), (alpha, beta, gamma)."""
+        return self._vectors, self._angles
 
     @property
     def lattice_vectors(self) -> NDArray[np.float64]:
@@ -135,53 +116,39 @@ class Crystal:
         return abs(np.linalg.det(self._frac_to_cart))
 
     def to_cartesian(self, frac_coords: NDArray[np.float64]) -> NDArray[np.float64]:
-        """
-        Convert fractional coordinates to Cartesian coordinates.
+        """Convert fractional coordinates to Cartesian coordinates.
 
-        Parameters
-        ----------
-        frac_coords : NDArray[np.float64]
-            Fractional coordinates, shape (N, 3).
-
-        Returns
-        -------
-        NDArray[np.float64]
-            Cartesian coordinates in Angstroms.
+        :param frac_coords: Fractional coordinates, shape (N, 3)
+        :returns: Cartesian coordinates in Angstroms, shape (N, 3)
         """
         return (self._frac_to_cart @ frac_coords.T).T
 
     def to_fractional(self, cart_coords: NDArray[np.float64]) -> NDArray[np.float64]:
-        """
-        Convert Cartesian coordinates to fractional coordinates.
+        """Convert Cartesian coordinates to fractional coordinates.
 
-        Parameters
-        ----------
-        cart_coords : NDArray[np.float64]
-            Cartesian coordinates in Angstroms, shape (N, 3).
-
-        Returns
-        -------
-        NDArray[np.float64]
-            Fractional coordinates.
+        :param cart_coords: Cartesian coordinates in Angstroms, shape (N, 3)
+        :returns: Fractional coordinates, shape (N, 3)
         """
         return (self._cart_to_frac @ cart_coords.T).T
 
     def _get_covalent_radius(self, symbol: str) -> float:
         """Get covalent radius for an element in Angstroms.
 
-        Parameters:
-        symbol : str
-            Element symbol.
-
-        Returns:
-        float
-            Covalent radius in Angstroms.
+        :param symbol: The atomic symbol of the element (e.g., 'C', 'O', 'N').
+        :returns: The covalent radius of the element in Angstroms.
         """
         # qcelemental returns covalent radii in Bohr
         radius_bohr = qcel.covalentradii.get(symbol)
         return radius_bohr * qcel.constants.bohr2angstroms  # type: ignore
 
-    def _bfs(self, coords: NDArray, elements: NDArray, tol=1.2):
+    def _bfs(self, coords: NDArray, elements: NDArray, tol=1.2) -> list[list[int]]:
+        """Perform a breadth-first search to find connected components of atoms based on covalent bonding.
+
+        :param coords: Cartesian coordinates of atoms, shape (N, 3)
+        :param elements: Atomic symbols corresponding to the coordinates, shape (N,)
+        :param tol: Tolerance factor for determining bonding (default 1.2)
+        :returns: A list of lists, where each inner list contains the indices of atoms in a connected component (monomer)
+        """
         coords = np.asarray(coords)
 
         N = len(coords)
@@ -229,7 +196,11 @@ class Crystal:
         return fragments
 
     def get_reference(self, tol: float = 1.2) -> Monomer:
-        """Identify a reference monomer in the crystal by finding the connected component of atoms closest to the origin"""
+        """Identify a reference monomer in the crystal by finding the connected component of atoms closest to the origin.
+
+        :param tol: Tolerance factor for determining bonding (default 1.2)
+        :returns: A Monomer object representing the reference monomer
+        """
         all_symbols = []
         all_frac = []
         for d in product(range(-1, 2), repeat=3):

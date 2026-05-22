@@ -36,11 +36,24 @@ class LatticeSystem(Enum):
 
 @dataclass
 class SpaceGroup:
+    """Represents a space group, which is a mathematical description of the symmetry of a crystal structure. Contains information about the space group number, symbol, point group, crystal system, lattice system, symmetry operations, lattice constraints, and special Wyckoff positions.
+
+    :param _number: The space group number (1-230)
+    :ivar _registry: A class variable that stores instances of SpaceGroup to ensure that only one instance exists for each space group number (singleton pattern)
+    :ivar _data: A class variable that stores the space group data loaded from a JSON
+    """
+
+    _number: int
     _registry: ClassVar[dict[int, SpaceGroup]] = {}
     _data: ClassVar[dict[str, dict]] = {}
 
     def __new__(cls, number: int) -> SpaceGroup:
-        """Create a SpaceGroup instance from a space group number."""
+        """Create a SpaceGroup instance from a space group number.
+
+        :param number: The space group number (1-230)
+        :returns: A SpaceGroup instance corresponding to the given space group number. If an instance for the given number already exists in the registry, it will be returned instead of creating a new one
+        :raises ValueError: If the space group number is not found in the data
+        """
         if number in cls._registry:
             return cls._registry[number]
 

@@ -11,14 +11,12 @@ from scipy.spatial.distance import pdist
 @dataclass()
 class SymOp:
     """
-    A symmetry operation defined by a rotation matrix and translation vector.
-    The symmetry operation transforms fractional coordinates as: x' = rot @ x + tr
+    A symmetry operation defined by a rotation matrix and translation vector. The symmetry operation transforms fractional coordinates as: x' = rot @ x + tr
 
-    :param rot: A 3x3 matrix corresponding to the rotational component of the symmetry operation in fractional coordinates
-    :type rot: NDArray[np.float64]
-
-    :param tr: A 3D vector corresponding to the translational component of the symmetry operation in fractional coordinates
-    :type tr: NDArray[np.float64]
+    :param _op: A symmetry operation string like 'x,y,z' or '-x+1/2,y,-z+1/2'
+    :ivar _rot: A 3x3 matrix corresponding to the rotational component of the symmetry operation in fractional coordinates
+    :ivar _tr: A 3D vector corresponding to the translational component of the symmetry operation in fractional coordinates
+    :ivar _augment: A 4x4 matrix representing the symmetry operation in augmented matrix form, where the upper left 3x3 block is the rotation and the upper right 3x1 block is the translation. The last row is [0, 0, 0, 1] for homogeneous coordinates.
     """
 
     _op: str | None
@@ -27,11 +25,7 @@ class SymOp:
     _augment: NDArray[np.int16] = field(init=False)
 
     def __post_init__(self):
-        """Constructor method
-
-        :param op: A symmetry operation string like 'x,y,z' or '-x+1/2,y,-z+1/2'
-        :type op: str
-        """
+        """Constructor method"""
         if self._op is None:
             raise ValueError(
                 "SymOp must be initialized with a symmetry operation string"
@@ -47,7 +41,7 @@ class SymOp:
         """Parse a symmetry operation from an xyz string
 
         :param op: A symmetry operation string like 'x,y,z' or '-x+1/2,y,-z+1/2'
-        :type op: str
+        :returns: A tuple of (rot, tr) where rot is a 3x3 matrix corresponding to the rotational component of the symmetry operation in fractional coordinates, and tr is a 3D vector corresponding to the translational component of the symmetry operation in fractional coordinates (integers representing multiples of 1/12 for efficiency)
         """
         rot = np.zeros((3, 3), dtype=np.int16)
         tr = np.zeros(3, dtype=np.int16)
@@ -129,10 +123,9 @@ class SymOp:
         """Create a SymOp from given rotation and translation components
 
         :param rot: A 3x3 matrix corresponding to the rotational component of the symmetry operation in fractional coordinates
-        :type rot: NDArray[np.int8]
-
         :param tr: A 3D vector corresponding to the translational component of the symmetry operation in fractional coordinates
-        :type tr: NDArray
+        :param op: An optional symmetry operation string like 'x,y,z' or '-x+1/2,y,-z+1/2' to associate with the SymOp for reference. This is not used for any calculations, but can be useful for debugging or output purposes.
+        :returns: A SymOp object with the specified rotation and translation components, and an optional symmetry operation string for reference
         """
         symop = cls.__new__(cls)
         symop._rot = rot
@@ -150,7 +143,7 @@ class SymOp:
         """Return a new SymOp with the same rotation but translated by the given vector. The original vector in fractional coordinates must be given multiplied by 12, since translations are stored as integers for efficiency.
 
         :param translation: A 3D vector in fractional coordinates to translate the symmetry operation by
-        :type translation: NDArray
+        :returns: A new SymOp with the same rotation but translated by the given vector
         """
         new_tr = self._tr + translation
         return SymOp.from_components(self._rot, new_tr, self._op)
@@ -159,7 +152,7 @@ class SymOp:
         """Return the composition of this symmetry operation with another: self * other
 
         :param other: Another symmetry operation to compose with
-        :type other: SymOp
+        :returns: The affine composition of this symmetry operation with the other
         """
         new_rot = self._rot @ other._rot
         new_tr = self._rot @ other._tr + self._tr
@@ -169,7 +162,7 @@ class SymOp:
         """Return the composition of this symmetry operation with another using augmented matrices: self * other
 
         :param other: Another symmetry operation to compose with
-        :type other: SymOp
+        :returns: The composition of this symmetry operation with the other, calculated using matrix multiplication of their augmented matrix representations
         """
         new_augment = self._augment @ other._augment
         new_rot = new_augment[:3, :3]
@@ -180,22 +173,19 @@ class SymOp:
         """Apply this SymOp to the given fractional coordinates
 
         :param frac_coords: An Nx3 array of fractional coordinates to transform
-        :type frac_coords: NDArray[np.float64]
+        :returns: The transformed fractional coordinates after applying the symmetry operation, calculated as x' = rot @ x + tr, where rot is the rotational component and tr is the translational component of the symmetry operation
         """
         return (self._rot @ frac_coords.T).T + (self._tr / 12)
 
     def __eq__(self, value: object, /) -> bool:
-        """Check if two SymOps are equal by comparing their augmented matrices."""
         if not isinstance(value, SymOp):
             return NotImplemented
         return np.array_equal(self._augment, value._augment)
 
     def __hash__(self) -> int:
-        """Hash the SymOp based on its augmented matrix."""
         return hash(self._augment.tobytes())
 
     def __iter__(self):
-        """Return an iterator over the components of the symmetry operation (rotation and translation)."""
         yield self._rot
         yield self._tr
 
@@ -208,23 +198,26 @@ class SymOpList:
     """
     A list of symmetry operations, typically representing a subset of symmetry operations of a space group.
 
-    :param sym_ops: A list of SymOp objects representing the symmetry operations
-    :type sym_ops: list[SymOp]
-
-    :param multiplicity: The number of equivalent multimers that can be generated by this list of symmetry operations
-    :type multiplicity: int
+    :param _sym_ops: A list of SymOp objects representing the symmetry operations
+    :param _multiplicity: The number of equivalent multimers that can be generated by this list of symmetry operations
+    :ivar _ops: An optional list of symmetry operation strings corresponding to the SymOp objects, for reference. This is not used for any calculations, but can be useful for debugging or output purposes.
+    :ivar _rot_cache: A cached array of the rotational components of the symmetry operations for efficient access
+    :ivar _tr_cache: A cached array of the translational components of the symmetry operations
+    :ivar _aug_cache: A cached array of the augmented matrix representations of the symmetry operations
     """
 
     _sym_ops: list[SymOp] | None
     _multiplicity: int
-
     _ops: list[str] | None = field(default=None, repr=False)
     _rot_cache: NDArray = field(init=False, repr=False)
     _tr_cache: NDArray = field(init=False, repr=False)
     _aug_cache: NDArray = field(init=False, repr=False)
 
     def __post_init__(self):
-        """Constructor method"""
+        """Constructor method to validate inputs and compute caches for the symmetry operations.
+
+        :raises ValueError: If the list of symmetry operations is empty or if the multiplicity is not a positive integer
+        """
         if not self._sym_ops:
             raise ValueError("SymOpList must contain at least one SymOp")
         if self._multiplicity < 1:
@@ -325,6 +318,14 @@ class SymOpList:
     def from_components(
         cls, rot: NDArray, tr: NDArray, multiplicity: int, ops: list[str] | None = None
     ) -> SymOpList:
+        """Create a SymOpList from given rotation and translation components.
+
+        :param rot: An Nx3x3 array of the rotational components of the symmetry operations in fractional coordinates
+        :param tr: An Nx3 array of the translational components of the symmetry operations in fractional coordinates (integers representing multiples of 1/12 for efficiency)
+        :param multiplicity: The number of equivalent multimers that can be generated by this list of symmetry operations
+        :param ops: An optional list of symmetry operation strings corresponding to the SymOp objects for reference
+        :returns: A SymOpList object with the specified rotation and translation components, multiplicity, and an optional list of symmetry operation strings for reference
+        """
         instance = cls.__new__(cls)
         instance._sym_ops = None
         instance._multiplicity = multiplicity
@@ -344,8 +345,9 @@ class SymOpList:
     ) -> SymOpList:
         """Return a new SymOpList with all symmetry operations rotated by the given matrix in fractional coordinates.
 
-        :param translation: A tensor of rotations in fractional coordinates to translate all symmetry operations by
-        :type translation: NDArray
+        :param rotation: A 3x3 matrix in fractional coordinates to rotate all symmetry operations by
+        :param exclude_reference: If True, the first symmetry operation in the list will be treated as a reference and not rotated.
+        :returns: A new SymOpList with all symmetry operations rotated by the given matrix.
         """
         new_rot = self._rot_cache.copy()
         new_rot[:] = rotation @ new_rot.transpose(0, 2, 1)
@@ -358,7 +360,9 @@ class SymOpList:
         """Return a new SymOpList with all symmetry operations translated by the given vector in fractional coordinates. The vector must be given as a multiple of 1/12 in fractional coordinates, since translations are stored as integers multiplied by 12.
 
         :param translation: A 3D matrix of translations in fractional coordinates to translate all symmetry operations by
-        :type translation: NDArray
+        :param exclude_reference: If True, the first symmetry operation in the list will be treated as a reference and not translated
+        :returns: A new SymOpList with all symmetry operations translated by the given vector
+        :raises ValueError: If the translation matrix does not have the same number of rows as the number of symmetry operations, or if it does not have one row for all operations when exclude_reference is True
         """
         n = len(self._tr_cache)
 
@@ -377,11 +381,9 @@ class SymOpList:
         return SymOpList.from_components(self._rot_cache, new_tr, self._multiplicity)
 
     def __iter__(self):
-        """Return an iterator over the symmetry operations."""
         return iter(self.sym_ops)
 
     def __len__(self):
-        """Return the number of symmetry operations in the list."""
         return len(self.sym_ops)
 
     @overload

@@ -11,21 +11,20 @@ from .sym_ops import SymOp, SymOpList
 
 @dataclass
 class ASU:
-    """
-    Represents an asymmetric unit (ASU) of a crystal structure, which is the smallest portion of the crystal that can generate the entire unit cell through the application of the space group's symmetry operations. Contains the atoms and their positions within the ASU
+    """Represents an asymmetric unit (ASU) of a crystal structure, which is the smallest portion of the crystal that can generate the entire unit cell through the application of the space group's symmetry operations. Contains the atoms and their positions within the ASU.
 
-    :param atoms: A list of atomic symbols corresponding to the atoms in the ASU
-    :type atoms: list[str]
-
-    :param positions: A list of fractional coordinates corresponding to the positions of the atoms in the ASU
-    :type positions: list[NDArray[np.float64]]
+    :param _atoms: A list of atomic symbols corresponding to the atoms in the ASU
+    :param _positions: A list of fractional coordinates corresponding to the positions of the atoms in the ASU
     """
 
     _atoms: list[str]
-    _positions: np.ndarray
+    _positions: NDArray[np.float64]
 
     def __post_init__(self):
-        """Constructor method"""
+        """ASU validation.
+
+        :raises ValueError: If the number of atoms does not match the number of positions or if the positions are not in the correct format.
+        """
         if len(self._atoms) != len(self._positions):
             raise ValueError("Number of atoms must match number of positions")
 
@@ -35,29 +34,21 @@ class ASU:
         return self._atoms
 
     @property
-    def positions(self) -> np.ndarray:
+    def positions(self) -> NDArray:
         """Return the list of fractional coordinates for the atoms in the ASU."""
         return self._positions
 
 
 @dataclass
 class Monomer:
-    """
-    Represents a molecular monomer in the crystal.
+    """Represents a molecular monomer in the crystal.
 
-    Attributes
-    ----------
-    symbols : List[str]
-        Atom symbols in the monomer.
-    frac_coords : NDArray[np.float64]
-        Fractional coordinates of atoms, shape (N, 3).
-    cart_coords : NDArray[np.float64]
-        Cartesian coordinates of atoms, shape (N, 3).
-    centroid_frac : NDArray[np.float64]
-        Centroid in fractional coordinates.
-    centroid_cart : NDArray[np.float64]
-        Centroid in Cartesian coordinates (Angstroms).
-    symop: Symmetry operation that generates this monomer from the reference monomer (optional).
+    :param _symbols: A list of atomic symbols corresponding to the atoms in the monomer
+    :param _frac_coords: A list of fractional coordinates corresponding to the positions of the atoms in the monomer
+    :param _cart_coords: A list of Cartesian coordinates corresponding to the positions of the atoms in the monomer
+    :param _centroid_frac: The centroid of the monomer in fractional coordinates
+    :param _centroid_cart: The centroid of the monomer in Cartesian coordinates
+    :param _symop: The symmetry operation that generates this monomer from the reference monomer, if applicable
     """
 
     _symbols: list[str]
@@ -114,11 +105,10 @@ class Monomer:
 class Multimer:
     """Represents a unique multimer pairing of N monomers.
 
-    Attributes:
-    monomers: List[Monomer]
-        List of monomers in the multimer, with the reference monomer first.
-    multiplicity : int
-        Number of symmetry-equivalent copies of this multimer type.
+    :param _monomers: A list of Monomer objects that make up the multimer
+    :param _sym_ops: A list of symmetry operations that generate the monomers in the multimer
+    :param _multiplicity: The multiplicity of the multimer, which is the number of times this multimer appears in the crystal due to symmetry
+    :ivar _geometric_mean: The geometric mean of the inter-monomer distances in the multimer, which can be used as a measure of the overall size of the multimer and to filter out multimers that are too large or too small based on a specified cutoff
     """
 
     _monomers: list[Monomer]
@@ -168,7 +158,10 @@ class Multimer:
         return self._geometric_mean
 
     def to_molecule(self) -> qcel.models.Molecule:
-        """Convert multimer to QCElemental Molecule object."""
+        """Convert multimer to QCElemental Molecule object.
+
+        :returns: A QCElemental Molecule object representing the multimer, with atomic symbols and Cartesian coordinates for all atoms in the multimer
+        """
         symbols = [monomer._symbols for monomer in self._monomers]
         coords = [monomer._cart_coords for monomer in self._monomers]
         symbols = np.array(symbols)
@@ -188,11 +181,13 @@ class Multimer:
         )
 
     def to_monomer_molecules(self) -> list[qcel.models.Molecule]:
-        """Return the monomers as separate QCElemental Molecules."""
+        """Return the monomers as separate QCElemental Molecules.
+
+        :returns: A list of QCElemental Molecule objects, each representing a monomer in the multimer, with atomic symbols and Cartesian coordinates for the atoms in each monomer
+        """
         return [monomer.to_molecule() for monomer in self._monomers]
 
     def __eq__(self, value: object, /) -> bool:
-        """Determine if two multimers are equivalent based on their monomers and symmetry operations."""
         if not isinstance(value, Multimer):
             return NotImplemented
 
@@ -210,7 +205,6 @@ class Multimer:
         return True
 
     def __repr__(self) -> str:
-        """Return a string representation of the multimer."""
         return f"Multimer(Monomers={self._monomers}, multiplicity={self._multiplicity}, geometric_mean={self._geometric_mean:.2f} Å)"
 
 
