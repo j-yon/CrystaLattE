@@ -12,33 +12,22 @@ from ..core.multimer import Monomer, Multimer
 from ..core.sym_ops import SymOp, SymOpList
 
 
-def _is_bijection(g_N: SymOpList, h_N: SymOpList) -> bool:
-    """Check if there exists a bijection between the sets of symmetry operations g_N and h_N.
-
-    :param g_N: A SymOpList representing the first set of symmetry operations.
-    :type g_N: SymOpList
-
-    :param h_N: A SymOpList representing the second set of symmetry operations.
-    :type h_N: SymOpList
-
-    :returns: True if there exists a bijection between g_N and h_N, False otherwise.
-    :rtype: bool
-    """
+def _is_bijection(g_N, h_N):
     n = len(g_N)
 
-    # Precompute augment matrix caches for g_N for fast comparison
-    g_aug = g_N.aug_cache.copy()
-    g_fp = g_aug.reshape(n, -1)
+    # Precompute flattened cache of target matrices for quick matching
+    g_fp = g_N.aug_cache.reshape(n, -1)
 
-    for i in range(n):
-        # Need to multiply h_rot by g_tr to get correct composed translation
-        g_tr_rotated = np.tile(np.eye(4), (n, 1, 1))  # (n, 4, 4)
-        g_tr_rotated[:, :3, :3] = g_N.rot_cache[i]
-        g_tr_rotated[:, :3, 3] = h_N.rot_cache @ g_N.tr_cache[i]
-        composed = h_N.aug_cache @ g_tr_rotated  # (n, 4, 4)
-        composed_fp = composed.reshape(n, -1)
+    # We want to test every operation in h_N composed with every operation in g_N.
+    composed = g_N.aug_cache[:, None, :, :] @ h_N.aug_cache[None, :, :, :]
 
-        # Check each composed result is in g_N:
+    # Loop over each 'candidate' transformation h_i (outer dimension), skipping the identity (i=0) since it will just reproduce g_N and we want to find a non-trivial bijection
+    for i in range(1, n):
+        # Shape: (n, 4, 4) -> represents (h_i * g_j) for all j
+        h_i_composed = composed[i]
+        composed_fp = h_i_composed.reshape(n, -1)
+
+        # Check if each composed result exists inside the original g_N set
         in_g = np.all(composed_fp[:, None, :] == g_fp[None, :, :], axis=-1).any(axis=-1)
 
         if not in_g.all():
@@ -47,7 +36,7 @@ def _is_bijection(g_N: SymOpList, h_N: SymOpList) -> bool:
         # Injectivity check
         unique_rows = np.unique(composed_fp, axis=0)
         if len(unique_rows) == n:
-            return True  # Surjectivity is implied since |composed| == |g_N| == n
+            return True
 
     return False
 
@@ -56,10 +45,7 @@ def _process_bucket(bucket: list[SymOpList]) -> tuple[list[SymOpList], list[SymO
     """Given a bucket of SymOpLists that share the same translation fingerprint, identify which are unique multimers and which are duplicates based on bijections between their symmetry operations.
 
     :param bucket: A list of SymOpList objects that share the same translation fingerprint.
-    :type bucket: list[SymOpList]
-
     :returns: A tuple of (unique_multimers, duplicate_multimers) where each is a list of SymOpList representing the unique and duplicate multimers found in the bucket.
-    :rtype: tuple[list[SymOpList], list[SymOpList]]
     """
     local_unique: list[SymOpList] = []
     local_dup: list[SymOpList] = []
@@ -67,9 +53,10 @@ def _process_bucket(bucket: list[SymOpList]) -> tuple[list[SymOpList], list[SymO
         for u in local_unique:
             if _is_bijection(g_t, u):
                 # sometimes g_t can be closer (even though the distance matrix is the same) and this can lead to a missed unique multimer when filtering by radius
-                g_dist = np.linalg.norm(g_t.translations, axis=1).sum()
-                u_dist = np.linalg.norm(u.translations, axis=1).sum()
-                if g_dist < u_dist:
+                if (
+                    np.linalg.norm(g_t.translations, axis=1).sum()
+                    < np.linalg.norm(u.translations, axis=1).sum()
+                ):
                     local_dup.append(u)
                     local_unique.remove(u)
                     local_unique.append(g_t)
