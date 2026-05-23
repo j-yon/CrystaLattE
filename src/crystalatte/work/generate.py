@@ -6,6 +6,7 @@ import numpy as np
 import qcelemental as qcel
 from scipy.spatial.distance import cdist, pdist
 from tqdm import tqdm
+from numpy.typing import NDArray
 
 from ..core.crystal import Crystal
 from ..core.multimer import Monomer, Multimer
@@ -75,7 +76,7 @@ def _process_bucket(bucket: list[SymOpList]) -> tuple[list[SymOpList], list[SymO
 def _generate_neighbors(
     crystal: Crystal,
     monomer: Monomer,
-    cutoff: list[tuple[int, int]],
+    cutoff: NDArray,
     R: float,
     N: int,
     **kwargs,
@@ -89,7 +90,6 @@ def _generate_neighbors(
     :type N: int
 
     :returns: A tuple of (unique_multimers, duplicate_multimers) where each is a list of SymOpList representing the unique and duplicate multimers found in the central and neighboring unit cells.
-    :rtype: tuple[list[SymOpList], list[SymOpList]]
     """
     # Get the symmetry operations that are unique for the monomer's position in the unit cell. This accounts for special Wyckoff positions where some symmetry operations may map the monomer onto itself and therefore not generate a new multimer.
     sym_ops = crystal.space_group.get_unique_sym_ops(monomer.centroid_frac)
@@ -260,39 +260,15 @@ def generate(
     :returns: A list of unique Multimer objects representing the multimers found in the crystal.
     :rtype: list[Multimer]
     """
-    lat_vecs = crystal.lattice_vectors
-
-    V = crystal.volume
-    b1 = np.cross(lat_vecs[:, 1], lat_vecs[:, 2]) / V
-    b2 = np.cross(lat_vecs[:, 2], lat_vecs[:, 0]) / V
-    b3 = np.cross(lat_vecs[:, 0], lat_vecs[:, 1]) / V
-
-    # Perpendicular face-to-face distances
-    d = np.array(
-        [
-            1.0 / np.linalg.norm(b1),
-            1.0 / np.linalg.norm(b2),
-            1.0 / np.linalg.norm(b3),
-        ]
-    )
-
-    # Distance from reference point to each face (+ and - sides)
+    d = np.linalg.norm(crystal.lattice_vectors, axis=0)
     t = monomer.centroid_frac
-    dist_lower = t * d  # gap between ref and the face behind it
-    dist_upper = (1 - t) * d  # gap between ref and the face ahead of it
 
-    # effective radius to account for monomer extent
+    # effective bounds to search (accounting for monomer extent)
     R_eff = R + pdist(monomer.cart_coords).max()
-
-    bounds = []
-    for i in range(3):
-        n_minus = (
-            int(np.ceil((R_eff - dist_lower[i]) / d[i])) if R_eff > dist_lower[i] else 0
-        )
-        n_plus = (
-            int(np.ceil((R_eff - dist_upper[i]) / d[i])) if R_eff > dist_upper[i] else 0
-        )
-        bounds.append((-n_minus, n_plus))
+    low_bounds = -np.ceil((R_eff - t * d) / d)
+    high_bounds = np.ceil((R_eff - (1 - t) * d) / d)
+    bounds = np.vstack((low_bounds, high_bounds)).T
+    bounds = bounds.astype(int)
 
     unique_neighbors, duplicate_neighbors = _generate_neighbors(
         crystal, monomer, bounds, R, N, **kwargs
