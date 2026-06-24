@@ -5,5 +5,6 @@ TODO: fill this out
 
 from .io.cif import from_cif
 from .work.generate import generate
+from .work.validate import count_chemistry_classes
 
-__all__ = ["from_cif", "generate"]
+__all__ = ["from_cif", "generate", "count_chemistry_classes"]
