@@ -1,40 +1,38 @@
-import crystalatte as cle
+"""Smoke test + chemistry-validation harness.
+
+For each (N, R) the deduper is run and its output is validated against the
+original CrystaLattE NRE+CHSEV oracle at the same 1e-8 tolerance used by the
+old code. Reports the multimer count and the number of distinct chemistry
+classes; the two should agree (no duplicate left in the output).
+"""
+
 from time import time
-import itertools
+import crystalatte as cle
 
 
 if __name__ == "__main__":
-    kwargs = {"use_com": False, "n_jobs": 8, "verbose": 0}
+    kwargs = {"use_origin": True, "n_jobs": 8, "verbose": 0}
 
     for crystal, reference in cle.from_cif("./data/cif/Benzene.cif"):
-        for N, R in zip([2, 3, 4], [15.0, 15.0, 10.0]):
-            # returns a list of "Multimers"
-            print(f"Generating multimers for {R}...")
+        for N, R in zip([2, 3, 4], [100.0, 30.0, 20.0]):
+            print(f"--- N={N}, R={R} ---")
             start = time()
             multimers = cle.generate(crystal, reference, N=N, R=R, **kwargs)
-            end = time()
-            print(f"Returned {len(multimers)} multimers in {end - start:.2f} seconds\n")
+            print(
+                f"  generate: {len(multimers)} unique multimers in "
+                f"{time() - start:.2f} s"
+            )
 
-            # output the multimers as .xyz files
-            nres = []
-            for i, multimer in enumerate(multimers):
-                mol = multimer.to_molecule()
-                nres.append(mol.nuclear_repulsion_energy())
-                mol.to_file(f"./data/test/benzene/{N}mer_{i}.xyz")
-
-            # check for identical multimers
-            EPSILON = 1e-9
-            matches = [
-                (i, j)
-                for (i, j) in itertools.combinations(range(len(nres)), 2)
-                if abs(nres[i] - nres[j]) < EPSILON
-            ]
-            print(len(matches))
-            for match in matches:
+            start = time()
+            n_classes, _ = cle.count_chemistry_classes(multimers, atol=1e-8)
+            print(
+                f"  validation (NRE+CHSEV @ 1e-8): {n_classes} chemistry classes "
+                f"in {time() - start:.2f} s"
+            )
+            if n_classes != len(multimers):
                 print(
-                    f"Multimers {match[0]} and {match[1]} have identical nuclear repulsion energies: {nres[match[0]]:.6f} Hartree"
+                    f"  WARNING: dedup count {len(multimers)} != chemistry-class "
+                    f"count {n_classes} — duplicates remain in the output."
                 )
-                print(f"Multimer {match[0]}: {multimers[match[0]]}")
-                print(f"Multimer {match[1]}: {multimers[match[1]]}")
-
-            break
+            break  # only run N=2 by default; remove this `break` to run N=3, N=4.
+        break
