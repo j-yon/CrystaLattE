@@ -193,90 +193,92 @@ class Crystal:
 
         return fragments
 
-    def get_reference(self, tol: float = 1.2) -> Monomer:
-        """Identify a reference monomer in the crystal by finding the connected component of atoms closest to the origin.
-
-        :param tol: Tolerance factor for determining bonding (default 1.2)
-        :returns: A Monomer object representing the reference monomer
+    def _find_molecules(self, tol: float = 1.2):
+        """Expand the ASU by all sym-ops x lattice translations, dedup positions,
+        BFS into complete molecules, and return
+        ``(unique_frac, unique_cart, unique_symbols, full_components)`` where
+        ``full_components`` are the index lists of max-size (complete) molecules.
         """
-        all_symbols = []
-        all_frac = []
+        all_symbols, all_frac = [], []
         for d in product(range(-1, 2), repeat=3):
             translation = np.array(d)
-            for i, symop in enumerate(self._space_group.sym_ops):
+            for symop in self._space_group.sym_ops:
                 for atom, pos in zip(self._asu.atoms, self._asu.positions):
-                    new_pos = symop.apply(pos) + translation
                     all_symbols.append(atom)
-                    all_frac.append(new_pos)
-
+                    all_frac.append(symop.apply(pos) + translation)
         all_frac = np.array(all_frac)
         all_symbols = np.array(all_symbols)
 
         mask = ~np.any(np.abs(all_frac) > 2.0, axis=1)
-        all_frac = all_frac[mask]
-        all_symbols = all_symbols[mask]
+        all_frac, all_symbols = all_frac[mask], all_symbols[mask]
 
         unique_indices = []
         for i in range(len(all_frac)):
             if not unique_indices:
                 unique_indices.append(i)
                 continue
-            accepted = all_frac[unique_indices]
-            diffs = accepted - all_frac[i]
-            dists = np.linalg.norm(diffs, axis=1)
+            dists = np.linalg.norm(all_frac[unique_indices] - all_frac[i], axis=1)
             if np.all(dists >= 1e-3):
                 unique_indices.append(i)
 
         unique_frac = all_frac[unique_indices]
         unique_symbols = all_symbols[unique_indices]
-
         unique_cart = self.to_cartesian(unique_frac)
         components = self._bfs(unique_cart, unique_symbols, tol)
-
-        # NOTE: always assumes a full molecule is formed (which should be true)
         mol_len = max(len(c) for c in components)
+        full = [c for c in components if len(c) == mol_len]
+        return unique_frac, unique_cart, unique_symbols, full
 
-        min_d = np.inf
-        ref_idx = 0
-        for i, component in enumerate(components):
-            if len(component) < mol_len:
-                continue
-
-            mol_frac = unique_frac[component]
-
-            # needed for mass-accurate CoM
-            masses = np.array(
-                [
-                    qcel.periodictable.to_mass(str(sym))
-                    for sym in [unique_symbols[j] for j in component]
-                ]
-            )
-            centroid_frac = np.average(mol_frac, axis=0, weights=masses)
-
-            # Check if centroid is new closest to origin (NOT center of cell, can mess with symops)
-            curr_d = np.linalg.norm(centroid_frac)
-            if curr_d < min_d:
-                min_d = curr_d
-                ref_idx = i
-
-        ref_component = components[ref_idx]
-        masses = np.array(
-            [
-                qcel.periodictable.to_mass(str(sym))
-                for sym in [unique_symbols[j] for j in ref_component]
-            ]
+    def _build_monomer(self, comp, unique_frac, unique_cart, unique_symbols) -> Monomer:
+        syms = [str(unique_symbols[j]) for j in comp]
+        masses = np.array([qcel.periodictable.to_mass(s) for s in syms])
+        return Monomer(
+            syms,
+            unique_frac[comp],
+            unique_cart[comp],
+            np.average(unique_frac[comp], axis=0, weights=masses),
+            np.average(unique_cart[comp], axis=0, weights=masses),
         )
 
-        # create Monomer from closest molecule
-        monomer = Monomer(
-            [str(unique_symbols[j]) for j in ref_component],
-            unique_frac[ref_component],
-            unique_cart[ref_component],
-            np.average(unique_frac[ref_component], axis=0, weights=masses),
-            np.average(unique_cart[ref_component], axis=0, weights=masses),
-        )
+    def get_references(self, tol: float = 1.2) -> list[Monomer]:
+        """Return one Monomer per molecular symmetry-orbit in the ASU (all
+        symmetry-independent molecules, i.e. Z'), ordered nearest-origin first.
 
-        return monomer
+        Two complete molecules are the same reference iff a space-group
+        operation maps one onto the other; this is decided on the mass-weighted
+        centroid orbit (the smallest sym-op image reduced into the unit cell).
+        """
+        unique_frac, unique_cart, unique_symbols, full = self._find_molecules(tol)
+        ops = self._space_group.sym_ops
+
+        reps: dict[tuple, tuple[float, list]] = {}
+        for comp in full:
+            syms = [str(unique_symbols[j]) for j in comp]
+            masses = np.array([qcel.periodictable.to_mass(s) for s in syms])
+            cen = np.average(unique_frac[comp], axis=0, weights=masses)
+            imgs = []
+            for op in ops:
+                r = op.apply(cen) % 1.0
+                r[r > 1.0 - 1e-3] -= 1.0          # wrap 0.999... -> ~0
+                imgs.append(tuple(np.round(r, 3)))
+            key = min(imgs)
+            d = float(np.linalg.norm(cen))
+            if key not in reps or d < reps[key][0]:
+                reps[key] = (d, comp)
+
+        ordered = [comp for _, comp in sorted(reps.values(), key=lambda t: t[0])]
+        return [
+            self._build_monomer(c, unique_frac, unique_cart, unique_symbols)
+            for c in ordered
+        ]
+
+    def get_reference(self, tol: float = 1.2) -> Monomer:
+        """Return the single reference molecule closest to the origin.
+
+        :param tol: Tolerance factor for determining bonding (default 1.2)
+        :returns: A Monomer object representing the reference monomer
+        """
+        return self.get_references(tol)[0]
 
     def __repr__(self) -> str:
         return (
