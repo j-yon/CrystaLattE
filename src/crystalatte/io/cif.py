@@ -58,8 +58,41 @@ def from_cif(cif_file: str) -> Generator[tuple[Crystal, Monomer], None, None]:
         beta = float(block["_cell_angle_beta"])
         gamma = float(block["_cell_angle_gamma"])
 
-        # basic declarations
-        space_group = SpaceGroup(int(block["_symmetry_int_tables_number"]))
+        # Extract Hall symbol to select the exact setting used in this CIF file.
+        # Multiple settings of the same space group number have different sym_ops
+        # (e.g. P2₁/c, P2₁/a, P2₁/n are all SG 14).  Fall back to number-only
+        # lookup (standard setting) when no Hall symbol is present.
+        # pycifrw lowercases all keys, so we check lowercase variants.
+        hall = block.get("_symmetry_space_group_name_hall") or block.get(
+            "_space_group_name_hall"
+        )
+        hall = hall.strip() if isinstance(hall, str) else None
+
+        # Resolve space group number: try both CIF1 and CIF2 field names, then
+        # fall back to deriving the number from the Hall symbol via the JSON data.
+        raw_number = block.get("_symmetry_int_tables_number") or block.get(
+            "_space_group_it_number"
+        )
+        if raw_number is not None:
+            sg_number = int(raw_number)
+        elif hall is not None:
+            if SpaceGroup._data == {}:
+                SpaceGroup._load_data()
+            entry = SpaceGroup._data.get(hall)
+            if entry is None:
+                raise ValueError(
+                    f"CIF file has no space group number field and Hall symbol {hall!r} "
+                    "was not found in the space group database."
+                )
+            sg_number = entry["number"]
+        else:
+            raise ValueError(
+                "CIF file contains neither a space group number "
+                "(_symmetry_int_tables_number / _space_group_it_number) "
+                "nor a Hall symbol — cannot determine the space group."
+            )
+
+        space_group = SpaceGroup(sg_number, hall=hall)
         coords = np.array(
             [
                 block["_atom_site_fract_x"],
@@ -68,7 +101,8 @@ def from_cif(cif_file: str) -> Generator[tuple[Crystal, Monomer], None, None]:
             ]
         ).T
         if "_atom_site_type_symbol" in block:
-            asu = ASU(block["_atom_site_type_symbol"], coords)
+            symbols = [re.match(r"[A-Za-z]+", s).group() for s in block["_atom_site_type_symbol"]]
+            asu = ASU(symbols, coords)
         elif "_atom_site_label" in block:
             labels = block["_atom_site_label"]
             symbols = [re.sub(r"[\d\(\)]", "", label) for label in labels]
