@@ -26,3 +26,20 @@ def test_get_reference_is_first_of_references():
     crystal, _ = next(cle.from_cif(str(DATA / "x23/benzene/benzene.cif")))
     assert np.allclose(crystal.get_reference().centroid_frac,
                        crystal.get_references()[0].centroid_frac)
+
+
+def test_symoplist_ref_indices_default_zeros():
+    from crystalatte.core.sym_ops import SymOp, SymOpList
+    s = SymOpList([SymOp.identity(), SymOp.identity()], 1)
+    assert list(s.ref_indices) == [0, 0]
+
+
+def test_symoplist_ref_indices_explicit():
+    from crystalatte.core.sym_ops import SymOp, SymOpList
+    s = SymOpList([SymOp.identity(), SymOp.identity()], 1)
+    s.ref_indices = np.array([0, 1])
+    assert list(s.ref_indices) == [0, 1]
+    fc = SymOpList.from_components(
+        s.rot_cache, s.tr_cache, 1, ref_indices=np.array([1, 0])
+    )
+    assert list(fc.ref_indices) == [1, 0]
