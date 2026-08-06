@@ -222,6 +222,9 @@ class SymOpList:
     _rel_cache: tuple[NDArray, NDArray] | None = field(
         default=None, init=False, repr=False, compare=False
     )
+    _rel_int_cache: tuple[NDArray, NDArray] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
     _dist_fp_cache: tuple[NDArray, NDArray] | None = field(
         default=None, init=False, repr=False, compare=False
     )
@@ -375,6 +378,7 @@ class SymOpList:
         # `__new__` bypasses the dataclass __init__, so the lazily-populated
         # geometry caches must be initialized explicitly here.
         instance._rel_cache = None
+        instance._rel_int_cache = None
         instance._dist_fp_cache = None
 
         return instance

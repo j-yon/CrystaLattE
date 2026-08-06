@@ -22,3 +22,35 @@ def test_get_site_symmetry_general_position():
     wg = sg.get_site_symmetry(np.array([0.13, 0.21, 0.37]))
     assert len(wg) == 1
     assert np.array_equal(wg[0].rot, np.eye(3, dtype=wg[0].rot.dtype))
+
+
+def _translate(dx12):
+    return SymOp.identity().translate(np.array(dx12, dtype=np.int16))
+
+
+def test_relative_transforms_int_pure_translation():
+    g = SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1)
+    L, v = generate._relative_transforms_int(g)
+    assert np.array_equal(L[0, 1], np.eye(3, dtype=np.int64))
+    assert np.array_equal(v[0, 1], np.array([12, 0, 0]))
+    assert np.array_equal(v[1, 0], np.array([-12, 0, 0]))
+
+
+def test_relative_transforms_int_nonorthogonal_inverse():
+    # hexagonal 6-fold: rot = [[1,-1,0],[1,0,0],[0,0,1]] is NOT orthogonal;
+    # its inverse differs from its transpose.
+    six = SymOp("x-y,x,z")
+    g = SymOpList([SymOp.identity(), six], 1)
+    L, v = generate._relative_transforms_int(g)
+    R = six.rot.astype(np.int64)
+    # L[1,0] = rot_inv[1] @ rot[0] = inv(R); verify it is the exact inverse
+    assert np.array_equal(L[1, 0] @ R, np.eye(3, dtype=np.int64))
+    # and that the wrong (transpose) formula would have differed
+    assert not np.array_equal(L[1, 0], R.T)
+
+
+def test_relative_transforms_int_is_cached():
+    g = SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1)
+    first = generate._relative_transforms_int(g)
+    second = generate._relative_transforms_int(g)
+    assert first[0] is second[0]  # same cached array object

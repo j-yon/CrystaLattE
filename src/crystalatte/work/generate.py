@@ -137,6 +137,46 @@ def _relative_transforms(g_N: SymOpList) -> tuple[NDArray, NDArray]:
     return L, v
 
 
+def _int_inv(M: NDArray) -> NDArray:
+    """Return the exact integer inverse of a unimodular integer matrix.
+
+    Lattice-basis rotations are integer with ``det = ±1`` but are not
+    orthogonal, so the inverse is recovered via the adjugate (``round`` of the
+    float inverse), never the transpose.
+
+    :param M: A ``(3, 3)`` integer matrix with ``det = ±1``
+    :returns: The exact ``(3, 3)`` ``int64`` inverse
+    """
+    return np.rint(np.linalg.inv(M)).astype(np.int64)
+
+
+def _relative_transforms_int(g_N: SymOpList) -> tuple[NDArray, NDArray]:
+    """Return the pairwise relative transforms of the cluster in the integer
+    lattice basis: ``L[a,b] = rot_a^-1 rot_b`` (integer) and
+    ``v[a,b] = rot_a^-1 (tr_b - tr_a)`` (integer, in twelfths).
+
+    Exact at all distances (no Cartesian conversion, no roundoff). Cached on the
+    :class:`~crystalatte.core.sym_ops.SymOpList` since the matcher re-reads them
+    across many comparisons.
+
+    :param g_N: The cluster whose integer relative transforms are requested
+    :returns: A tuple ``(L, v)`` of shapes ``(n, n, 3, 3)`` and ``(n, n, 3)``
+    """
+    cached = getattr(g_N, "_rel_int_cache", None)
+    if cached is not None:
+        return cached
+    rot = g_N.rot_cache.astype(np.int64)          # (n, 3, 3)
+    tr = g_N.tr_cache.astype(np.int64)            # (n, 3), twelfths
+    rot_inv = np.empty_like(rot)
+    for i in range(len(rot)):
+        rot_inv[i] = _int_inv(rot[i])
+    L = np.einsum("aij,bjk->abik", rot_inv, rot)           # (n, n, 3, 3)
+    dt = tr[None, :, :] - tr[:, None, :]                   # (n, n, 3): tr_b - tr_a
+    v = np.einsum("aij,abj->abi", rot_inv, dt)            # (n, n, 3)
+    g_N._rel_int_cache = (L, v)
+    return L, v
+
+
 def _cluster_atoms_cart(g_N: SymOpList) -> NDArray:
     """Reconstruct the cluster's Cartesian atom positions from the module-level
     ``_monomer`` / ``_crystal`` bindings.
