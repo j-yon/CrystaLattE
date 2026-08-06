@@ -85,3 +85,20 @@ def test_same_multimer_int_inversion_needs_W():
 
     generate._W_lin = [np.eye(3, dtype=np.int64), -np.eye(3, dtype=np.int64)]
     assert generate._same_multimer_int(G, H) is True
+
+
+def test_bind_globals_sets_site_symmetry_and_gate():
+    from pathlib import Path
+
+    import crystalatte as cle
+
+    DATA = Path(__file__).parent
+
+    crystal, monomer = next(cle.from_cif(str(DATA / "x23/benzene/benzene.cif")))
+    generate._bind_globals(crystal, monomer)
+
+    # Benzene is on an inversion centre: identity + inversion in the dressing.
+    assert any(np.array_equal(w, np.eye(3, dtype=np.int64)) for w in generate._W_lin)
+    assert any(np.array_equal(w, -np.eye(3, dtype=np.int64)) for w in generate._W_lin)
+    # Molecular point group (D6h-ish) is richer than the site symmetry.
+    assert generate._check_congruence is True

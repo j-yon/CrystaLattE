@@ -69,6 +69,7 @@ def _bind_globals(crystal: Crystal, monomer: Monomer) -> None:
     :returns: ``None``
     """
     global _crystal, _monomer, _self_iso, _Z_per_monomer, _A, _A_inv
+    global _W_lin, _check_congruence
     _crystal = crystal
     _monomer = monomer
     _self_iso = monomer.self_isometries
@@ -77,6 +78,18 @@ def _bind_globals(crystal: Crystal, monomer: Monomer) -> None:
     )
     _A = np.asarray(crystal.lattice_vectors, dtype=float)
     _A_inv = np.linalg.inv(_A)
+
+    # Crystallographic site-symmetry dressing (integer, lattice basis) for the
+    # exact-integer matcher, plus the fallback gate (`S` richer than `W`).
+    site_ops = crystal.space_group.get_site_symmetry(monomer.centroid_frac)
+    _W_lin = []
+    for op in site_ops:
+        r = op.rot.astype(np.int64)
+        if not any(np.array_equal(r, w) for w in _W_lin):
+            _W_lin.append(r)
+    if not _W_lin:  # defensive: identity always fixes the centroid
+        _W_lin = [np.eye(3, dtype=np.int64)]
+    _check_congruence = len(_self_iso) > len(_W_lin)
 
 
 def _init_bucket_worker(crystal: Crystal, monomer: Monomer) -> None:
