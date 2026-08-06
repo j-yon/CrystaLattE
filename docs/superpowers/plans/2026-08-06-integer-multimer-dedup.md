@@ -13,7 +13,9 @@
 - Fractional translations are stored as integers in **twelfths** (`tr/12`). Keep integer arithmetic in these units.
 - Use `np.int64` for all relative-transform products (avoid `int16` overflow).
 - Integer matrix inverse is the **exact adjugate** via `np.rint(np.linalg.inv(M)).astype(np.int64)` — never `.T` (lattice-basis rotations are not orthogonal). Do NOT modify the existing `SymOpList.invert_list` (pinned for separate cleanup).
-- Run tests with: `conda run -n cle python -m pytest <path> -v`.
+- Run tests with: `conda run -n cle python -m pytest Tests/<file> -v` — note the **capital `Tests/`** path; `pyproject.toml` sets `testpaths = ["Tests"]`, and pytest will not collect a lowercase `tests/...` argument even though macOS resolves the directory case-insensitively.
+- **Space-group data:** tests may only use space groups present in the tracked `src/crystalatte/core/space_groups.json` — namely **1 (P1), 4 (P2₁), 61 (Pbca)**. The full table (`space_groups_all.json`) is an untracked local WIP file, so tests must not depend on it. Use **SG 61 (Pbca, centrosymmetric, benzene)** for the inversion/site-symmetry cases; construct `SymOpList`s directly (no data file) for the matcher unit tests.
+- **Commit scoping:** the repo carries unrelated pre-existing WIP in several files. This feature builds on a committed baseline that already contains the dedup pipeline (`_is_bijection`, `_same_multimer`, `_relative_transforms`, `_distance_fingerprint`, `_fingerprints_match`, and the `SymOpList` geometry caches). Stage only this feature's changes; do not `git add` whole pre-modified files blindly.
 - The dedup target is **energetic equivalence**: the float fallback uses the full molecular `S`, deliberately merging all congruences (proper molecular-symmetry congruences and mirror-image enantiomers), not enantiomers only.
 
 ---
@@ -40,8 +42,10 @@ from crystalatte.work import generate
 
 
 def test_get_site_symmetry_inversion_center():
-    # P-1 (space group 2): origin has site symmetry -1 => {E, i}
-    sg = SpaceGroup(2)
+    # Pbca (space group 61): origin is an inversion centre => {E, i}.
+    # SG 61 is in the tracked space_groups.json, so no dependency on the
+    # untracked full table.
+    sg = SpaceGroup(61)
     w0 = sg.get_site_symmetry(np.array([0.0, 0.0, 0.0]))
     rots = [op.rot for op in w0]
     assert len(w0) == 2
@@ -50,15 +54,15 @@ def test_get_site_symmetry_inversion_center():
 
 
 def test_get_site_symmetry_general_position():
-    sg = SpaceGroup(2)
-    wg = sg.get_site_symmetry(np.array([0.1, 0.2, 0.3]))
+    sg = SpaceGroup(61)
+    wg = sg.get_site_symmetry(np.array([0.13, 0.21, 0.37]))
     assert len(wg) == 1
     assert np.array_equal(wg[0].rot, np.eye(3, dtype=wg[0].rot.dtype))
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `conda run -n cle python -m pytest tests/test_dedup.py::test_get_site_symmetry_inversion_center -v`
+Run: `conda run -n cle python -m pytest Tests/test_dedup.py::test_get_site_symmetry_inversion_center -v`
 Expected: FAIL with `AttributeError: 'SpaceGroup' object has no attribute 'get_site_symmetry'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -85,7 +89,7 @@ Add to `SpaceGroup` in `src/crystalatte/core/space_group.py`:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `conda run -n cle python -m pytest tests/test_dedup.py -v`
+Run: `conda run -n cle python -m pytest Tests/test_dedup.py -v`
 Expected: PASS (both site-symmetry tests)
 
 - [ ] **Step 5: Commit**
@@ -149,7 +153,7 @@ def test_relative_transforms_int_is_cached():
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `conda run -n cle python -m pytest tests/test_dedup.py::test_relative_transforms_int_pure_translation -v`
+Run: `conda run -n cle python -m pytest Tests/test_dedup.py::test_relative_transforms_int_pure_translation -v`
 Expected: FAIL with `AttributeError: module 'crystalatte.work.generate' has no attribute '_relative_transforms_int'`
 
 - [ ] **Step 3a: Add the cache field to `SymOpList`**
@@ -215,7 +219,7 @@ def _relative_transforms_int(g_N: SymOpList) -> tuple[NDArray, NDArray]:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `conda run -n cle python -m pytest tests/test_dedup.py -v`
+Run: `conda run -n cle python -m pytest Tests/test_dedup.py -v`
 Expected: PASS (all Task 1 + Task 2 tests)
 
 - [ ] **Step 5: Commit**
@@ -275,7 +279,7 @@ def test_same_multimer_int_inversion_needs_W():
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `conda run -n cle python -m pytest tests/test_dedup.py::test_same_multimer_int_translation_swap -v`
+Run: `conda run -n cle python -m pytest Tests/test_dedup.py::test_same_multimer_int_translation_swap -v`
 Expected: FAIL with `AttributeError: module 'crystalatte.work.generate' has no attribute '_same_multimer_int'`
 
 - [ ] **Step 3a: Declare the new module globals**
@@ -362,7 +366,7 @@ def _same_multimer_int(g_N: SymOpList, h_N: SymOpList) -> bool:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `conda run -n cle python -m pytest tests/test_dedup.py -v`
+Run: `conda run -n cle python -m pytest Tests/test_dedup.py -v`
 Expected: PASS (all tests through Task 3)
 
 - [ ] **Step 5: Commit**
@@ -409,7 +413,7 @@ def test_bind_globals_sets_site_symmetry_and_gate():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `conda run -n cle python -m pytest tests/test_dedup.py::test_bind_globals_sets_site_symmetry_and_gate -v`
+Run: `conda run -n cle python -m pytest Tests/test_dedup.py::test_bind_globals_sets_site_symmetry_and_gate -v`
 Expected: FAIL with `AttributeError` on `generate._W_lin` not being populated by `_bind_globals` (still the default), i.e. the `-I` assertion fails.
 
 - [ ] **Step 3: Extend `_bind_globals`**
@@ -443,7 +447,7 @@ In `src/crystalatte/work/generate.py`, update the `global` line and body of `_bi
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `conda run -n cle python -m pytest tests/test_dedup.py::test_bind_globals_sets_site_symmetry_and_gate -v`
+Run: `conda run -n cle python -m pytest Tests/test_dedup.py::test_bind_globals_sets_site_symmetry_and_gate -v`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -509,7 +513,7 @@ def test_is_bijection_integer_path_matches_without_fallback(monkeypatch):
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `conda run -n cle python -m pytest tests/test_dedup.py::test_is_bijection_fallback_gated_by_check_congruence -v`
+Run: `conda run -n cle python -m pytest Tests/test_dedup.py::test_is_bijection_fallback_gated_by_check_congruence -v`
 Expected: FAIL — current `_is_bijection` runs the old branch (a)/`_same_multimer` unconditionally, so the gating assertions (`calls == []`) do not hold.
 
 - [ ] **Step 3: Rewrite `_is_bijection`**
@@ -550,54 +554,44 @@ def _is_bijection(g_N: SymOpList, h_N: SymOpList) -> bool:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `conda run -n cle python -m pytest tests/test_dedup.py -v`
+Run: `conda run -n cle python -m pytest Tests/test_dedup.py -v`
 Expected: PASS (all dedup unit tests)
 
-- [ ] **Step 5: Capture regression baselines from current behavior**
+- [ ] **Step 5: Capture the regression baseline from current behavior**
 
-Before locking regression numbers, record what the deduper currently produces on two fixtures — benzene (centrosymmetric; integer path) and ammonia (Sohncke `P2₁3`, achiral molecule; exercises the float fallback).
+Use **benzene only** (SG 61 Pbca — the one non-trivial space group in the tracked `space_groups.json`). Benzene is centrosymmetric, so it exercises the integer path (inversion merges via `W = {E, i}`) *and* the float fallback (`_check_congruence` is True, so proper molecular-symmetry congruences route to `_same_multimer`). Ammonia (SG 198) is intentionally dropped — it needs the untracked full table; the fallback's invocation logic is already covered data-free by the gating test in Step 1.
 
-Run:
+Run (record the printed count):
 ```bash
 conda run -n cle python -c "
 import crystalatte as cle
 from pathlib import Path
-DATA = Path('tests')
-kw = {'use_origin': True, 'n_jobs': 1}
-for name in ['x23/benzene/benzene.cif', 'x23/ammonia/ammonia.cif']:
-    crystal, mon = next(cle.from_cif(str(DATA/name)))
-    mers = cle.work.generate.generate(crystal, mon, 2, 5.0, **kw)
-    print(name, len(mers))
+crystal, mon = next(cle.from_cif(str(Path('tests/x23/benzene/benzene.cif'))))
+mers = cle.work.generate.generate(crystal, mon, 2, 5.0, use_origin=True, n_jobs=1)
+print('benzene dimers:', len(mers))
 "
 ```
-Note the two printed counts. (They are unchanged by this refactor — Option C is behavior-preserving — so these are valid post-change targets.)
+Note the printed count. (It is unchanged by this refactor — Option C is behavior-preserving — so it is a valid post-change target.)
 
-- [ ] **Step 6: Write the regression test with the observed counts**
+- [ ] **Step 6: Write the regression test with the observed count**
 
-Append to `tests/test_dedup.py`, substituting the two integers observed in Step 5 for `BENZENE_DIMERS` and `AMMONIA_DIMERS`:
+Append to `tests/test_dedup.py`, substituting the integer observed in Step 5 for `BENZENE_DIMERS`:
 
 ```python
-import pytest
-
-
-@pytest.mark.parametrize("cif_rel,expected", [
-    ("x23/benzene/benzene.cif", BENZENE_DIMERS),   # from Step 5
-    ("x23/ammonia/ammonia.cif", AMMONIA_DIMERS),   # from Step 5
-])
-def test_generate_dimer_count_regression(cif_rel, expected):
-    crystal, monomer = next(cle.from_cif(str(DATA / cif_rel)))
+def test_generate_dimer_count_regression():
+    crystal, monomer = next(cle.from_cif(str(DATA / "x23/benzene/benzene.cif")))
     mers = generate.generate(crystal, monomer, 2, 5.0, use_origin=True, n_jobs=1)
-    assert len(mers) == expected
+    assert len(mers) == BENZENE_DIMERS   # from Step 5
 ```
 
 - [ ] **Step 7: Run the regression test**
 
-Run: `conda run -n cle python -m pytest tests/test_dedup.py::test_generate_dimer_count_regression -v`
-Expected: PASS (both fixtures)
+Run: `conda run -n cle python -m pytest Tests/test_dedup.py::test_generate_dimer_count_regression -v`
+Expected: PASS
 
 - [ ] **Step 8: Run the full suite to confirm no regressions**
 
-Run: `conda run -n cle python -m pytest tests/ -v`
+Run: `conda run -n cle python -m pytest Tests/ -v`
 Expected: PASS (or unchanged from the pre-existing baseline — note any pre-existing failures unrelated to this change)
 
 - [ ] **Step 9: Commit**
