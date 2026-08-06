@@ -54,3 +54,34 @@ def test_relative_transforms_int_is_cached():
     first = generate._relative_transforms_int(g)
     second = generate._relative_transforms_int(g)
     assert first[0] is second[0]  # same cached array object
+
+
+def test_same_multimer_int_translation_swap():
+    # Same dimer counted from each monomer: [I, T(+1)] ~ [I, T(-1)]. W = {I}.
+    generate._W_lin = [np.eye(3, dtype=np.int64)]
+    G = SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1)
+    H = SymOpList([SymOp.identity(), _translate([-12, 0, 0])], 1)
+    assert generate._same_multimer_int(G, H) is True
+
+
+def test_same_multimer_int_non_match():
+    generate._W_lin = [np.eye(3, dtype=np.int64)]
+    G = SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1)
+    H = SymOpList([SymOp.identity(), _translate([24, 0, 0])], 1)
+    assert generate._same_multimer_int(G, H) is False
+
+
+def test_same_multimer_int_inversion_needs_W():
+    # G = [I, T(+1)];  H = [I, i0.T(+1)] with partner rot = -I, tr = (-1,0,0).
+    # Same multimer only via s0 = -I, so it merges iff -I is in the dressing W.
+    G = SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1)
+    h_partner = SymOp.from_components(
+        -np.eye(3, dtype=np.int16), np.array([-12, 0, 0], dtype=np.int16)
+    )
+    H = SymOpList([SymOp.identity(), h_partner], 1)
+
+    generate._W_lin = [np.eye(3, dtype=np.int64)]
+    assert generate._same_multimer_int(G, H) is False
+
+    generate._W_lin = [np.eye(3, dtype=np.int64), -np.eye(3, dtype=np.int64)]
+    assert generate._same_multimer_int(G, H) is True

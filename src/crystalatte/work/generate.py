@@ -51,6 +51,8 @@ _self_iso: list[NDArray] = [np.eye(3)]
 _Z_per_monomer: NDArray = np.empty(0, dtype=np.int64)
 _A: NDArray | None = None      # fractional -> Cartesian matrix (cart = _A @ frac)
 _A_inv: NDArray | None = None  # Cartesian -> fractional matrix
+_W_lin: list[NDArray] = [np.eye(3, dtype=np.int64)]  # integer site-symmetry dressings
+_check_congruence: bool = False  # True iff molecular S is richer than site symmetry W
 
 
 def _bind_globals(crystal: Crystal, monomer: Monomer) -> None:
@@ -175,6 +177,74 @@ def _relative_transforms_int(g_N: SymOpList) -> tuple[NDArray, NDArray]:
     v = np.einsum("aij,abj->abi", rot_inv, dt)            # (n, n, 3)
     g_N._rel_int_cache = (L, v)
     return L, v
+
+
+def _same_multimer_int(g_N: SymOpList, h_N: SymOpList) -> bool:
+    """Return True iff ``g_N`` and ``h_N`` are the same multimer under a
+    crystallographic isometry, working entirely in the exact integer lattice
+    basis and modding out the site-symmetry dressing ``_W_lin``.
+
+    This is the exact-integer form of the anchored relative-transform search
+    (see ``docs/dedup_correctness.tex``, Thm 2). It subsumes the old exact
+    matrix branch and is complete for every same-orbit (multiplicity-required)
+    merge, including centrosymmetric site-inversion cases. Non-crystallographic
+    congruences (dressing outside ``_W_lin``) are left to the float fallback in
+    :func:`_is_bijection`.
+
+    :param g_N: The first cluster
+    :param h_N: The second cluster
+    :returns: True iff the clusters are the same multimer via a crystallographic
+        isometry
+    """
+    n = len(g_N)
+    if n != len(h_N):
+        return False
+
+    LG, vG = _relative_transforms_int(g_N)
+    LH, vH = _relative_transforms_int(h_N)
+    S = _W_lin
+
+    def in_S(M: NDArray) -> bool:
+        return any(np.array_equal(M, s) for s in S)
+
+    def verify(pi: list[int], s: list[NDArray]) -> bool:
+        for a in range(n):
+            sa_inv = _int_inv(s[a])
+            for b in range(n):
+                if not np.array_equal(vG[a, b], sa_inv @ vH[pi[a], pi[b]]):
+                    return False
+                if not np.array_equal(
+                    LG[a, b], sa_inv @ LH[pi[a], pi[b]] @ s[b]
+                ):
+                    return False
+        return True
+
+    for h0 in range(n):
+        for s0 in S:
+            pi = [-1] * n
+            s: list[NDArray] = [None] * n
+            used = [False] * n
+            pi[0], s[0], used[h0] = h0, s0, True
+
+            def assign(b: int) -> bool:
+                if b == n:
+                    return verify(pi, s)
+                target = s0 @ vG[0, b]  # want vH[h0, pi(b)] == target
+                for h in range(n):
+                    if used[h] or not np.array_equal(vH[h0, h], target):
+                        continue
+                    sb = _int_inv(LH[h0, h]) @ s0 @ LG[0, b]
+                    if not in_S(sb):
+                        continue
+                    pi[b], s[b], used[h] = h, sb, True
+                    if assign(b + 1):
+                        return True
+                    pi[b], s[b], used[h] = -1, None, False
+                return False
+
+            if assign(1):
+                return True
+    return False
 
 
 def _cluster_atoms_cart(g_N: SymOpList) -> NDArray:
