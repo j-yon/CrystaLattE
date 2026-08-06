@@ -158,3 +158,25 @@ def test_int_inv_rejects_non_unimodular():
     # det = 2 is not unimodular: no exact integer inverse exists.
     with pytest.raises(AssertionError):
         generate._int_inv(np.array([[2, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.int64))
+
+
+AMMONIA_DIMERS = 2  # unique dimers WITH the enantiomer fallback (6 without it)
+
+
+def test_generate_ammonia_enantiomer_fallback(monkeypatch):
+    # Ammonia fixture is P1 (a Sohncke space group: identity only) with achiral
+    # NH3 (C3v — improper self-isometries). Mirror-related dimers are congruent
+    # but NOT crystallographically equivalent, so they merge ONLY via the float
+    # fallback. This exercises the S\W (enantiomer) path end-to-end.
+    crystal, monomer = next(cle.from_cif(str(DATA / "x23/ammonia/ammonia.cif")))
+    assert any(np.linalg.det(s) < 0 for s in monomer.self_isometries)  # NH3 achiral
+
+    n_with = len(generate.generate(crystal, monomer, 2, 5.0, use_origin=True, n_jobs=1))
+    assert n_with == AMMONIA_DIMERS
+
+    # Disable the float fallback: mirror-congruent dimers are no longer merged,
+    # so strictly more uniques survive — proving the fallback is load-bearing
+    # here (not a hollow count).
+    monkeypatch.setattr(generate, "_same_multimer", lambda a, b, **k: False)
+    n_without = len(generate.generate(crystal, monomer, 2, 5.0, use_origin=True, n_jobs=1))
+    assert n_without > n_with
