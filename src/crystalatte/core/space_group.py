@@ -42,42 +42,48 @@ class SpaceGroup:
     """Represents a space group, which is a mathematical description of the symmetry of a crystal structure. Contains information about the space group number, symbol, point group, crystal system, lattice system, symmetry operations, lattice constraints, and special Wyckoff positions.
 
     :param _number: The space group number (1-230)
-    :ivar _registry: A class variable that stores instances of SpaceGroup to ensure that only one instance exists for each space group number (singleton pattern)
+    :param _hall: The Hall symbol identifying the specific setting (e.g. "-P 2yab" for P2₁/a). When None, the standard setting for the given number is used.
+    :ivar _registry: A class variable that stores instances of SpaceGroup keyed by their lookup key (Hall symbol or str(number)) to ensure one instance per setting
     :ivar _data: A class variable that stores the space group data loaded from a JSON
     """
 
     _number: int
-    _registry: ClassVar[dict[int, SpaceGroup]] = {}
+    _registry: ClassVar[dict[str, SpaceGroup]] = {}
     _data: ClassVar[dict[str, dict]] = {}
 
-    def __new__(cls, number: int) -> SpaceGroup:
-        """Create a SpaceGroup instance from a space group number.
+    def __new__(cls, number: int, hall: str | None = None) -> SpaceGroup:
+        """Create a SpaceGroup instance from a space group number and optional Hall symbol.
 
         :param number: The space group number (1-230)
-        :returns: A SpaceGroup instance corresponding to the given space group number. If an instance for the given number already exists in the registry, it will be returned instead of creating a new one
-        :raises ValueError: If the space group number is not found in the data
+        :param hall: Optional Hall symbol (e.g. "-P 2yab") to select a specific setting. When omitted, the standard setting for the number is used.
+        :returns: A SpaceGroup instance for the requested setting. Instances are cached per setting so that the same setting is never constructed twice.
         """
-        if number in cls._registry:
-            return cls._registry[number]
+        key = hall.strip() if hall else str(number)
+        if key in cls._registry:
+            return cls._registry[key]
 
         instance = super().__new__(cls)
-        cls._registry[number] = instance
+        cls._registry[key] = instance
         return instance
 
-    def __init__(self, number: int):
+    def __init__(self, number: int, hall: str | None = None):
         if hasattr(self, "_initialized"):
             return  # Avoid re-initialization
 
         if SpaceGroup._data == {}:
             SpaceGroup._load_data()
 
-        # TODO: turn this back to dict, will have multiple entries for some space groups
-        if str(number) not in SpaceGroup._data.keys():
-            raise ValueError(f"Space group number {number} not found in data.")
+        # Try Hall symbol first (setting-specific), then fall back to number (standard setting)
+        key = hall.strip() if hall else str(number)
+        if key not in SpaceGroup._data:
+            key = str(number)
+        if key not in SpaceGroup._data:
+            raise ValueError(f"Space group number {number} (hall={hall!r}) not found in data.")
 
-        data = SpaceGroup._data[str(number)]
+        data = SpaceGroup._data[key]
 
         self._number = data["number"]
+        self._hall = hall.strip() if hall else data["symbol"].get("Hall")
         self._symbol = data["symbol"]
         self._point_group = data["point_group"]
         self._crystal_system = CrystalSystem(data["crystal_system"])
@@ -86,14 +92,13 @@ class SpaceGroup:
         self._lattice_constraints = data["lattice_constraints"]
         self._special_positions = data["special_wyckoff_positions"]
 
-    def __reduce__(self) -> tuple[type[SpaceGroup], tuple[int]]:
-        return (self.__class__, (self._number,))
+    def __reduce__(self) -> tuple[type[SpaceGroup], tuple[int, str | None]]:
+        return (self.__class__, (self._number, self._hall))
 
     @classmethod
     def _load_data(cls):
         """Load space group data from a JSON file."""
-        # TODO: make this more robust and efficient (e.g. use a binary format, or a database)
-        path = Path(__file__).parent / "space_groups.json"
+        path = Path(__file__).parent / "space_groups_all.json"
         with open(path, "r") as f:
             cls._data = json.load(f)
 
