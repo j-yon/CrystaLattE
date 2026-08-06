@@ -1,8 +1,14 @@
+from pathlib import Path
+
 import numpy as np
 
+import crystalatte as cle
 from crystalatte.core.space_group import SpaceGroup
 from crystalatte.core.sym_ops import SymOp, SymOpList
 from crystalatte.work import generate
+
+DATA = Path(__file__).parent
+BENZENE_DIMERS = 3  # captured on pre-Task-5 code: benzene, N=2, R=5.0, use_origin=True
 
 
 def test_get_site_symmetry_inversion_center():
@@ -102,3 +108,46 @@ def test_bind_globals_sets_site_symmetry_and_gate():
     assert any(np.array_equal(w, -np.eye(3, dtype=np.int64)) for w in generate._W_lin)
     # Molecular point group (D6h-ish) is richer than the site symmetry.
     assert generate._check_congruence is True
+
+
+def test_is_bijection_fallback_gated_by_check_congruence(monkeypatch):
+    # Two clusters that the integer matcher rejects; the float fallback must run
+    # only when _check_congruence is True.
+    generate._W_lin = [np.eye(3, dtype=np.int64)]
+    G = SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1)
+    H = SymOpList([SymOp.identity(), _translate([24, 0, 0])], 1)
+
+    calls = []
+    monkeypatch.setattr(generate, "_fingerprints_match", lambda a, b, **k: True)
+    monkeypatch.setattr(
+        generate, "_same_multimer", lambda a, b, **k: calls.append(1) or False
+    )
+
+    generate._check_congruence = False
+    assert generate._is_bijection(G, H) is False
+    assert calls == []  # gated off: float fallback not called
+
+    generate._check_congruence = True
+    assert generate._is_bijection(G, H) is False
+    assert calls == [1]  # gated on: float fallback called once
+
+
+def test_is_bijection_integer_path_matches_without_fallback(monkeypatch):
+    # A crystallographic merge must be decided by the integer path alone.
+    generate._W_lin = [np.eye(3, dtype=np.int64)]
+    generate._check_congruence = True
+    G = SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1)
+    H = SymOpList([SymOp.identity(), _translate([-12, 0, 0])], 1)
+
+    def _boom(*a, **k):
+        raise AssertionError("float fallback should not run for integer merges")
+
+    monkeypatch.setattr(generate, "_fingerprints_match", lambda a, b, **k: True)
+    monkeypatch.setattr(generate, "_same_multimer", _boom)
+    assert generate._is_bijection(G, H) is True
+
+
+def test_generate_dimer_count_regression():
+    crystal, monomer = next(cle.from_cif(str(DATA / "x23/benzene/benzene.cif")))
+    mers = generate.generate(crystal, monomer, 2, 5.0, use_origin=True, n_jobs=1)
+    assert len(mers) == BENZENE_DIMERS   # from Step 5

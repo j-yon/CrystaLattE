@@ -13,14 +13,19 @@ Pipeline:
 
    a. distance-fingerprint gate (:func:`_fingerprints_match`) — a cached,
       vectorized necessary condition that rejects most non-equivalent pairs;
-   b. proper-rotation branch — exact ``int16`` bijection check on the augmented
-      sym-op matrices (catches every case whose relating isometry is a crystal
-      sym op already in the list);
-   c. geometric branch (:func:`_same_multimer`) — matches the two clusters in
-      relative-transform space, modding out the monomer's internal symmetry
-      (:attr:`~crystalatte.core.multimer.Monomer.self_isometries`). This is a
-      complete test that merges identical clusters, lattice translates, and
-      enantiomers alike, with no chirality gate and no chemistry oracle.
+   b. exact-integer matcher (:func:`_same_multimer_int`) — the complete,
+      roundoff-free decision for every crystallographic (same-orbit) merge,
+      modding out the site symmetry (twelfths-scale integer arithmetic; no
+      floating-point tolerance involved);
+   c. float congruence fallback (:func:`_same_multimer`), gated by
+      ``_check_congruence`` — runs only when the integer matcher fails and the
+      molecular symmetry is richer than the site symmetry. It matches the two
+      clusters in relative-transform space using the FULL monomer
+      self-isometry group (:attr:`~crystalatte.core.multimer.Monomer.self_isometries`),
+      so it merges every energetically-equivalent congruence: proper
+      molecular-symmetry congruences AND mirror-image enantiomers alike, with
+      no chirality gate and no chemistry oracle. The dedup target is
+      energetic equivalence, not point-group-restricted congruence.
 3. :func:`generate` post-processes each unique
    :class:`~crystalatte.core.sym_ops.SymOpList` into a
    :class:`~crystalatte.core.multimer.Multimer`.
@@ -419,41 +424,29 @@ def _is_bijection(g_N: SymOpList, h_N: SymOpList) -> bool:
     Three stages, cheapest first:
 
     0. Distance-fingerprint gate (:func:`_fingerprints_match`) — a cached,
-       vectorized necessary condition. The vast majority of within-bucket pairs
-       are not equivalent and are rejected here in ~microseconds, so the more
-       expensive branches below run only on fingerprint-matching pairs.
-    a. Proper-rotation branch — for each non-identity ``h_i``, check whether the
-       composed list ``{g_j @ h_i : j}`` equals ``g_N`` as a set of 4x4
-       augmented sym-op matrices (exact ``int16`` equality). Fast exact path for
-       equivalences whose relating isometry already appears in the sym-op list.
-    b. Geometric branch (:func:`_same_multimer`) — matches the two clusters in
-       relative-transform space, modding out the monomer's internal symmetry.
-       Complete: catches lattice translates and enantiomers the proper branch
-       misses (including rare homometric fingerprint collisions), with no
-       chirality gate.
+       vectorized necessary condition rejecting most within-bucket pairs.
+    1. Exact-integer matcher (:func:`_same_multimer_int`) — the complete,
+       roundoff-free decision for every crystallographic (same-orbit) merge,
+       modding out the site symmetry. Subsumes the former exact matrix branch.
+    2. Float congruence fallback (:func:`_same_multimer`) — runs only when the
+       integer matcher fails and the molecular symmetry is richer than the site
+       symmetry (``_check_congruence``). It uses the FULL molecular
+       self-isometry group, so it merges every energetically-equivalent
+       congruence: proper molecular-symmetry congruences AND mirror-image
+       enantiomers. This is intentional and goes beyond an enantiomer-only
+       check; the dedup target is energetic equivalence.
 
     :param g_N: The first cluster
     :param h_N: The second cluster
-    :returns: True iff the two clusters represent the same multimer
+    :returns: True iff the clusters represent the same multimer
     """
     if not _fingerprints_match(g_N, h_N):
         return False
-
-    n = len(g_N)
-    g_aug = g_N.aug_cache
-    g_fp = g_aug.reshape(n, -1)
-
-    # composed[i, j] = g_j @ h_i, shape (n, n, 4, 4)
-    composed = g_aug[:, None, :, :] @ h_N.aug_cache[None, :, :, :]
-    for i in range(1, n):
-        composed_fp = composed[i].reshape(n, -1)
-        in_g = np.all(composed_fp[:, None, :] == g_fp[None, :, :], axis=-1).any(axis=-1)
-        if not in_g.all():
-            continue
-        if len(np.unique(composed_fp, axis=0)) == n:
-            return True
-
-    return _same_multimer(g_N, h_N)
+    if _same_multimer_int(g_N, h_N):
+        return True
+    if _check_congruence:
+        return _same_multimer(g_N, h_N)
+    return False
 
 
 def _process_bucket(
