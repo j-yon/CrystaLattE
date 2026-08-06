@@ -158,6 +158,22 @@ class SpaceGroup:
 
         return self._sym_ops
 
+    def get_site_symmetry(self, coords: NDArray) -> list[SymOp]:
+        """Return the site-symmetry stabilizer of ``coords``: the space-group
+        operations that map ``coords`` onto itself modulo a lattice translation.
+
+        :param coords: Fractional coordinates of the monomer centroid
+        :returns: The subset of symmetry operations fixing ``coords`` (always
+            includes the identity)
+        """
+        coords = np.asarray(coords, dtype=float)
+        result: list[SymOp] = []
+        for op in self._sym_ops:
+            delta = op.apply(coords) - coords
+            if np.allclose(delta - np.round(delta), 0.0, atol=1e-6):
+                result.append(op)
+        return result
+
     def __repr__(self) -> str:
         return f"SpaceGroup(number={self._number}, symbol='{self._symbol}')"
 
