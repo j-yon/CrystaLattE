@@ -151,3 +151,10 @@ def test_generate_dimer_count_regression():
     crystal, monomer = next(cle.from_cif(str(DATA / "x23/benzene/benzene.cif")))
     mers = generate.generate(crystal, monomer, 2, 5.0, use_origin=True, n_jobs=1)
     assert len(mers) == BENZENE_DIMERS   # from Step 5
+
+
+def test_int_inv_rejects_non_unimodular():
+    import pytest
+    # det = 2 is not unimodular: no exact integer inverse exists.
+    with pytest.raises(AssertionError):
+        generate._int_inv(np.array([[2, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.int64))

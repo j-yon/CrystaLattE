@@ -167,7 +167,11 @@ def _int_inv(M: NDArray) -> NDArray:
     :param M: A ``(3, 3)`` integer matrix with ``det = ±1``
     :returns: The exact ``(3, 3)`` ``int64`` inverse
     """
-    return np.rint(np.linalg.inv(M)).astype(np.int64)
+    inv = np.rint(np.linalg.inv(M)).astype(np.int64)
+    assert np.array_equal(inv @ M.astype(np.int64), np.eye(3, dtype=np.int64)), (
+        "_int_inv called on a non-unimodular matrix (exact integer inverse does not exist)"
+    )
+    return inv
 
 
 def _relative_transforms_int(g_N: SymOpList) -> tuple[NDArray, NDArray]:
