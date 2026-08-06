@@ -104,3 +104,16 @@ ENV/
 # psi4 files
 *.dat
 data/test
+
+# latex files
+*.aux
+*.bbl
+*.blg
+*.fls
+*.log
+*.out
+*.toc
+*.pdf
+
+# claude
+.claude/worktrees

@@ -38,6 +38,9 @@ tests = [
 [tool.setuptools.packages]
 find = {where = ["src"]}
 
+[tool.pytest.ini_options]
+testpaths = ["Tests"]
+
 [tool.coverage.run]
 omit = ["*/tests/*"]
 
