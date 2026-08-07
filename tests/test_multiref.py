@@ -43,3 +43,30 @@ def test_symoplist_ref_indices_explicit():
         s.rot_cache, s.tr_cache, 1, ref_indices=np.array([1, 0])
     )
     assert list(fc.ref_indices) == [1, 0]
+
+
+def test_bind_globals_multi_reference_state():
+    from crystalatte.work import generate
+    crystal, _ = next(cle.from_cif(str(DATA / "x23/ammonia/ammonia.cif")))
+    refs = crystal.get_references()
+    generate._bind_globals(crystal, refs)
+    assert len(generate._monomers) == 4
+    assert len(generate._Z_by_ref) == 4
+    assert len(generate._W_lin_by_ref) == 4
+    assert len(generate._check_congruence_by_ref) == 4
+    # NH3 Z tags = [7,1,1,1] per reference
+    assert list(generate._Z_by_ref[0]) == [7, 1, 1, 1]
+
+
+def test_fingerprint_uses_per_member_reference():
+    # A 2-member cluster whose members come from different NH3 references must
+    # reconstruct atoms from each base reference; fingerprint is well-defined.
+    from crystalatte.core.sym_ops import SymOp, SymOpList
+    from crystalatte.work import generate
+    crystal, _ = next(cle.from_cif(str(DATA / "x23/ammonia/ammonia.cif")))
+    refs = crystal.get_references()
+    generate._bind_globals(crystal, refs)
+    g = SymOpList([SymOp.identity(), SymOp.identity()], 1)
+    g.ref_indices = np.array([0, 1])   # member 0 <- ref 0, member 1 <- ref 1
+    zz, d = generate._distance_fingerprint(g)
+    assert len(zz) == len(d) > 0

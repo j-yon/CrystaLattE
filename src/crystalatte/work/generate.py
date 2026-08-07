@@ -48,63 +48,63 @@ from ..core.sym_ops import SymOp, SymOpList
 
 # Module-level bindings set by `_bind_globals` (in main process) and by the
 # worker initializer (`_init_bucket_worker`, in ProcessPoolExecutor children).
-# Defaults are safe: an identity-only self-isometry group and no lattice until
-# bindings exist (the geometric branch degenerates to plain congruence).
+# Per-reference lists indexed by reference index (one entry per independent monomer).
 _crystal: Crystal | None = None
-_monomer: Monomer | None = None
-_self_iso: list[NDArray] = [np.eye(3)]
-_Z_per_monomer: NDArray = np.empty(0, dtype=np.int64)
+_monomers: list[Monomer] = []
+_Z_by_ref: list[NDArray] = []
+_self_iso_by_ref: list[list[NDArray]] = [[np.eye(3)]]
+_W_lin_by_ref: list[list[NDArray]] = [[np.eye(3, dtype=np.int64)]]
+_check_congruence_by_ref: list[bool] = [False]
 _A: NDArray | None = None      # fractional -> Cartesian matrix (cart = _A @ frac)
 _A_inv: NDArray | None = None  # Cartesian -> fractional matrix
-_W_lin: list[NDArray] = [np.eye(3, dtype=np.int64)]  # integer site-symmetry dressings
-_check_congruence: bool = False  # True iff molecular S is richer than site symmetry W
 
 
-def _bind_globals(crystal: Crystal, monomer: Monomer) -> None:
+def _bind_globals(crystal: Crystal, monomers: list[Monomer]) -> None:
     """Bind the deduper's per-run inputs at module scope.
 
-    Sets the module globals used by the geometric branch and the
-    distance-fingerprint pre-filter: ``_self_iso`` (the monomer's molecular
-    point group as Cartesian 3x3 operations), ``_Z_per_monomer`` (the per-atom
-    atomic numbers), and ``_A`` / ``_A_inv`` (the fractional<->Cartesian lattice
-    matrices used to push the integer sym-op transforms into Cartesian space).
+    Sets the module globals for per-reference state: per-reference Z arrays
+    (atomic numbers), self-isometries, site-symmetry dressings, and the
+    congruence gates. Also sets the lattice vectors ``_A`` / ``_A_inv`` for
+    fractional<->Cartesian conversion.
 
     :param crystal: The crystal supplying the lattice and Cartesian conversion
-    :param monomer: The reference monomer supplying symbols and point group
+    :param monomers: The reference monomers (one per crystal asymmetric unit)
     :returns: ``None``
     """
-    global _crystal, _monomer, _self_iso, _Z_per_monomer, _A, _A_inv
-    global _W_lin, _check_congruence
+    global _crystal, _monomers, _Z_by_ref, _self_iso_by_ref
+    global _W_lin_by_ref, _check_congruence_by_ref, _A, _A_inv
     _crystal = crystal
-    _monomer = monomer
-    _self_iso = monomer.self_isometries
-    _Z_per_monomer = np.array(
-        [qcel.periodictable.to_Z(s) for s in monomer.symbols], dtype=np.int64
-    )
+    _monomers = list(monomers)
     _A = np.asarray(crystal.lattice_vectors, dtype=float)
     _A_inv = np.linalg.inv(_A)
 
-    # Crystallographic site-symmetry dressing (integer, lattice basis) for the
-    # exact-integer matcher, plus the fallback gate (`S` richer than `W`).
-    site_ops = crystal.space_group.get_site_symmetry(monomer.centroid_frac)
-    _W_lin = []
-    for op in site_ops:
-        r = op.rot.astype(np.int64)
-        if not any(np.array_equal(r, w) for w in _W_lin):
-            _W_lin.append(r)
-    if not _W_lin:  # defensive: identity always fixes the centroid
-        _W_lin = [np.eye(3, dtype=np.int64)]
-    _check_congruence = len(_self_iso) > len(_W_lin)
+    _Z_by_ref, _self_iso_by_ref, _W_lin_by_ref, _check_congruence_by_ref = [], [], [], []
+    for mon in _monomers:
+        _Z_by_ref.append(
+            np.array([qcel.periodictable.to_Z(s) for s in mon.symbols], dtype=np.int64)
+        )
+        S = mon.self_isometries
+        _self_iso_by_ref.append(S)
+        site_ops = crystal.space_group.get_site_symmetry(mon.centroid_frac)
+        W = []
+        for op in site_ops:
+            r = op.rot.astype(np.int64)
+            if not any(np.array_equal(r, w) for w in W):
+                W.append(r)
+        if not W:
+            W = [np.eye(3, dtype=np.int64)]
+        _W_lin_by_ref.append(W)
+        _check_congruence_by_ref.append(len(S) > len(W))
 
 
-def _init_bucket_worker(crystal: Crystal, monomer: Monomer) -> None:
+def _init_bucket_worker(crystal: Crystal, monomers: list[Monomer]) -> None:
     """Process-pool initializer: bind the deduper globals in a worker process.
 
     :param crystal: The crystal passed to :func:`_bind_globals`
-    :param monomer: The reference monomer passed to :func:`_bind_globals`
+    :param monomers: The reference monomers passed to :func:`_bind_globals`
     :returns: ``None``
     """
-    _bind_globals(crystal, monomer)
+    _bind_globals(crystal, monomers)
 
 
 def _cart_frames(g_N: SymOpList) -> tuple[NDArray, NDArray]:
@@ -271,7 +271,7 @@ def _same_multimer_int(g_N: SymOpList, h_N: SymOpList) -> bool:
 
 def _cluster_atoms_cart(g_N: SymOpList) -> NDArray:
     """Reconstruct the cluster's Cartesian atom positions from the module-level
-    ``_monomer`` / ``_crystal`` bindings.
+    ``_monomers`` / ``_crystal`` bindings, using each member's base reference.
 
     The result is not cached: this is called only by
     :func:`_distance_fingerprint`, which caches the derived fingerprint, so a
@@ -280,8 +280,9 @@ def _cluster_atoms_cart(g_N: SymOpList) -> NDArray:
     :param g_N: The cluster whose atom positions are requested
     :returns: An ``(n_atoms, 3)`` array of Cartesian coordinates
     """
-    atoms_frac = np.vstack([op.apply(_monomer.frac_coords) for op in g_N])
-    return _crystal.to_cartesian(atoms_frac)
+    ref = g_N.ref_indices
+    parts = [op.apply(_monomers[ref[k]].frac_coords) for k, op in enumerate(g_N)]
+    return _crystal.to_cartesian(np.vstack(parts))
 
 
 def _distance_fingerprint(g_N: SymOpList) -> tuple[NDArray, NDArray]:
@@ -306,7 +307,8 @@ def _distance_fingerprint(g_N: SymOpList) -> tuple[NDArray, NDArray]:
     if cached is not None:
         return cached
     atoms = _cluster_atoms_cart(g_N)
-    Z = np.tile(_Z_per_monomer, len(g_N))
+    ref = g_N.ref_indices
+    Z = np.concatenate([_Z_by_ref[ref[k]] for k in range(len(g_N))])
     i_idx, j_idx = np.triu_indices(len(atoms), k=1)
     dists = np.linalg.norm(atoms[i_idx] - atoms[j_idx], axis=1)
     zz = Z[i_idx] * Z[j_idx]
@@ -569,10 +571,10 @@ def _generate_neighbors(
     centroid_frac_by_op = {op: op.apply(monomer.centroid_frac) for op in full_ops}
     centroid_frac_by_op[SymOp.identity()] = monomer.centroid_frac
 
-    # Bind module-level state (`_crystal`, `_monomer`, point group, lattice)
+    # Bind module-level state (per-reference state, lattice)
     # for the geometric branch in `_is_bijection`. Workers spawned below get the
     # same bindings via `_init_bucket_worker`.
-    _bind_globals(crystal, monomer)
+    _bind_globals(crystal, crystal.get_references())
 
     # Build all (identity + N-1)-monomer SymOpList candidates.
     candidates: list[SymOpList] = []
@@ -607,7 +609,7 @@ def _generate_neighbors(
         with ProcessPoolExecutor(
             max_workers=n_jobs,
             initializer=_init_bucket_worker,
-            initargs=(crystal, monomer),
+            initargs=(crystal, crystal.get_references()),
         ) as ex:
             results = list(
                 tqdm(
