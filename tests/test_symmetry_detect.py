@@ -73,6 +73,20 @@ def test_detect_symmetry_graceful_on_failure(monkeypatch):
     assert crystal.detect_symmetry() is crystal            # falls back, no raise
 
 
+def test_detect_symmetry_benzene_full_cell_expansion():
+    # Benzene is non-P1 (SG 61, Z=4); detection must expand ASU to full cell
+    # before passing to spglib. Verify it works (returns self, no raise/warning).
+    import warnings
+    crystal, _ = next(cle.from_cif(str(DATA / "x23/benzene/benzene.cif")))
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        detected = crystal.detect_symmetry()
+        # No symmetry-detection warnings (silenced spglib + handled errors)
+        sym_warnings = [x for x in w if "symmetry detection" in str(x.message)]
+        assert len(sym_warnings) == 0
+    assert detected is crystal  # benzene already at full symmetry
+
+
 from crystalatte.work import generate
 
 
