@@ -159,3 +159,165 @@ def test_int_inv_rejects_non_unimodular():
         generate._int_inv(np.array([[2, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.int64))
 
 
+
+
+# --- dressing translations (isometries about the centroid, not the origin) ---
+
+UREA_DIMERS_R10 = 18  # urea, N=2, R=10.0, use_origin=True; verified against the
+                      # NRE+CHSEV oracle and by explicit Kabsch congruence
+
+
+def test_self_isometry_linear_part_is_not_a_symmetry():
+    # A self-isometry is an isometry about the monomer CENTROID. Applied as a
+    # bare linear map about the origin it does NOT map the molecule onto
+    # itself unless the centroid happens to be a fixed point. Urea is a case
+    # where it does not: the linear part displaces the molecule by several
+    # Angstroms, which is exactly why the affine translation part is required.
+    crystal, _ = next(cle.from_cif(str(DATA / "x23/urea/urea.cif")))
+    mon = crystal.get_references()[0]
+    X, c = mon.cart_coords, mon.centroid_cart
+
+    def max_mismatch(P):
+        return max(np.min(np.linalg.norm(X - p, axis=1)) for p in P)
+
+    worst_linear = 0.0
+    for s in mon.self_isometries:
+        worst_linear = max(worst_linear, max_mismatch(X @ s.T))
+        # the affine form about the centroid IS a symmetry
+        assert max_mismatch((X - c) @ s.T + c) < 1e-8
+    assert worst_linear > 1.0  # linear part alone is badly wrong
+
+
+def test_bind_globals_sets_dressing_translations():
+    crystal, _ = next(cle.from_cif(str(DATA / "x23/urea/urea.cif")))
+    crystal = crystal.detect_symmetry(1e-3)
+    generate._bind_globals(crystal, crystal.get_references())
+
+    S = generate._self_iso_by_ref[0]
+    D = generate._self_iso_tr_by_ref[0]
+    W = generate._W_lin_by_ref[0]
+    W_tr = generate._W_tr_by_ref[0]
+    assert len(D) == len(S)
+    assert len(W_tr) == len(W)
+
+    c = generate._monomers[0].centroid_cart
+    for s, d in zip(S, D):
+        assert np.allclose(d, c - s @ c)
+    # urea's centroid is NOT a fixed point of its point group, so some
+    # dressing translations are nonzero (this is the case the bug missed)
+    assert max(float(np.linalg.norm(d)) for d in D) > 1.0
+    assert max(int(np.abs(t).max()) for t in W_tr) > 0
+
+    # the integer dressings must fix the centroid EXACTLY (in twelfths)
+    c_frac = generate._monomers[0].centroid_frac
+    for r, t in zip(W, W_tr):
+        assert np.allclose(r @ c_frac + t / 12.0, c_frac, atol=1e-6)
+
+
+def test_bind_globals_dressing_translations_vanish_for_benzene():
+    # Benzene's centroid is a fixed point of its point group, so every
+    # dressing translation is zero and the pre-fix code was accidentally right.
+    crystal, _ = next(cle.from_cif(str(DATA / "x23/benzene/benzene.cif")))
+    generate._bind_globals(crystal, crystal.get_references())
+    assert all(np.allclose(d, 0.0) for d in generate._self_iso_tr_by_ref[0])
+    assert all(not np.any(t) for t in generate._W_tr_by_ref[0])
+
+
+def test_same_multimer_int_needs_dressing_translation():
+    # Two urea dimers related by a crystallographic isometry whose dressing
+    # does not fix the centroid. They merge only when the dressing carries its
+    # translation part; with W_tr omitted the guard is unsatisfiable.
+    crystal, _ = next(cle.from_cif(str(DATA / "x23/urea/urea.cif")))
+    crystal = crystal.detect_symmetry(1e-3)
+    refs = crystal.get_references()
+    generate._bind_globals(crystal, refs)
+    W, W_tr = generate._W_lin_by_ref[0], generate._W_tr_by_ref[0]
+
+    rot = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, -1]], dtype=np.int16)
+    g = SymOpList([SymOp.identity(),
+                   SymOp.from_components(rot, np.array([-12, -24, 0], dtype=np.int16))], 1)
+    h = SymOpList([SymOp.identity(),
+                   SymOp.from_components(rot, np.array([-12, 12, 0], dtype=np.int16))], 1)
+
+    assert generate._same_multimer_int(g, h, W, W_tr) is True
+    # without the translation parts the same pair is missed
+    assert generate._same_multimer_int(g, h, W) is False
+
+
+def test_urea_dimer_count_regression():
+    from crystalatte import count_chemistry_classes
+
+    crystal, _ = next(cle.from_cif(str(DATA / "x23/urea/urea.cif")))
+    mers = generate.generate(crystal, 2, 10.0, use_origin=True, n_jobs=1, verbose=0)
+    assert len(mers) == UREA_DIMERS_R10
+    # dedup completeness: no two survivors share a chemistry class
+    n_classes, _ = count_chemistry_classes(mers, atol=1e-8)
+    assert n_classes == len(mers)
+
+
+# --- Wyckoff special-position validation ---
+
+def test_get_unique_sym_ops_ambiguous_wyckoff_position():
+    # Parameterized Wyckoff positions are stored in the table with their free
+    # parameters zeroed, so a centroid at the origin matches several letters at
+    # once (in SG 217: g/e/c all collapse onto [0,0,0] alongside the genuine
+    # fixed position a). The multiplicity check must not fire on such an
+    # ambiguous match -- the orbit size is fixed by orbit-stabilizer.
+    crystal, _ = next(cle.from_cif(str(DATA / "x23/hexamine/hexamine.cif")))
+    crystal = crystal.detect_symmetry(1e-3)
+    sg = crystal.space_group
+    centroid = crystal.get_references()[0].centroid_frac
+
+    ops = sg.get_unique_sym_ops(centroid)
+    stab = sg.get_site_symmetry(centroid)
+    assert len(ops) == len(sg.sym_ops) // len(stab)
+
+
+def test_generate_runs_on_high_symmetry_crystals():
+    # These three crash outright if the Wyckoff multiplicity check misfires.
+    for name in ("adamantane", "carbon_dioxide", "hexamine"):
+        crystal, _ = next(cle.from_cif(str(DATA / f"x23/{name}/{name}.cif")))
+        mers = generate.generate(crystal, 2, 6.0, use_origin=True, n_jobs=1, verbose=0)
+        assert len(mers) > 0
+
+
+def test_linear_monomer_dedup_is_complete():
+    # CO2 is linear, so its point group (D_inf_h) is CONTINUOUS. The finite
+    # self-isometry sample cannot supply the dressing the relative-transform
+    # matchers need, so such monomers must be decided by point-cloud
+    # congruence instead.
+    from crystalatte import count_chemistry_classes
+
+    crystal, _ = next(cle.from_cif(str(DATA / "x23/carbon_dioxide/carbon_dioxide.cif")))
+    mers = generate.generate(crystal, 2, 15.0, use_origin=True, n_jobs=1, verbose=0)
+    n_classes, _ = count_chemistry_classes(mers, atol=1e-8)
+    assert n_classes == len(mers)
+
+
+def test_special_position_tolerance_absorbs_cif_rounding():
+    # Ice Ih's CIF writes the 3-fold special position (1/3, 2/3, z) as the
+    # rounded decimals 0.3333 / 0.6667, putting the monomer centroid ~8.5e-5
+    # (fractional) off the exact axis. That is chemically nothing but far above
+    # a 1e-6 site-symmetry tolerance, so the 3-fold used to be missed, the
+    # molecule was replicated 3x essentially on top of itself, and the
+    # resulting "dimers" had coincident atoms.
+    from scipy.spatial.distance import pdist
+
+    crystal, _ = next(cle.from_cif(str(DATA / "x23/ice/ice.cif")))
+    mers = generate.generate(crystal, 2, 8.0, use_origin=True, n_jobs=1, verbose=0)
+    assert mers
+
+    worst = min(
+        float(pdist(np.vstack([m.cart_coords for m in mer.monomers])).min())
+        for mer in mers
+    )
+    assert worst > 0.1, f"coincident atoms in a generated multimer ({worst:.3e} A)"
+
+
+def test_ice_dedup_is_complete():
+    from crystalatte import count_chemistry_classes
+
+    crystal, _ = next(cle.from_cif(str(DATA / "x23/ice/ice.cif")))
+    mers = generate.generate(crystal, 2, 8.0, use_origin=True, n_jobs=1, verbose=0)
+    n_classes, _ = count_chemistry_classes(mers, atol=1e-8)
+    assert n_classes == len(mers)

@@ -12,6 +12,20 @@ from .sym_ops import SymOp
 
 conventions: Final = ["Hermann-Mauguin", "Schoenflies", "PDB", "Hall", "short"]
 
+#: Default tolerance for deciding whether a site lies on a symmetry element,
+#: in FRACTIONAL coordinates (both :meth:`SpaceGroup.get_site_symmetry` and
+#: :meth:`SpaceGroup.get_unique_sym_ops` compare fractional vectors).
+#:
+#: It must absorb the coordinate rounding real CIFs contain: writing the
+#: special position ``(1/3, 2/3, z)`` as ``0.3333 / 0.6667`` displaces the site
+#: by ~3e-5 fractional, and a monomer centroid averaged over such atoms lands
+#: ~1e-4 off the element. A tolerance of 1e-6 rejects the stabilizer entirely
+#: and the monomer gets replicated on top of itself.
+#:
+#: Note this is NOT ``symprec``, which spglib measures in Angstroms. Callers
+#: holding a lattice should convert: ``symprec / min(|a|, |b|, |c|)``.
+SITE_ATOL: Final[float] = 1e-4
+
 
 class CrystalSystem(Enum):
     """The 7 crystal systems in 3D."""
@@ -169,41 +183,81 @@ class SpaceGroup:
         """Return the lattice constraints for the space group."""
         return self._lattice_constraints
 
-    def get_unique_sym_ops(self, coords: NDArray) -> list[SymOp]:
+    def get_unique_sym_ops(
+        self, coords: NDArray, atol: float = SITE_ATOL
+    ) -> list[SymOp]:
         """Return one representative operation per distinct image of ``coords``
         (mod lattice) — the coset representatives modulo the site symmetry, so a
         monomer at ``coords`` is generated exactly once.
 
-        When ``coords`` matches a DB special position, the deduped count is
-        validated against the known Wyckoff multiplicity.
+        When ``coords`` matches exactly one DB special position, the deduped
+        count is validated against that position's Wyckoff multiplicity.
+
+        The match must be unambiguous. Parameterized Wyckoff positions (e.g.
+        ``(x, x, z)``) are stored in the table with their free parameters set to
+        zero, so at the origin they are indistinguishable from a genuine fixed
+        position: in SG 217 the origin matches ``g`` (24), ``e`` (12), ``c`` (8)
+        and ``a`` (2) simultaneously. Picking the first such match — the table
+        is ordered by descending multiplicity — validates against a multiplicity
+        the site does not have and raises spuriously. When several letters
+        match, the tabulated multiplicity is simply unknown here, so the check
+        is skipped; the orbit size is fixed by orbit-stabilizer regardless.
+
+        Images are compared within ``atol`` rather than by exact rounding: a CIF
+        routinely writes a special position such as ``(1/3, 2/3, z)`` as the
+        rounded decimals ``0.3333 / 0.6667``, which puts the site ~1e-4 off the
+        symmetry element. Deduplicating at 1e-8 would then treat the stabilizer's
+        own operations as generating distinct images and replicate the monomer
+        on top of itself. See :data:`SITE_ATOL`.
 
         :param coords: Fractional coordinates of the monomer centroid
+        :param atol: Fractional tolerance for deciding two images coincide
         :returns: One SymOp per distinct centroid image
-        :raises ValueError: If a matched special position's multiplicity disagrees
+        :raises ValueError: If an unambiguously matched special position's
+            multiplicity disagrees with the computed orbit size
         """
-        unique: dict = {}
+        coords = np.asarray(coords, dtype=float)
+        images: list[NDArray] = []
+        result: list[SymOp] = []
         for op in self._sym_ops:
-            res = tuple(np.round(op.apply(coords), 8) % 1)
-            if res not in unique:
-                unique[res] = op
-        result = list(unique.values())
+            image = np.asarray(op.apply(coords), dtype=float) % 1.0
+            # compare mod 1, mapping each component into [-0.5, 0.5) so that
+            # 0.9999... and 0.0000... count as the same image
+            if any(
+                np.allclose(((image - seen + 0.5) % 1.0) - 0.5, 0.0, atol=atol)
+                for seen in images
+            ):
+                continue
+            images.append(image)
+            result.append(op)
 
-        for letter, pos in self._special_positions.items():
-            for site in pos["coordinates"]:
-                if np.allclose(coords, site):
-                    if len(result) != pos["multiplicity"]:
-                        raise ValueError(
-                            f"Expected {pos['multiplicity']} unique symmetry "
-                            f"operations for position {letter}, but found {len(result)}."
-                        )
-                    return result
+        matches = {
+            letter: pos["multiplicity"]
+            for letter, pos in self._special_positions.items()
+            if any(np.allclose(coords, site) for site in pos["coordinates"])
+        }
+        if len(matches) == 1:
+            (letter, multiplicity), = matches.items()
+            if len(result) != multiplicity:
+                raise ValueError(
+                    f"Expected {multiplicity} unique symmetry "
+                    f"operations for position {letter}, but found {len(result)}."
+                )
         return result
 
-    def get_site_symmetry(self, coords: NDArray) -> list[SymOp]:
+    def get_site_symmetry(
+        self, coords: NDArray, atol: float = SITE_ATOL
+    ) -> list[SymOp]:
         """Return the site-symmetry stabilizer of ``coords``: the space-group
         operations that map ``coords`` onto itself modulo a lattice translation.
 
+        Must use the same tolerance as :meth:`get_unique_sym_ops` — the two
+        answer the same question (which operations move this site?) and an
+        inconsistency between them yields a stabilizer and an orbit that do not
+        satisfy orbit-stabilizer. See :data:`SITE_ATOL`.
+
         :param coords: Fractional coordinates of the monomer centroid
+        :param atol: Fractional tolerance for deciding an operation fixes the site
         :returns: The subset of symmetry operations fixing ``coords`` (always
             includes the identity)
         """
@@ -211,7 +265,7 @@ class SpaceGroup:
         result: list[SymOp] = []
         for op in self._sym_ops:
             delta = op.apply(coords) - coords
-            if np.allclose(delta - np.round(delta), 0.0, atol=1e-6):
+            if np.allclose(delta - np.round(delta), 0.0, atol=atol):
                 result.append(op)
         return result
 

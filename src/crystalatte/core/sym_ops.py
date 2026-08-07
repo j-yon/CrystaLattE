@@ -5,7 +5,6 @@ from typing import overload
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.spatial.distance import pdist
 
 
 @dataclass()
@@ -339,14 +338,6 @@ class SymOpList:
         """Return a fingerprint of the symmetry operations based on their rotational components."""
         rots = self._rot_cache[:].reshape(len(self._rot_cache), -1)
         fp = np.sort(rots.flatten()).tobytes()
-        return hash(fp)
-
-    @property
-    def translation_fp(self) -> int:
-        """Return a fingerprint of the symmetry operations based on the pairwise squared distances between their translation components."""
-        translations = self._tr_cache[:] / 12
-        sq_dists = pdist(translations, metric="sqeuclidean").astype(np.int32)
-        fp = np.sort(sq_dists).tobytes()
         return hash(fp)
 
     @property

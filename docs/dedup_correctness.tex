@@ -120,6 +120,34 @@ no translation), is exactly
 \end{equation}
 \end{theorem}
 
+\begin{remark}[The centering hypothesis is load--bearing]\label{rem:centering}
+Equation \eqref{eq:dagger2} drops the translational part of $s_a$ \emph{only}
+because the reference monomer was defined with its centroid at the origin, so
+that every $Q\in\Sgrp$ fixes the origin and carries no translation. If the
+placements $T_a$ instead act on \emph{un--centred} reference coordinates --- as
+they do in the implementation, where $T_a$ is built from the crystal symmetry
+operation and applied to \texttt{Monomer.cart\_coords} --- then a self--isometry
+about the centroid $c$ is the \emph{affine} map
+\begin{equation}
+  \sigma(x) \;=\; s\,x + d, \qquad d \;=\; c - s\,c ,
+\end{equation}
+and $(\dagger)$ splits instead as
+\begin{equation}\label{eq:dagger3}
+  L^G_{ab}=s_a\inv L^H_{\pi(a)\pi(b)} s_b,
+  \qquad
+  v^G_{ab}=s_a\inv\bigl(L^H_{\pi(a)\pi(b)}\,d_b + v^H_{\pi(a)\pi(b)} - d_a\bigr).
+\end{equation}
+The $d$ terms vanish iff $s\,c=c$ for every $s$ used, which is why the
+un--dressed form is correct for monomers sitting at a fixed point of their own
+point group (benzene, uracil, ammonia) and wrong otherwise (urea). The failure
+is not a tolerance effect: each $s$ is orthogonal, hence norm--preserving, so
+whenever $\lVert v^G_{ab}\rVert \neq \lVert v^H_{\pi(a)\pi(b)}\rVert$ the
+un--dressed guard is unsatisfiable at \emph{any} tolerance. The implementation
+carries \eqref{eq:dagger3} rather than pre--centring the reference monomer;
+\texttt{\_self\_iso\_tr\_by\_ref} and \texttt{\_W\_tr\_by\_ref} hold the $d$
+values, the latter exactly in twelfths in the lattice basis.
+\end{remark}
+
 \begin{proof}
 ($\Rightarrow$) Assume \eqref{eq:star}. Then $T^G_a=M\inv T^H_{\pi(a)}s_a$, hence
 $(T^G_a)\inv=s_a\inv (T^H_{\pi(a)})\inv M$, so
