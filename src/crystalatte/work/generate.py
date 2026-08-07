@@ -481,7 +481,6 @@ def _same_multimer_geom(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-3) -> b
         np.linalg.norm(A[ia] - A[ic]),
         np.linalg.norm(A[ib] - A[ic]),
     ])
-    from itertools import permutations
     from scipy.spatial.distance import cdist
     DB_full = cdist(B, B)
     same = {z: np.where(ZB == z)[0] for z in np.unique(ZB)}
@@ -625,8 +624,8 @@ def _neighbor_distance(cart_mon: NDArray, monomer: Monomer, kwargs: dict) -> flo
 
     The convention is selected by ``kwargs``:
 
-    - ``use_origin=True``: closest atom of the partner to the origin (which is
-      the reference monomer's centroid in this code's convention).
+    - ``use_origin=True``: closest atom of the partner to the anchor monomer's
+      centroid.
     - ``use_com=True``: distance between the partner's center of mass and the
       reference monomer's centroid.
     - default: closest atom-pair contact between the reference and partner
@@ -638,7 +637,7 @@ def _neighbor_distance(cart_mon: NDArray, monomer: Monomer, kwargs: dict) -> flo
     :returns: The partner-to-reference distance in Angstroms
     """
     if kwargs.get("use_origin"):
-        return float(np.linalg.norm(cart_mon, axis=1).min())
+        return float(np.linalg.norm(cart_mon - monomer.centroid_cart, axis=1).min())
     if kwargs.get("use_com", False):
         masses = np.array([qcel.periodictable.to_mass(s) for s in monomer.symbols])
         com_mon = np.average(cart_mon, axis=0, weights=masses)

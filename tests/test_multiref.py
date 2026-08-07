@@ -114,7 +114,16 @@ def _tr(dx12):
     return SymOp.identity().translate(np.array(dx12, dtype=np.int16))
 
 
-AMMONIA_DIMERS = 9  # captured: conda run -n cle python -c "..." (see task-5-report.md)
+# captured: conda run -n cle python -c "..." (see task-5-report.md), under the
+# anchor-relative use_origin convention (Fix 1 of the final-review pass:
+# use_origin is measured from the ANCHOR monomer's centroid, not the global
+# origin, which only coincided with the reference centroid for Z'=1 crystals
+# like benzene).
+AMMONIA_DIMERS = 3
+# Same physical ammonia dimers, but under the DEFAULT closest-contact
+# convention (no use_origin/use_com) — captured independently so a future
+# use_origin regression can't silently pass this suite.
+AMMONIA_DIMERS_DEFAULT = 4
 
 
 def test_benzene_regression_unchanged():
@@ -130,5 +139,18 @@ def test_ammonia_physical_dimers():
     mers = generate.generate(crystal, 2, 5.0, use_origin=True, n_jobs=1)
     # now includes the real ~3.94 A hetero-molecular contacts, not just self-translates
     assert len(mers) == AMMONIA_DIMERS   # captured from the run in Step 4
+    assert AMMONIA_DIMERS > 2
     # every returned dimer has 2 monomers
+    assert all(len(m.monomers) == 2 for m in mers)
+
+
+def test_ammonia_physical_dimers_default_convention():
+    # Anchor-relative behavior locked independently of use_origin: the
+    # default closest-contact convention must also find more than the old
+    # self-translate-only artifact count.
+    from crystalatte.work import generate
+    crystal, _ = next(cle.from_cif(str(DATA / "x23/ammonia/ammonia.cif")))
+    mers = generate.generate(crystal, 2, 5.0, n_jobs=1)
+    assert len(mers) == AMMONIA_DIMERS_DEFAULT
+    assert AMMONIA_DIMERS_DEFAULT > 2
     assert all(len(m.monomers) == 2 for m in mers)
