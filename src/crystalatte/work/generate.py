@@ -201,10 +201,10 @@ def _relative_transforms_int(g_N: SymOpList) -> tuple[NDArray, NDArray]:
     return L, v
 
 
-def _same_multimer_int(g_N: SymOpList, h_N: SymOpList) -> bool:
+def _same_multimer_int(g_N: SymOpList, h_N: SymOpList, W: list[NDArray] | None = None) -> bool:
     """Return True iff ``g_N`` and ``h_N`` are the same multimer under a
     crystallographic isometry, working entirely in the exact integer lattice
-    basis and modding out the site-symmetry dressing ``_W_lin``.
+    basis and modding out the site-symmetry dressing ``W``.
 
     This is the exact-integer form of the anchored relative-transform search
     (see ``docs/dedup_correctness.tex``, Thm 2). It subsumes the old exact
@@ -224,7 +224,7 @@ def _same_multimer_int(g_N: SymOpList, h_N: SymOpList) -> bool:
 
     LG, vG = _relative_transforms_int(g_N)
     LH, vH = _relative_transforms_int(h_N)
-    S = _W_lin
+    S = _W_lin_by_ref[0] if W is None else W
 
     def in_S(M: NDArray) -> bool:
         return any(np.array_equal(M, s) for s in S)
@@ -267,6 +267,15 @@ def _same_multimer_int(g_N: SymOpList, h_N: SymOpList) -> bool:
             if assign(1):
                 return True
     return False
+
+
+def _base(g_N: SymOpList) -> int:
+    """Return the (single) base reference index of a mono-reference cluster.
+
+    :param g_N: The cluster whose base reference index is requested
+    :returns: The base reference index (``g_N.ref_indices[0]``)
+    """
+    return int(g_N.ref_indices[0])
 
 
 def _cluster_atoms_cart(g_N: SymOpList) -> NDArray:
@@ -379,7 +388,7 @@ def _same_multimer(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-3) -> bool:
 
     LG, vG = _relative_transforms(g_N)
     LH, vH = _relative_transforms(h_N)
-    S = _self_iso
+    S = _self_iso_by_ref[_base(g_N)]
 
     def in_S(M: NDArray) -> bool:
         return any(np.allclose(M, s, atol=atol) for s in S)
@@ -424,23 +433,139 @@ def _same_multimer(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-3) -> bool:
     return False
 
 
+def _same_multimer_geom(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-3) -> bool:
+    """Return True iff the two clusters' reconstructed, Z-labeled atom clouds are
+    congruent under some isometry (rotation, translation, or reflection).
+
+    Anchor-based: center both clouds, pick a non-collinear anchor triple in G,
+    match it to every Z-compatible, distance-compatible triple in H, solve the
+    (possibly improper) rigid map by Kabsch, and accept iff it carries every
+    atom of G onto a same-Z atom of H within ``atol``. Reflection is allowed
+    (enantiomers are energetically equivalent).
+
+    :param g_N: The first cluster (may span multiple base references)
+    :param h_N: The second cluster (may span multiple base references)
+    :param atol: Absolute tolerance in Angstroms
+    :returns: True iff the two clusters' atom clouds are congruent
+    """
+    A = _cluster_atoms_cart(g_N)
+    B = _cluster_atoms_cart(h_N)
+    if A.shape != B.shape:
+        return False
+    ZA = np.concatenate([_Z_by_ref[g_N.ref_indices[k]] for k in range(len(g_N))])
+    ZB = np.concatenate([_Z_by_ref[h_N.ref_indices[k]] for k in range(len(h_N))])
+    if sorted(ZA) != sorted(ZB):
+        return False
+    A = A - A.mean(axis=0)
+    B = B - B.mean(axis=0)
+
+    n = len(A)
+    # anchor triple in A: first three mutually non-collinear atoms
+    def _triple(P):
+        i0 = 0
+        for i1 in range(1, n):
+            for i2 in range(i1 + 1, n):
+                v1, v2 = P[i1] - P[i0], P[i2] - P[i0]
+                if np.linalg.norm(np.cross(v1, v2)) > 1e-3:
+                    return (i0, i1, i2)
+        return None
+    tri = _triple(A)
+    if tri is None:          # (near-)linear cluster: fall back to full-pair distance check
+        from scipy.spatial.distance import cdist
+        DA = np.sort(cdist(A, A).ravel())
+        DB = np.sort(cdist(B, B).ravel())
+        return bool(np.allclose(DA, DB, atol=atol))
+    ia, ib, ic = tri
+    dref = np.array([
+        np.linalg.norm(A[ia] - A[ib]),
+        np.linalg.norm(A[ia] - A[ic]),
+        np.linalg.norm(A[ib] - A[ic]),
+    ])
+    from itertools import permutations
+    from scipy.spatial.distance import cdist
+    DB_full = cdist(B, B)
+    same = {z: np.where(ZB == z)[0] for z in np.unique(ZB)}
+    for jb in same[ZA[ia]]:
+        for jc in same[ZA[ic]]:
+            for jd in same[ZA[ib]]:
+                if len({jb, jc, jd}) != 3:
+                    continue
+                dcand = np.array([DB_full[jb, jd], DB_full[jb, jc], DB_full[jd, jc]])
+                if not np.allclose(dref, dcand, atol=atol):
+                    continue
+                P = A[[ia, ib, ic]]
+                Q = B[[jb, jd, jc]]
+                R = _kabsch(P, Q)         # allows reflection
+                if R is None:
+                    continue
+                mapped = A @ R.T
+                # every mapped atom must coincide with a same-Z atom of B
+                ok = True
+                used = np.zeros(n, dtype=bool)
+                for k in range(n):
+                    cand = same[ZA[k]]
+                    dists = np.linalg.norm(B[cand] - mapped[k], axis=1)
+                    hit = cand[dists < atol]
+                    hit = [h for h in hit if not used[h]]
+                    if not hit:
+                        ok = False
+                        break
+                    used[hit[0]] = True
+                if ok:
+                    return True
+    return False
+
+
+def _kabsch(P: NDArray, Q: NDArray) -> NDArray | None:
+    """Return the orthogonal R (det +/-1) minimizing ||P R^T - Q|| for centered
+    corresponding point sets, or None if degenerate.
+
+    :param P: An ``(k, 3)`` array of centered source points
+    :param Q: An ``(k, 3)`` array of centered target points
+    :returns: The orthogonal map ``R``, or None on an SVD failure
+    """
+    H = P.T @ Q
+    try:
+        U, _, Vt = np.linalg.svd(H)
+    except np.linalg.LinAlgError:
+        return None
+    R = (Vt.T @ U.T)
+    return R
+
+
+def _mono(g_N: SymOpList) -> bool:
+    """Return True iff every member of ``g_N`` shares the same base reference.
+
+    :param g_N: The cluster to test
+    :returns: True iff ``g_N`` is mono-reference
+    """
+    return len(set(g_N.ref_indices.tolist())) == 1
+
+
 def _is_bijection(g_N: SymOpList, h_N: SymOpList) -> bool:
     """Return True iff ``g_N`` and ``h_N`` represent the same multimer.
 
-    Three stages, cheapest first:
+    Stages, cheapest first:
 
     0. Distance-fingerprint gate (:func:`_fingerprints_match`) — a cached,
        vectorized necessary condition rejecting most within-bucket pairs.
-    1. Exact-integer matcher (:func:`_same_multimer_int`) — the complete,
-       roundoff-free decision for every crystallographic (same-orbit) merge,
-       modding out the site symmetry. Subsumes the former exact matrix branch.
-    2. Float congruence fallback (:func:`_same_multimer`) — runs only when the
-       integer matcher fails and the molecular symmetry is richer than the site
-       symmetry (``_check_congruence``). It uses the FULL molecular
+    1. Mono-reference (both clusters drawn from the same single base
+       reference): exact-integer matcher (:func:`_same_multimer_int`) — the
+       complete, roundoff-free decision for every crystallographic
+       (same-orbit) merge, modding out that reference's site symmetry
+       (``_W_lin_by_ref[i]``). Subsumes the former exact matrix branch.
+       Falls back to the float congruence matcher (:func:`_same_multimer`)
+       only when the integer matcher fails and that reference's molecular
+       symmetry is richer than its site symmetry
+       (``_check_congruence_by_ref[i]``). It uses the FULL molecular
        self-isometry group, so it merges every energetically-equivalent
        congruence: proper molecular-symmetry congruences AND mirror-image
        enantiomers. This is intentional and goes beyond an enantiomer-only
        check; the dedup target is energetic equivalence.
+    2. Cross-reference (members drawn from different base references, or the
+       two clusters' base references differ): labeled point-cloud congruence
+       (:func:`_same_multimer_geom`) — reflection-allowed Kabsch matching on
+       the reconstructed, Z-labeled Cartesian atom clouds.
 
     :param g_N: The first cluster
     :param h_N: The second cluster
@@ -448,11 +573,14 @@ def _is_bijection(g_N: SymOpList, h_N: SymOpList) -> bool:
     """
     if not _fingerprints_match(g_N, h_N):
         return False
-    if _same_multimer_int(g_N, h_N):
-        return True
-    if _check_congruence:
-        return _same_multimer(g_N, h_N)
-    return False
+    if _mono(g_N) and _mono(h_N) and _base(g_N) == _base(h_N):
+        i = _base(g_N)
+        if _same_multimer_int(g_N, h_N, _W_lin_by_ref[i]):
+            return True
+        if _check_congruence_by_ref[i]:
+            return _same_multimer(g_N, h_N)
+        return False
+    return _same_multimer_geom(g_N, h_N)
 
 
 def _process_bucket(
