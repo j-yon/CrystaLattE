@@ -91,9 +91,41 @@ class SpaceGroup:
         self._sym_ops = [SymOp(op) for op in data["sym_ops"]]
         self._lattice_constraints = data["lattice_constraints"]
         self._special_positions = data["special_wyckoff_positions"]
+        self._initialized = True
 
-    def __reduce__(self) -> tuple[type[SpaceGroup], tuple[int, str | None]]:
+    @classmethod
+    def from_sym_ops(cls, sym_ops, number=None, symbol=None) -> "SpaceGroup":
+        """Build a SpaceGroup from an explicit operation list (e.g. detected by
+        spglib in the input cell basis), bypassing the DB/registry. Has no
+        special-position table; ``get_unique_sym_ops`` dedups by centroid image.
+
+        :param sym_ops: The symmetry operations (already in the target basis)
+        :param number: Optional international number (metadata/reporting only)
+        :param symbol: Optional symbol dict (metadata only)
+        :returns: A fresh, uncached SpaceGroup carrying exactly these ops
+        """
+        instance = object.__new__(cls)
+        instance._number = number
+        instance._hall = None
+        instance._symbol = symbol if symbol is not None else {}
+        instance._point_group = None
+        instance._crystal_system = None
+        instance._lattice_system = None
+        instance._sym_ops = list(sym_ops)
+        instance._lattice_constraints = {}
+        instance._special_positions = {}
+        instance._detected = True
+        instance._initialized = True  # guard against __init__ re-running
+        return instance
+
+    def __reduce__(self):
+        if getattr(self, "_detected", False):
+            return (SpaceGroup._reconstruct_detected, (self._sym_ops, self._number, self._symbol))
         return (self.__class__, (self._number, self._hall))
+
+    @classmethod
+    def _reconstruct_detected(cls, sym_ops, number, symbol):
+        return cls.from_sym_ops(sym_ops, number=number, symbol=symbol)
 
     @classmethod
     def _load_data(cls):
