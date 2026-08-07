@@ -170,30 +170,34 @@ class SpaceGroup:
         return self._lattice_constraints
 
     def get_unique_sym_ops(self, coords: NDArray) -> list[SymOp]:
-        """Return a list of unique symmetry operations in the space group given a center of mass. Used to account for special Wyckoff positions.
+        """Return one representative operation per distinct image of ``coords``
+        (mod lattice) — the coset representatives modulo the site symmetry, so a
+        monomer at ``coords`` is generated exactly once.
 
-        :param coords: The fractional coordinates of the center of mass of the monomer. Should be a 3-element array of floats between 0 and 1
-        :returns: A list of unique symmetry operations that should be applied to the monomer to generate full multimers, accounting for any special Wyckoff positions
-        :raises ValueError: If the number of unique symmetry operations found does not match the expected multiplicity for the special position
+        When ``coords`` matches a DB special position, the deduped count is
+        validated against the known Wyckoff multiplicity.
+
+        :param coords: Fractional coordinates of the monomer centroid
+        :returns: One SymOp per distinct centroid image
+        :raises ValueError: If a matched special position's multiplicity disagrees
         """
+        unique: dict = {}
+        for op in self._sym_ops:
+            res = tuple(np.round(op.apply(coords), 8) % 1)
+            if res not in unique:
+                unique[res] = op
+        result = list(unique.values())
+
         for letter, pos in self._special_positions.items():
             for site in pos["coordinates"]:
                 if np.allclose(coords, site):
-                    unique = {}
-                    for op in self._sym_ops:
-                        res = op.apply(coords)
-                        res = tuple(np.round(res, decimals=8) % 1)
-
-                        if res not in unique:
-                            unique[res] = op
-
-                    if len(unique) != pos["multiplicity"]:
+                    if len(result) != pos["multiplicity"]:
                         raise ValueError(
-                            f"Expected {pos['multiplicity']} unique symmetry operations for position {letter}, but found {len(unique)}."
+                            f"Expected {pos['multiplicity']} unique symmetry "
+                            f"operations for position {letter}, but found {len(result)}."
                         )
-                    return list(unique.values())
-
-        return self._sym_ops
+                    return result
+        return result
 
     def get_site_symmetry(self, coords: NDArray) -> list[SymOp]:
         """Return the site-symmetry stabilizer of ``coords``: the space-group
