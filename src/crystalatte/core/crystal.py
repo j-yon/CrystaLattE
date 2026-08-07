@@ -9,6 +9,7 @@ from numpy.typing import NDArray
 from scipy.spatial import cKDTree
 
 from .space_group import SpaceGroup
+from .sym_ops import SymOp
 from .multimer import ASU, Monomer
 
 
@@ -279,6 +280,51 @@ class Crystal:
         :returns: A Monomer object representing the reference monomer
         """
         return self.get_references(tol)[0]
+
+    def detect_symmetry(self, symprec: float = 1e-3) -> "Crystal":
+        """Attempt to detect a higher true space group with spglib and return a
+        new Crystal using it (input-basis operations, no coordinate transform).
+
+        Returns ``self`` unchanged if spglib is unavailable, errors, or does not
+        find strictly higher symmetry (more operations whose rotations contain
+        the declared group's rotations).
+
+        :param symprec: spglib symmetry tolerance (tight default recovers only
+            genuine symmetry, not pseudo-symmetry)
+        :returns: A higher-symmetry Crystal, or ``self``
+        """
+        try:
+            import spglib
+
+            lattice = self._frac_to_cart.T
+            positions = np.asarray(self._asu.positions, dtype=float)
+            numbers = [qcel.periodictable.to_Z(s) for s in self._asu.atoms]
+            sym = spglib.get_symmetry((lattice, positions, numbers), symprec=symprec)
+            if sym is None:
+                return self
+
+            detected = [
+                SymOp.from_components(
+                    np.asarray(r, dtype=np.int16),
+                    np.round(np.asarray(t) * 12).astype(np.int16),
+                )
+                for r, t in zip(sym["rotations"], sym["translations"])
+            ]
+            declared = self._space_group.sym_ops
+            if len(detected) <= len(declared):
+                return self
+            det_rots = [op.rot for op in detected]
+            if not all(
+                any(np.array_equal(op.rot, dr) for dr in det_rots) for op in declared
+            ):
+                return self
+
+            ds = spglib.get_symmetry_dataset((lattice, positions, numbers), symprec=symprec)
+            number = int(ds.number) if ds is not None else None
+            new_sg = SpaceGroup.from_sym_ops(detected, number=number)
+            return Crystal(self._vectors, self._angles, new_sg, self._asu)
+        except Exception:
+            return self
 
     def __repr__(self) -> str:
         return (

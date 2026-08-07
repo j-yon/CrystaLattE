@@ -1,7 +1,11 @@
 import pickle
 import numpy as np
+import crystalatte as cle
+from pathlib import Path
 from crystalatte.core.space_group import SpaceGroup
 from crystalatte.core.sym_ops import SymOp
+
+DATA = Path(__file__).parent
 
 
 def test_from_sym_ops_holds_explicit_ops():
@@ -43,3 +47,27 @@ def test_get_unique_sym_ops_db_behavior_preserved():
     ops_general = sg.get_unique_sym_ops(np.array([0.13, 0.21, 0.37]))
     assert len(ops_general) == len(sg.sym_ops)          # general position: all ops
     assert 1 <= len(ops_origin) <= len(sg.sym_ops)       # special position: deduped
+
+
+def test_detect_symmetry_ammonia_p1_to_p213():
+    crystal, _ = next(cle.from_cif(str(DATA / "x23/ammonia/ammonia.cif")))
+    assert len(crystal.space_group.sym_ops) == 1          # declared P1
+    detected = crystal.detect_symmetry()
+    assert len(detected.space_group.sym_ops) == 12        # P2_13
+    assert detected.space_group.number == 198
+    # symmetry now relates the 4 NH3 -> a single reference
+    assert len(detected.get_references()) == 1
+
+
+def test_detect_symmetry_benzene_no_change():
+    crystal, _ = next(cle.from_cif(str(DATA / "x23/benzene/benzene.cif")))
+    detected = crystal.detect_symmetry()
+    # benzene's declared SG 61 is already correct -> not strictly higher -> self
+    assert detected is crystal
+
+
+def test_detect_symmetry_graceful_on_failure(monkeypatch):
+    import spglib
+    crystal, _ = next(cle.from_cif(str(DATA / "x23/ammonia/ammonia.cif")))
+    monkeypatch.setattr(spglib, "get_symmetry", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert crystal.detect_symmetry() is crystal            # falls back, no raise
