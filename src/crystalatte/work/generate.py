@@ -26,8 +26,7 @@ Pipeline:
       and no chemistry oracle. The dedup target is energetic equivalence, not
       point-group-restricted congruence;
    d. point-cloud congruence (:func:`_same_multimer_geom`) for cross-reference
-      clusters, and as a last-resort fallback for LINEAR monomers, whose
-      continuous point group no finite dressing set can represent.
+      clusters.
 
    Stages (b) and (c) are the same anchored search (:func:`_anchored_match`)
    over the same relative transforms (:func:`_relative_transforms`), differing
@@ -70,11 +69,6 @@ _check_congruence_by_ref: list[bool] = [False]
 # Dropping ``d`` (using ``s`` alone) is only valid when ``s @ c == c``.
 _self_iso_tr_by_ref: list[list[NDArray]] = [[np.zeros(3)]]        # Cartesian, Angstroms
 _W_tr_by_ref: list[list[NDArray]] = [[np.zeros(3, dtype=np.int64)]]  # lattice basis, twelfths
-# True for references whose atoms are collinear. Such monomers have a
-# CONTINUOUS point group (C_inf_v / D_inf_h), which no finite self-isometry
-# sample can represent, so the relative-transform matchers cannot find the
-# dressing a merge needs and these are routed to point-cloud congruence.
-_is_linear_by_ref: list[bool] = [False]
 _A: NDArray | None = None      # fractional -> Cartesian matrix (cart = _A @ frac)
 _A_inv: NDArray | None = None  # Cartesian -> fractional matrix
 
@@ -85,8 +79,8 @@ def _bind_globals(
     """Bind the deduper's per-run inputs at module scope.
 
     Sets the module globals for per-reference state: per-reference Z and mass
-    arrays, self-isometries, site-symmetry dressings, the linearity flags and
-    the congruence gates. Also sets the lattice vectors ``_A`` / ``_A_inv`` for
+    arrays, self-isometries, site-symmetry dressings and the congruence
+    gates. Also sets the lattice vectors ``_A`` / ``_A_inv`` for
     fractional<->Cartesian conversion.
 
     :param crystal: The crystal supplying the lattice and Cartesian conversion
@@ -98,7 +92,7 @@ def _bind_globals(
     """
     global _crystal, _monomers, _Z_by_ref, _mass_by_ref, _self_iso_by_ref
     global _W_lin_by_ref, _check_congruence_by_ref, _A, _A_inv
-    global _self_iso_tr_by_ref, _W_tr_by_ref, _is_linear_by_ref
+    global _self_iso_tr_by_ref, _W_tr_by_ref
     _crystal = crystal
     _monomers = list(monomers)
     _A = np.asarray(crystal.lattice_vectors, dtype=float)
@@ -106,7 +100,7 @@ def _bind_globals(
 
     _Z_by_ref, _mass_by_ref, _self_iso_by_ref = [], [], []
     _W_lin_by_ref, _check_congruence_by_ref = [], []
-    _self_iso_tr_by_ref, _W_tr_by_ref, _is_linear_by_ref = [], [], []
+    _self_iso_tr_by_ref, _W_tr_by_ref = [], []
     for mon in _monomers:
         _Z_by_ref.append(
             np.array([qcel.periodictable.to_Z(s) for s in mon.symbols], dtype=np.int64)
@@ -119,14 +113,6 @@ def _bind_globals(
         # Cartesian dressing translations: d = c - s @ c (zero iff s fixes c).
         c_cart = np.asarray(mon.centroid_cart, dtype=float)
         _self_iso_tr_by_ref.append([c_cart - s @ c_cart for s in S])
-
-        # Collinear atoms => rank-1 gyration tensor => continuous point group.
-        centered = np.asarray(mon.cart_coords, dtype=float)
-        centered = centered - centered.mean(axis=0)
-        gyration = np.linalg.eigvalsh(centered.T @ centered)  # ascending
-        _is_linear_by_ref.append(
-            bool(gyration[1] <= 1e-6 * max(float(gyration[-1]), 1.0))
-        )
 
         site_ops = crystal.space_group.get_site_symmetry(
             mon.centroid_frac, atol=site_atol
@@ -619,15 +605,7 @@ def _is_bijection(g_N: SymOpList, h_N: SymOpList) -> bool:
        congruence: proper molecular-symmetry congruences AND mirror-image
        enantiomers. This is intentional and goes beyond an enantiomer-only
        check; the dedup target is energetic equivalence.
-    2. Mono-reference with a LINEAR monomer, after both of the above fail:
-       point-cloud congruence (:func:`_same_multimer_geom`). A collinear
-       monomer's point group is continuous (``C_inf_v`` / ``D_inf_h``), so the
-       finite self-isometry sample cannot supply a dressing that is a rotation
-       about the molecular axis by an unsampled angle. Point-cloud congruence
-       needs no dressing. It is strictly weaker on its own — replacing the
-       relative-transform path with it inflates the CO2 dimer count from 38 to
-       126 — so it runs only as a last-resort fallback.
-    3. Cross-reference (members drawn from different base references, or the
+    2. Cross-reference (members drawn from different base references, or the
        two clusters' base references differ): labeled point-cloud congruence
        (:func:`_same_multimer_geom`) — reflection-allowed Kabsch matching on
        the reconstructed, Z-labeled Cartesian atom clouds.
@@ -644,20 +622,6 @@ def _is_bijection(g_N: SymOpList, h_N: SymOpList) -> bool:
             return True
         if _check_congruence_by_ref[i] and _same_multimer(g_N, h_N):
             return True
-        if _is_linear_by_ref[i]:
-            # Backstop for continuous point groups (C_inf_v / D_inf_h), where
-            # NO finite self-isometry set is complete: a merge whose dressing is
-            # a rotation about the molecular axis by an unsampled angle is
-            # invisible to the relative-transform matchers. Point-cloud
-            # congruence needs no dressing at all.
-            #
-            # Since self-isometry closure repair landed this no longer fires for
-            # CO2 (its group closes to 48 operations, enough for every merge in
-            # the test set — disabling this branch leaves CO2 unchanged). It is
-            # kept because sufficiency is a property of that particular sample,
-            # not a guarantee for an arbitrary linear species. It is a strictly
-            # weaker matcher on its own, so it runs LAST.
-            return _same_multimer_geom(g_N, h_N)
         return False
     return _same_multimer_geom(g_N, h_N)
 
