@@ -714,8 +714,13 @@ def _generate_neighbors(
             # bucket key = sorted rounded pairwise member-centroid distances
             # (an isometry invariant of the cluster; valid across references,
             # unlike translation_fp which only reflects SymOp translations).
+            # Deliberately coarse (Euclidean Angstroms, 2 dp) and over-inclusive:
+            # equivalent clusters' centroid distances agree to ~1e-9, so a 0.01 A
+            # bin never straddles a rounding boundary in practice, while any
+            # extra within-bucket collisions are harmless — correctness is
+            # decided by _is_bijection, not by the bucket key itself.
             if len(member_cens) > 1:
-                dfp = np.sort(np.round(pdist(member_cens, "sqeuclidean"), 3))
+                dfp = np.sort(np.round(pdist(member_cens), 2))
             else:
                 dfp = np.array([0.0])
             sop._bucket_key = hash(dfp.tobytes())

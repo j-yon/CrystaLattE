@@ -64,17 +64,15 @@ def test_relative_transforms_int_is_cached():
 
 def test_same_multimer_int_translation_swap():
     # Same dimer counted from each monomer: [I, T(+1)] ~ [I, T(-1)]. W = {I}.
-    generate._W_lin = [np.eye(3, dtype=np.int64)]
     G = SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1)
     H = SymOpList([SymOp.identity(), _translate([-12, 0, 0])], 1)
-    assert generate._same_multimer_int(G, H) is True
+    assert generate._same_multimer_int(G, H, W=[np.eye(3, dtype=np.int64)]) is True
 
 
 def test_same_multimer_int_non_match():
-    generate._W_lin = [np.eye(3, dtype=np.int64)]
     G = SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1)
     H = SymOpList([SymOp.identity(), _translate([24, 0, 0])], 1)
-    assert generate._same_multimer_int(G, H) is False
+    assert generate._same_multimer_int(G, H, W=[np.eye(3, dtype=np.int64)]) is False
 
 
 def test_same_multimer_int_inversion_needs_W():
@@ -86,11 +84,11 @@ def test_same_multimer_int_inversion_needs_W():
     )
     H = SymOpList([SymOp.identity(), h_partner], 1)
 
-    generate._W_lin = [np.eye(3, dtype=np.int64)]
-    assert generate._same_multimer_int(G, H) is False
+    assert generate._same_multimer_int(G, H, W=[np.eye(3, dtype=np.int64)]) is False
 
-    generate._W_lin = [np.eye(3, dtype=np.int64), -np.eye(3, dtype=np.int64)]
-    assert generate._same_multimer_int(G, H) is True
+    assert generate._same_multimer_int(
+        G, H, W=[np.eye(3, dtype=np.int64), -np.eye(3, dtype=np.int64)]
+    ) is True
 
 
 def test_bind_globals_sets_site_symmetry_and_gate():
@@ -104,16 +102,17 @@ def test_bind_globals_sets_site_symmetry_and_gate():
     generate._bind_globals(crystal, crystal.get_references())
 
     # Benzene is on an inversion centre: identity + inversion in the dressing.
-    assert any(np.array_equal(w, np.eye(3, dtype=np.int64)) for w in generate._W_lin)
-    assert any(np.array_equal(w, -np.eye(3, dtype=np.int64)) for w in generate._W_lin)
+    assert any(np.array_equal(w, np.eye(3, dtype=np.int64)) for w in generate._W_lin_by_ref[0])
+    assert any(np.array_equal(w, -np.eye(3, dtype=np.int64)) for w in generate._W_lin_by_ref[0])
     # Molecular point group (D6h-ish) is richer than the site symmetry.
-    assert generate._check_congruence is True
+    assert generate._check_congruence_by_ref[0] is True
 
 
 def test_is_bijection_fallback_gated_by_check_congruence(monkeypatch):
     # Two clusters that the integer matcher rejects; the float fallback must run
-    # only when _check_congruence is True.
-    generate._W_lin = [np.eye(3, dtype=np.int64)]
+    # only when _check_congruence_by_ref[0] is True. Both clusters default to
+    # ref_indices = [0, 0] (mono-reference, base 0).
+    generate._W_lin_by_ref = [[np.eye(3, dtype=np.int64)]]
     G = SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1)
     H = SymOpList([SymOp.identity(), _translate([24, 0, 0])], 1)
 
@@ -123,19 +122,19 @@ def test_is_bijection_fallback_gated_by_check_congruence(monkeypatch):
         generate, "_same_multimer", lambda a, b, **k: calls.append(1) or False
     )
 
-    generate._check_congruence = False
+    generate._check_congruence_by_ref = [False]
     assert generate._is_bijection(G, H) is False
     assert calls == []  # gated off: float fallback not called
 
-    generate._check_congruence = True
+    generate._check_congruence_by_ref = [True]
     assert generate._is_bijection(G, H) is False
     assert calls == [1]  # gated on: float fallback called once
 
 
 def test_is_bijection_integer_path_matches_without_fallback(monkeypatch):
     # A crystallographic merge must be decided by the integer path alone.
-    generate._W_lin = [np.eye(3, dtype=np.int64)]
-    generate._check_congruence = True
+    generate._W_lin_by_ref = [[np.eye(3, dtype=np.int64)]]
+    generate._check_congruence_by_ref = [True]
     G = SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1)
     H = SymOpList([SymOp.identity(), _translate([-12, 0, 0])], 1)
 
