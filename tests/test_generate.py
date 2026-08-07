@@ -59,7 +59,7 @@ def _load(cif_rel: str):
 ])
 def test_dimer_count(cif_rel, R, expected):
     crystal, reference = _load(cif_rel)
-    multimers = cle.generate(crystal, reference, N=2, R=R, **_GENERATE_KWARGS)
+    multimers = cle.generate(crystal, N=2, R=R, **_GENERATE_KWARGS)
 
     n_classes, _ = count_chemistry_classes(multimers, atol=_ATOL)
 
@@ -88,7 +88,7 @@ def test_dimer_count(cif_rel, R, expected):
 ])
 def test_trimer_count(cif_rel, R, expected):
     crystal, reference = _load(cif_rel)
-    multimers = cle.generate(crystal, reference, N=3, R=R, **_GENERATE_KWARGS)
+    multimers = cle.generate(crystal, N=3, R=R, **_GENERATE_KWARGS)
 
     n_classes, _ = count_chemistry_classes(multimers, atol=_ATOL)
 
@@ -117,7 +117,7 @@ def test_dimer_count_decreases_with_tighter_R(cif_rel):
 
     counts = []
     for R in [20.0, 15.0, 10.0, 7.0]:
-        multimers = cle.generate(crystal, reference, N=2, R=R, **_GENERATE_KWARGS)
+        multimers = cle.generate(crystal, N=2, R=R, **_GENERATE_KWARGS)
         counts.append(len(multimers))
 
     assert counts == sorted(counts, reverse=True), (

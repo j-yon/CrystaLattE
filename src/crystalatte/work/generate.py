@@ -648,17 +648,19 @@ def _neighbor_distance(cart_mon: NDArray, monomer: Monomer, kwargs: dict) -> flo
 
 def _generate_neighbors(
     crystal: Crystal,
-    monomer: Monomer,
+    monomers: list[Monomer],
     cutoff: NDArray,
     R: float,
     N: int,
     **kwargs,
 ) -> tuple[list[SymOpList], list[SymOpList]]:
-    """Generate all unique N-mers in the supercell defined by ``cutoff``, then
-    deduplicate via translation-fingerprint bucketing and :func:`_is_bijection`.
+    """Generate all unique N-mers in the supercell defined by ``cutoff`` by
+    anchoring each reference monomer in turn, then deduplicate via a
+    centroid-distance bucketing and :func:`_is_bijection`.
 
-    :param crystal: The crystal containing the monomer
-    :param monomer: The reference monomer; its centroid is placed at the origin
+    :param crystal: The crystal containing the monomers
+    :param monomers: The reference monomers (one per crystal asymmetric unit);
+        each is anchored in turn as the multimer's first member
     :param cutoff: Per-axis ``(low, high)`` integer lattice translation bounds
     :param R: Distance cutoff in Angstroms. The distance convention is selected
         by ``kwargs`` (see :func:`_neighbor_distance`).
@@ -667,64 +669,61 @@ def _generate_neighbors(
         convention flags consumed by :func:`_neighbor_distance`)
     :returns: A tuple ``(unique, duplicate)`` of cluster lists
     """
-    # `get_unique_sym_ops` filters out crystal sym ops whose action coincides
-    # with the identity at the monomer's Wyckoff position (so we don't generate
-    # the same monomer twice).
-    sym_ops = crystal.space_group.get_unique_sym_ops(monomer.centroid_frac)
-
     if kwargs.get("debug", False):
         translations = list(product([-1, 0, 1], repeat=3))
     else:
         translations = list(product(*[range(cm, cp + 1) for cm, cp in cutoff]))
 
-    # Build (sym op, lattice translation) candidate operations, dropping the
-    # (identity, 0) pair (= the reference monomer itself).
-    full_ops: list[SymOp] = []
-    for op, tr in product(sym_ops, translations):
-        if op == SymOp.identity() and all(t == 0 for t in tr):
-            continue
-        full_ops.append(op.translate(np.array(tr, dtype=np.int16) * 12))
+    # Bind per-reference state (workers below get the same via _init_bucket_worker).
+    _bind_globals(crystal, monomers)
 
-    # Prune by partner-monomer distance to the reference.
-    full_ops = [
-        op
-        for op in full_ops
-        if _neighbor_distance(
-            crystal.to_cartesian(op.apply(monomer.frac_coords)), monomer, kwargs
-        )
-        <= R
-    ]
-    print(f"Found {len(full_ops)} monomers within {R} Angstroms.")
+    # Full partner pool across ALL references: (base_index j, SymOp placing monomers[j]).
+    pool = []
+    for j, mon in enumerate(monomers):
+        sym_ops = crystal.space_group.get_unique_sym_ops(mon.centroid_frac)
+        for op, tr in product(sym_ops, translations):
+            pool.append((j, op.translate(np.array(tr, dtype=np.int16) * 12)))
 
-    centroid_frac_by_op = {op: op.apply(monomer.centroid_frac) for op in full_ops}
-    centroid_frac_by_op[SymOp.identity()] = monomer.centroid_frac
-
-    # Bind module-level state (per-reference state, lattice)
-    # for the geometric branch in `_is_bijection`. Workers spawned below get the
-    # same bindings via `_init_bucket_worker`.
-    _bind_globals(crystal, crystal.get_references())
-
-    # Build all (identity + N-1)-monomer SymOpList candidates.
+    # Anchor each reference i; partners = pool members within R of anchor i
+    # (excluding anchor i's own zero-translation identity).
     candidates: list[SymOpList] = []
-    for partner_ops in tqdm(
-        combinations(full_ops, N - 1),
-        total=len(full_ops) ** (N - 1) // math.factorial(N - 1),
-        desc="Generating candidates",
-        leave=False,
-    ):
-        ops = [SymOp.identity(), *partner_ops]
-        centroid_frac = np.mean([centroid_frac_by_op[op] for op in ops], axis=0)
-        sop = SymOpList(ops, 1)
-        sop.centroid_frac = centroid_frac
-        sop.centroid_cart = crystal.to_cartesian(centroid_frac)
-        candidates.append(sop)
+    for i, anchor in enumerate(monomers):
+        near = []
+        for (j, op) in pool:
+            if j == i and op == SymOp.identity():
+                continue
+            partner_cart = crystal.to_cartesian(op.apply(monomers[j].frac_coords))
+            if _neighbor_distance(partner_cart, anchor, kwargs) <= R:
+                near.append((j, op))
+        print(f"Reference {i}: {len(near)} monomers within {R} Angstroms.")
+        for partner_combo in combinations(near, N - 1):
+            members = [(i, SymOp.identity()), *partner_combo]
+            ops = [op for (_, op) in members]
+            refs = np.array([b for (b, _) in members], dtype=np.int64)
+            member_cens = np.array(
+                [crystal.to_cartesian(op.apply(monomers[b].centroid_frac))
+                 for (b, op) in members]
+            )
+            centroid_frac = np.mean(
+                [op.apply(monomers[b].centroid_frac) for (b, op) in members], axis=0
+            )
+            sop = SymOpList(ops, 1)
+            sop.ref_indices = refs
+            sop.centroid_frac = centroid_frac
+            sop.centroid_cart = crystal.to_cartesian(centroid_frac)
+            # bucket key = sorted rounded pairwise member-centroid distances
+            # (an isometry invariant of the cluster; valid across references,
+            # unlike translation_fp which only reflects SymOp translations).
+            if len(member_cens) > 1:
+                dfp = np.sort(np.round(pdist(member_cens, "sqeuclidean"), 3))
+            else:
+                dfp = np.array([0.0])
+            sop._bucket_key = hash(dfp.tobytes())
+            candidates.append(sop)
 
-    # Bucket by structural translation fingerprint — `_is_bijection` is only
-    # ever called within a bucket, since differing fingerprints rule out
-    # equivalence.
     buckets: dict[int, list[SymOpList]] = defaultdict(list)
     for g_t in candidates:
-        buckets[g_t.translation_fp].append(g_t)
+        buckets[g_t._bucket_key].append(g_t)
 
     unique: list[SymOpList] = []
     duplicate: list[SymOpList] = []
@@ -737,13 +736,13 @@ def _generate_neighbors(
         with ProcessPoolExecutor(
             max_workers=n_jobs,
             initializer=_init_bucket_worker,
-            initargs=(crystal, crystal.get_references()),
+            initargs=(crystal, monomers),
         ) as ex:
             results = list(
                 tqdm(
                     ex.map(_process_bucket, buckets.values()),
                     total=len(buckets),
-                    desc="Processing across unique translation buckets",
+                    desc="Processing buckets",
                     leave=False,
                 )
             )
@@ -756,7 +755,7 @@ def _generate_neighbors(
         for bucket in tqdm(
             buckets.values(),
             total=len(buckets),
-            desc="Processing across unique translations",
+            desc="Processing buckets",
             leave=False,
         ):
             local_unique, local_dup = _process_bucket(bucket)
@@ -770,23 +769,24 @@ def _generate_neighbors(
     return unique, duplicate
 
 
-def _init_multimers(crystal_: Crystal, monomer_: Monomer, masses_: NDArray) -> None:
+def _init_multimers(crystal_: Crystal, monomers_: list[Monomer]) -> None:
     """Bind globals used by :func:`_process_multimer` so it can run from a
     :class:`~concurrent.futures.ProcessPoolExecutor` initializer.
 
     :func:`_bind_globals` is not reused because :func:`_process_multimer` also
-    needs the per-atom mass array (for center-of-mass computation), which the
-    bucket-dedup path does not.
+    needs the per-reference atom mass arrays (for center-of-mass computation),
+    which the bucket-dedup path does not.
 
     :param crystal_: The crystal bound to the module global ``crystal``
-    :param monomer_: The reference monomer bound to the module global ``monomer``
-    :param masses_: The per-atom masses bound to the module global ``masses``
+    :param monomers_: The reference monomers bound to the module global ``monomers``
     :returns: ``None``
     """
-    global crystal, monomer, masses
+    global crystal, monomers, masses_by_ref
     crystal = crystal_
-    monomer = monomer_
-    masses = masses_
+    monomers = list(monomers_)
+    masses_by_ref = [
+        np.array([qcel.periodictable.to_mass(s) for s in m.symbols]) for m in monomers
+    ]
 
 
 def _process_multimer(g_N: SymOpList) -> Multimer | None:
@@ -795,29 +795,35 @@ def _process_multimer(g_N: SymOpList) -> Multimer | None:
 
     :param g_N: The deduplicated cluster to materialize
     :returns: The constructed :class:`~crystalatte.core.multimer.Multimer`, or
-        ``None`` if ``g_N`` contains duplicate sym ops (which can happen when
-        multiple translations land on a degenerate Wyckoff orbit and would
-        produce overlapping monomers)
+        ``None`` if ``g_N`` contains two members that are the same
+        ``(base reference, SymOp)`` pair (which can happen when multiple
+        translations land on a degenerate Wyckoff orbit and would produce
+        overlapping monomers)
     """
-    if len(set(g_N)) != len(g_N):
+    refs = g_N.ref_indices
+    ops = list(g_N)
+    # degeneracy: reject only if two members are the SAME (ref, op) pair
+    seen = set(zip(refs.tolist(), ops))
+    if len(seen) != len(ops):
         return None
     mons: list[Monomer] = []
-    for g in g_N:
-        mon_frac = g.apply(monomer.frac_coords)
+    for k, g in enumerate(ops):
+        base = monomers[refs[k]]
+        masses = masses_by_ref[refs[k]]
+        mon_frac = g.apply(base.frac_coords)
         mon_cart = crystal.to_cartesian(mon_frac)
         com_frac = np.average(mon_frac, axis=0, weights=masses)
         com_cart = crystal.to_cartesian(com_frac)
-        mons.append(Monomer(monomer.symbols, mon_frac, mon_cart, com_frac, com_cart, g))
+        mons.append(Monomer(base.symbols, mon_frac, mon_cart, com_frac, com_cart, g))
     return Multimer(mons, g_N, g_N.multiplicity)
 
 
-def generate(
-    crystal: Crystal, monomer: Monomer, N: int, R: float, **kwargs
-) -> list[Multimer]:
-    """Generate unique multimers of the given monomer in the crystal.
+def generate(crystal: Crystal, N: int, R: float, **kwargs) -> list[Multimer]:
+    """Generate unique multimers of every reference molecule in the crystal.
 
-    :param crystal: The crystal structure containing the monomer
-    :param monomer: The reference monomer to generate multimers from
+    :param crystal: The crystal structure to generate multimers from; all
+        symmetry-independent reference molecules (:meth:`Crystal.get_references`)
+        are enumerated
     :param N: The number of monomers in the multimer (e.g. ``N=2`` for dimers)
     :param R: The maximum center-to-center distance in Angstroms for monomers to
         be considered part of the same multimer
@@ -825,20 +831,19 @@ def generate(
     :returns: A list of unique :class:`~crystalatte.core.multimer.Multimer`
         objects representing the multimers found in the crystal
     """
+    monomers = crystal.get_references()
     d = np.linalg.norm(crystal.lattice_vectors, axis=0)
-    t = monomer.centroid_frac
+    R_eff = R + max(pdist(m.cart_coords).max() for m in monomers)
 
-    # effective bounds to search (accounting for monomer extent)
-    R_eff = R + pdist(monomer.cart_coords).max()
-    low_bounds = -np.ceil((R_eff - t * d) / d)
-    high_bounds = np.ceil((R_eff - (1 - t) * d) / d)
-    bounds = np.vstack((low_bounds, high_bounds)).T
-    bounds = bounds.astype(int)
+    lows, highs = [], []
+    for m in monomers:
+        t = m.centroid_frac
+        lows.append(-np.ceil((R_eff - t * d) / d))
+        highs.append(np.ceil((R_eff - (1 - t) * d) / d))
+    bounds = np.vstack((np.min(lows, axis=0), np.max(highs, axis=0))).T.astype(int)
 
-    unique_neighbors, _ = _generate_neighbors(crystal, monomer, bounds, R, N, **kwargs)
-
-    masses = np.array([qcel.periodictable.to_mass(s) for s in monomer.symbols])
-    _init_multimers(crystal, monomer, masses)
+    unique_neighbors, _ = _generate_neighbors(crystal, monomers, bounds, R, N, **kwargs)
+    _init_multimers(crystal, monomers)
 
     multimers: list[Multimer] = []
     for g_N in tqdm(

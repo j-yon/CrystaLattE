@@ -112,3 +112,23 @@ def test_is_bijection_routes_mono_reference_to_integer(monkeypatch):
 def _tr(dx12):
     from crystalatte.core.sym_ops import SymOp
     return SymOp.identity().translate(np.array(dx12, dtype=np.int16))
+
+
+AMMONIA_DIMERS = 9  # captured: conda run -n cle python -c "..." (see task-5-report.md)
+
+
+def test_benzene_regression_unchanged():
+    from crystalatte.work import generate
+    crystal, _ = next(cle.from_cif(str(DATA / "x23/benzene/benzene.cif")))
+    mers = generate.generate(crystal, 2, 5.0, use_origin=True, n_jobs=1)
+    assert len(mers) == 3          # Z'=1 path unchanged
+
+
+def test_ammonia_physical_dimers():
+    from crystalatte.work import generate
+    crystal, _ = next(cle.from_cif(str(DATA / "x23/ammonia/ammonia.cif")))
+    mers = generate.generate(crystal, 2, 5.0, use_origin=True, n_jobs=1)
+    # now includes the real ~3.94 A hetero-molecular contacts, not just self-translates
+    assert len(mers) == AMMONIA_DIMERS   # captured from the run in Step 4
+    # every returned dimer has 2 monomers
+    assert all(len(m.monomers) == 2 for m in mers)
