@@ -127,6 +127,91 @@ def _symmetry_candidates(pos: NDArray) -> list[NDArray]:
     return candidates
 
 
+#: Orders of the finite subgroups of O(3) a molecule can realise. Used only as
+#: a coherence check on a repaired set — an order outside this set proves the
+#: result is not a group (e.g. the raw filter returns 42 for hexamine).
+VALID_POINT_GROUP_ORDERS: frozenset[int] = frozenset(
+    {1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 20, 24, 28, 32, 36, 40, 48, 60,
+     72, 96, 120}
+)
+
+#: Tolerance ladder, as multiples of the caller's ``atol``, tried loosest-first.
+_TOLERANCE_LADDER: tuple[float, ...] = (1.0, 0.4, 0.2, 0.1, 0.04, 0.02)
+
+#: Largest group we will build; the icosahedral groups cap out at 120.
+_MAX_GROUP_ORDER = 120
+
+
+def _close_isometries(
+    seed: list[NDArray], pos: NDArray, Z: NDArray, atol: float
+) -> list[NDArray] | None:
+    """Close ``seed`` under composition, keeping only genuine symmetries.
+
+    Returns ``None`` if the closure escapes the symmetry set (a product that is
+    not itself a symmetry proves some seed element was spurious, since a
+    composition of real symmetries is always real) or exceeds
+    :data:`_MAX_GROUP_ORDER`.
+
+    :param seed: Detected operations to close over
+    :param pos: Centroid-centered atom positions
+    :param Z: Per-atom atomic numbers
+    :param atol: Cartesian matching tolerance in Angstroms
+    :returns: The closed list (identity first), or ``None`` if incoherent
+    """
+    # ``stack`` mirrors ``group`` as one (k, 3, 3) array so membership is a
+    # single vectorized reduction rather than k Python-level allclose calls —
+    # the closure is a triple loop, so this is the hot path.
+    group: list[NDArray] = [np.eye(3)]
+    stack = np.empty((_MAX_GROUP_ORDER + 2, 3, 3))
+    stack[0] = group[0]
+
+    def known(X: NDArray) -> bool:
+        return bool(
+            (np.abs(stack[: len(group)] - X).max(axis=(1, 2)) < 1e-3).any()
+        )
+
+    def add(X: NDArray) -> None:
+        stack[len(group)] = X
+        group.append(X)
+
+    for s in seed:
+        if not known(s):
+            add(s)
+
+    # Breadth-first: only products involving a newly added operation can be
+    # new, so each element pairs against the group once instead of every sweep.
+    frontier = list(group)
+    while frontier:
+        fresh: list[NDArray] = []
+        for a in frontier:
+            for b in list(group):
+                for product in (a @ b, b @ a):
+                    if known(product):
+                        continue
+                    if not _z_labeled_match(pos @ product.T, pos, Z, atol):
+                        return None
+                    if len(group) > _MAX_GROUP_ORDER:
+                        return None
+                    add(product)
+                    fresh.append(product)
+        frontier = fresh
+    return group
+
+
+def _is_coherent_group(group: list[NDArray]) -> bool:
+    """Return True iff ``group`` looks like a genuine finite point group:
+    a valid order, and every element's inverse present.
+
+    :param group: The candidate operation list
+    :returns: True iff the list passes the coherence checks
+    """
+    if len(group) not in VALID_POINT_GROUP_ORDERS:
+        return False
+    return all(
+        any(np.allclose(g.T, h, atol=1e-3) for h in group) for g in group
+    )
+
+
 def _self_isometries(
     symbols: list[str], cart_coords: NDArray, atol: float = 0.05
 ) -> list[NDArray]:
@@ -136,15 +221,30 @@ def _self_isometries(
     (``det < 0``) are present iff the monomer is achiral.
 
     Candidates come from :func:`_symmetry_candidates` (gyration-tensor pruned)
-    and are filtered to those that preserve the labeled cloud. This is not a
-    rigorous point-group solver, but it recovers the operations the deduper must
-    mod out when matching clusters in relative-transform space.
+    and are filtered to those that preserve the labeled cloud. That library is
+    NOT closed under composition — it holds ``±I``, one mirror per axis, and
+    proper rotations of order 2/3/4/6, but no rotoreflections, so ``S4 = sigma
+    . C4`` and ``S6 = sigma . C6`` can never appear. A T_d molecule therefore
+    filters to ``E + 8 C3 + 3 C2 + 6 sigma_d = 18`` operations, and 18 does not
+    divide 24, proving the raw filter does not return a group. Since
+    ``docs/dedup_correctness.tex`` Thm 1/2 assume it does, the filtered set is
+    repaired here by closing it under composition.
+
+    Closure alone is not enough: it amplifies over-detection, because composing
+    two operations each off by ``eps`` gives one off by ``~2 eps`` that a loose
+    tolerance still accepts (closing hexamine's 42-element set at 0.05 A runs
+    past 200 operations). So the detection tolerance is stepped down through
+    :data:`_TOLERANCE_LADDER` and the FIRST rung whose closure is a coherent
+    group is taken — the most permissive tolerance that still yields something
+    mathematically well-formed. If no rung does, the raw filter is returned
+    unchanged rather than fabricating a group.
 
     :param symbols: The atomic symbols of the monomer
     :param cart_coords: The monomer's Cartesian coordinates, shape ``(n, 3)``
-    :param atol: Cartesian matching tolerance in Angstroms. The 0.05 default
-        absorbs the small thermal / measurement distortion in typical CIF
-        coordinates while still rejecting genuine asymmetry.
+    :param atol: Cartesian matching tolerance in Angstroms, and the loosest rung
+        of the ladder. The 0.05 default absorbs the small thermal / measurement
+        distortion in typical CIF coordinates while still rejecting genuine
+        asymmetry.
     :returns: A list of ``(3, 3)`` orthogonal matrices, identity first
     """
     Z = np.array([qcel.periodictable.to_Z(s) for s in symbols])
@@ -156,6 +256,19 @@ def _self_isometries(
             continue
         if _z_labeled_match(pos @ u.T, pos, Z, atol):
             found.append(u)
+
+    # Tighter rungs re-test the operations already accepted at ``atol`` rather
+    # than re-scanning the (large) candidate library.
+    for factor in _TOLERANCE_LADDER:
+        rung = atol * factor
+        seed = (
+            found
+            if factor == 1.0
+            else [u for u in found if _z_labeled_match(pos @ u.T, pos, Z, rung)]
+        )
+        group = _close_isometries(seed, pos, Z, rung)
+        if group is not None and _is_coherent_group(group):
+            return group
     return found
 
 

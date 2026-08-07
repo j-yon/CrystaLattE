@@ -645,12 +645,18 @@ def _is_bijection(g_N: SymOpList, h_N: SymOpList) -> bool:
         if _check_congruence_by_ref[i] and _same_multimer(g_N, h_N):
             return True
         if _is_linear_by_ref[i]:
-            # Continuous point group (C_inf_v / D_inf_h): the finite
-            # self-isometry sample cannot supply every dressing, so the
-            # relative-transform matchers miss the merges whose dressing is a
-            # rotation about the molecular axis by an unsampled angle. Point-
-            # cloud congruence needs no dressing and catches exactly those.
-            # It is a strictly weaker matcher on its own, so it runs LAST.
+            # Backstop for continuous point groups (C_inf_v / D_inf_h), where
+            # NO finite self-isometry set is complete: a merge whose dressing is
+            # a rotation about the molecular axis by an unsampled angle is
+            # invisible to the relative-transform matchers. Point-cloud
+            # congruence needs no dressing at all.
+            #
+            # Since self-isometry closure repair landed this no longer fires for
+            # CO2 (its group closes to 48 operations, enough for every merge in
+            # the test set — disabling this branch leaves CO2 unchanged). It is
+            # kept because sufficiency is a property of that particular sample,
+            # not a guarantee for an arbitrary linear species. It is a strictly
+            # weaker matcher on its own, so it runs LAST.
             return _same_multimer_geom(g_N, h_N)
         return False
     return _same_multimer_geom(g_N, h_N)
