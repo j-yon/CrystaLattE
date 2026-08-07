@@ -71,3 +71,28 @@ def test_detect_symmetry_graceful_on_failure(monkeypatch):
     crystal, _ = next(cle.from_cif(str(DATA / "x23/ammonia/ammonia.cif")))
     monkeypatch.setattr(spglib, "get_symmetry", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     assert crystal.detect_symmetry() is crystal            # falls back, no raise
+
+
+from crystalatte.work import generate
+
+
+def test_generate_detection_invariant_ammonia():
+    # Detection changes HOW (fast integer path), not WHAT (the unique n-mer set).
+    crystal, _ = next(cle.from_cif(str(DATA / "x23/ammonia/ammonia.cif")))
+    for kw in (dict(use_origin=True), dict()):  # use_origin and default conventions
+        n_on = len(generate.generate(crystal, 2, 5.0, n_jobs=1, detect_symmetry=True, **kw))
+        n_off = len(generate.generate(crystal, 2, 5.0, n_jobs=1, detect_symmetry=False, **kw))
+        assert n_on == n_off, f"detection changed the count for kwargs={kw}: {n_on} != {n_off}"
+
+
+def test_generate_detection_uses_single_reference_path_ammonia():
+    # With detection, ammonia collapses to Z'=1 (one reference), so the integer
+    # matcher (not the float cloud congruence) handles it.
+    crystal, _ = next(cle.from_cif(str(DATA / "x23/ammonia/ammonia.cif")))
+    detected = crystal.detect_symmetry()
+    assert len(detected.get_references()) == 1
+
+
+def test_generate_benzene_regression_with_detection():
+    crystal, _ = next(cle.from_cif(str(DATA / "x23/benzene/benzene.cif")))
+    assert len(generate.generate(crystal, 2, 5.0, use_origin=True, n_jobs=1)) == 3

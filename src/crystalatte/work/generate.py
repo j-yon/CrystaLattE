@@ -822,7 +822,7 @@ def _process_multimer(g_N: SymOpList) -> Multimer | None:
     return Multimer(mons, g_N, g_N.multiplicity)
 
 
-def generate(crystal: Crystal, N: int, R: float, **kwargs) -> list[Multimer]:
+def generate(crystal: Crystal, N: int, R: float, *, detect_symmetry=True, symprec=1e-3, **kwargs) -> list[Multimer]:
     """Generate unique multimers of every reference molecule in the crystal.
 
     :param crystal: The crystal structure to generate multimers from; all
@@ -831,10 +831,15 @@ def generate(crystal: Crystal, N: int, R: float, **kwargs) -> list[Multimer]:
     :param N: The number of monomers in the multimer (e.g. ``N=2`` for dimers)
     :param R: The maximum center-to-center distance in Angstroms for monomers to
         be considered part of the same multimer
+    :param detect_symmetry: If True, automatically detect and apply symmetry via
+        :meth:`Crystal.detect_symmetry` before enumeration (default: True)
+    :param symprec: Symmetry detection tolerance in Angstroms (default: 1e-3)
     :param kwargs: Additional options forwarded to :func:`_generate_neighbors`
     :returns: A list of unique :class:`~crystalatte.core.multimer.Multimer`
         objects representing the multimers found in the crystal
     """
+    if detect_symmetry:
+        crystal = crystal.detect_symmetry(symprec)
     monomers = crystal.get_references()
     d = np.linalg.norm(crystal.lattice_vectors, axis=0)
     R_eff = R + max(pdist(m.cart_coords).max() for m in monomers)
