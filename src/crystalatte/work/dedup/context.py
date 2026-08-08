@@ -5,9 +5,9 @@ deduplication runs under a :class:`~concurrent.futures.ProcessPoolExecutor`,
 whose ``initializer`` has to install the state in each worker process before
 any task runs.
 
-IMPORTANT: :func:`_bind_globals` REBINDS these names, so consumers must reach
-them through the module (``context._Z_by_ref``) and never via
-``from .context import _Z_by_ref`` — the latter captures the object present at
+IMPORTANT: :func:`bind` REBINDS these names, so consumers must reach
+them through the module (``context.Z_by_ref``) and never via
+``from .context import Z_by_ref`` — the latter captures the object present at
 import time and silently keeps reading stale state.
 """
 import numpy as np
@@ -18,67 +18,67 @@ from ...core.crystal import Crystal
 from ...core.multimer import Monomer
 from ...core.space_group import SITE_ATOL
 
-# Module-level bindings set by `_bind_globals` (in main process) and by the
-# worker initializer (`_init_bucket_worker`, in ProcessPoolExecutor children).
+# Module-level bindings set by `bind` (in main process) and by the
+# worker initializer (`init_worker`, in ProcessPoolExecutor children).
 # Per-reference lists indexed by reference index (one entry per independent monomer).
-_crystal: Crystal | None = None
-_monomers: list[Monomer] = []
-_Z_by_ref: list[NDArray] = []
-_mass_by_ref: list[NDArray] = []
-_self_iso_by_ref: list[list[NDArray]] = [[np.eye(3)]]
-_W_lin_by_ref: list[list[NDArray]] = [[np.eye(3, dtype=np.int64)]]
-_check_congruence_by_ref: list[bool] = [False]
+active_crystal: Crystal | None = None
+references: list[Monomer] = []
+Z_by_ref: list[NDArray] = []
+mass_by_ref: list[NDArray] = []
+self_iso_by_ref: list[list[NDArray]] = [[np.eye(3)]]
+W_lin_by_ref: list[list[NDArray]] = [[np.eye(3, dtype=np.int64)]]
+check_congruence_by_ref: list[bool] = [False]
 # Translation parts of the dressings, index-aligned with the groups above.
 # A monomer self-isometry is an isometry about the monomer's CENTROID, not
 # about the coordinate origin, so as a map on the reference monomer's raw
 # coordinates it is the affine map ``x -> s @ x + d`` with ``d = c - s @ c``.
 # Dropping ``d`` (using ``s`` alone) is only valid when ``s @ c == c``.
-_self_iso_tr_by_ref: list[list[NDArray]] = [[np.zeros(3)]]        # Cartesian, Angstroms
-_W_tr_by_ref: list[list[NDArray]] = [[np.zeros(3, dtype=np.int64)]]  # lattice basis, twelfths
-_A: NDArray | None = None      # fractional -> Cartesian matrix (cart = _A @ frac)
-_A_inv: NDArray | None = None  # Cartesian -> fractional matrix
+self_iso_tr_by_ref: list[list[NDArray]] = [[np.zeros(3)]]        # Cartesian, Angstroms
+W_tr_by_ref: list[list[NDArray]] = [[np.zeros(3, dtype=np.int64)]]  # lattice basis, twelfths
+frac_to_cart: NDArray | None = None      # fractional -> Cartesian matrix (cart = frac_to_cart @ frac)
+cart_to_frac: NDArray | None = None  # Cartesian -> fractional matrix
 
 
-def _bind_globals(
+def bind(
     crystal: Crystal, monomers: list[Monomer], site_atol: float = SITE_ATOL
 ) -> None:
     """Bind the deduper's per-run inputs at module scope.
 
     Sets the module globals for per-reference state: per-reference Z and mass
     arrays, self-isometries, site-symmetry dressings and the congruence
-    gates. Also sets the lattice vectors ``_A`` / ``_A_inv`` for
+    gates. Also sets the lattice vectors ``frac_to_cart`` / ``cart_to_frac`` for
     fractional<->Cartesian conversion.
 
     :param crystal: The crystal supplying the lattice and Cartesian conversion
     :param monomers: The reference monomers (one per crystal asymmetric unit)
     :param site_atol: Fractional tolerance for the site-symmetry test; must
-        match the one :func:`_generate_neighbors` passes to
+        match the one :func:`generate_neighbors` passes to
         ``get_unique_sym_ops`` or stabilizer and orbit disagree
     :returns: ``None``
     """
-    global _crystal, _monomers, _Z_by_ref, _mass_by_ref, _self_iso_by_ref
-    global _W_lin_by_ref, _check_congruence_by_ref, _A, _A_inv
-    global _self_iso_tr_by_ref, _W_tr_by_ref
-    _crystal = crystal
-    _monomers = list(monomers)
-    _A = np.asarray(crystal.lattice_vectors, dtype=float)
-    _A_inv = np.linalg.inv(_A)
+    global active_crystal, references, Z_by_ref, mass_by_ref, self_iso_by_ref
+    global W_lin_by_ref, check_congruence_by_ref, frac_to_cart, cart_to_frac
+    global self_iso_tr_by_ref, W_tr_by_ref
+    active_crystal = crystal
+    references = list(monomers)
+    frac_to_cart = np.asarray(crystal.lattice_vectors, dtype=float)
+    cart_to_frac = np.linalg.inv(frac_to_cart)
 
-    _Z_by_ref, _mass_by_ref, _self_iso_by_ref = [], [], []
-    _W_lin_by_ref, _check_congruence_by_ref = [], []
-    _self_iso_tr_by_ref, _W_tr_by_ref = [], []
-    for mon in _monomers:
-        _Z_by_ref.append(
+    Z_by_ref, mass_by_ref, self_iso_by_ref = [], [], []
+    W_lin_by_ref, check_congruence_by_ref = [], []
+    self_iso_tr_by_ref, W_tr_by_ref = [], []
+    for mon in references:
+        Z_by_ref.append(
             np.array([qcel.periodictable.to_Z(s) for s in mon.symbols], dtype=np.int64)
         )
-        _mass_by_ref.append(
+        mass_by_ref.append(
             np.array([qcel.periodictable.to_mass(s) for s in mon.symbols])
         )
         S = mon.self_isometries
-        _self_iso_by_ref.append(S)
+        self_iso_by_ref.append(S)
         # Cartesian dressing translations: d = c - s @ c (zero iff s fixes c).
         c_cart = np.asarray(mon.centroid_cart, dtype=float)
-        _self_iso_tr_by_ref.append([c_cart - s @ c_cart for s in S])
+        self_iso_tr_by_ref.append([c_cart - s @ c_cart for s in S])
 
         site_ops = crystal.space_group.get_site_symmetry(
             mon.centroid_frac, atol=site_atol
@@ -99,19 +99,19 @@ def _bind_globals(
         if not W:
             W = [np.eye(3, dtype=np.int64)]
             W_tr = [np.zeros(3, dtype=np.int64)]
-        _W_lin_by_ref.append(W)
-        _W_tr_by_ref.append(W_tr)
-        _check_congruence_by_ref.append(len(S) > len(W))
+        W_lin_by_ref.append(W)
+        W_tr_by_ref.append(W_tr)
+        check_congruence_by_ref.append(len(S) > len(W))
 
 
-def _init_bucket_worker(
+def init_worker(
     crystal: Crystal, monomers: list[Monomer], site_atol: float = SITE_ATOL
 ) -> None:
     """Process-pool initializer: bind the deduper globals in a worker process.
 
-    :param crystal: The crystal passed to :func:`_bind_globals`
-    :param monomers: The reference monomers passed to :func:`_bind_globals`
-    :param site_atol: The tolerance passed to :func:`_bind_globals`
+    :param crystal: The crystal passed to :func:`bind`
+    :param monomers: The reference monomers passed to :func:`bind`
+    :param site_atol: The tolerance passed to :func:`bind`
     :returns: ``None``
     """
-    _bind_globals(crystal, monomers, site_atol)
+    bind(crystal, monomers, site_atol)

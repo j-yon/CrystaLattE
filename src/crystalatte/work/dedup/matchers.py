@@ -2,13 +2,13 @@
 
 Two independent strategies live here:
 
-- the anchored relative-transform search (:func:`_anchored_match`), used in an
+- the anchored relative-transform search (:func:`anchored_match`), used in an
   exact integer basis and a tolerant Cartesian one, which reasons about the
   cluster's symmetry operations;
-- labeled point-cloud congruence (:func:`_same_multimer_geom`), which ignores
+- labeled point-cloud congruence (:func:`same_multimer_geom`), which ignores
   the operations entirely and superimposes the reconstructed atoms.
 
-Routing between them is :mod:`.bijection`'s job, not this module's.
+Routing between them is :mod:`.equivalence`'s job, not this module's.
 """
 import numpy as np
 from numpy.typing import NDArray
@@ -17,13 +17,13 @@ from scipy.spatial.distance import cdist
 from ...core.sym_ops import SymOpList
 from . import context
 from .invariants import (
-    _base,
-    _cluster_atoms_cart,
-    _int_inv,
-    _relative_transforms,
+    base_reference,
+    cluster_atoms_cart,
+    int_inv,
+    relative_transforms,
 )
 
-def _anchored_match(LG, vG, LH, vH, S, D, eq, inv) -> bool:
+def anchored_match(LG, vG, LH, vH, S, D, eq, inv) -> bool:
     """Anchored relative-transform search: the shared core of both matchers.
 
     Decides whether two clusters satisfy the matching condition of
@@ -125,7 +125,7 @@ def _anchored_match(LG, vG, LH, vH, S, D, eq, inv) -> bool:
     return False
 
 
-def _same_multimer_int(
+def same_multimer_int(
     g_N: SymOpList,
     h_N: SymOpList,
     W: list[NDArray],
@@ -135,19 +135,19 @@ def _same_multimer_int(
     crystallographic isometry, working entirely in the exact integer lattice
     basis and modding out the site-symmetry dressing ``(W, W_tr)``.
 
-    Exact-integer form of :func:`_anchored_match` — roundoff-free and complete
+    Exact-integer form of :func:`anchored_match` — roundoff-free and complete
     for every same-orbit (multiplicity-required) merge, including
     centrosymmetric site-inversion cases. Non-crystallographic congruences
     (dressing outside ``W``) are left to the float fallback in
-    :func:`_is_bijection`.
+    :func:`are_equivalent`.
 
     :param g_N: The first cluster
     :param h_N: The second cluster
     :param W: The site-symmetry linear parts of the clusters' shared base
-        reference, i.e. ``context._W_lin_by_ref[base]``. Required: there is no safe
+        reference, i.e. ``context.W_lin_by_ref[base]``. Required: there is no safe
         default, since defaulting to reference 0 would silently mod out the
         wrong site symmetry for every other reference under ``Z' > 1``.
-    :param W_tr: The matching dressing translations ``context._W_tr_by_ref[base]``, in
+    :param W_tr: The matching dressing translations ``context.W_tr_by_ref[base]``, in
         twelfths, index-aligned with ``W``. Defaults to zeros, which is correct
         only when the centroid is a fixed point of every element of ``W``.
     :returns: True iff the clusters are the same multimer via a crystallographic
@@ -155,23 +155,23 @@ def _same_multimer_int(
     """
     if len(g_N) != len(h_N):
         return False
-    LG, vG = _relative_transforms(g_N, integer=True)
-    LH, vH = _relative_transforms(h_N, integer=True)
+    LG, vG = relative_transforms(g_N, integer=True)
+    LH, vH = relative_transforms(h_N, integer=True)
     D = [np.zeros(3, dtype=np.int64)] * len(W) if W_tr is None else W_tr
-    return _anchored_match(LG, vG, LH, vH, W, D, np.array_equal, _int_inv)
+    return anchored_match(LG, vG, LH, vH, W, D, np.array_equal, int_inv)
 
 
-def _same_multimer(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-3) -> bool:
+def same_multimer(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-3) -> bool:
     """Return True iff ``g_N`` and ``h_N`` are the same multimer up to a global
     isometry (rotation, translation, or reflection).
 
-    Cartesian form of :func:`_anchored_match`, dressed with the FULL molecular
+    Cartesian form of :func:`anchored_match`, dressed with the FULL molecular
     self-isometry group (:attr:`~crystalatte.core.multimer.Monomer.self_isometries`)
     rather than just the site symmetry, so it also merges non-crystallographic
     congruences and — being blind to ``det`` — mirror-image enantiomers.
 
-    Callers (:func:`_is_bijection`) gate this behind the cheap
-    :func:`_fingerprints_match` pre-filter, so it only ever runs on clusters
+    Callers (:func:`are_equivalent`) gate this behind the cheap
+    :func:`fingerprints_match` pre-filter, so it only ever runs on clusters
     that already share a distance fingerprint (true duplicates plus rare
     homometric collisions).
 
@@ -185,19 +185,19 @@ def _same_multimer(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-3) -> bool:
     """
     if len(g_N) != len(h_N):
         return False
-    LG, vG = _relative_transforms(g_N, integer=False)
-    LH, vH = _relative_transforms(h_N, integer=False)
-    base = _base(g_N)
-    return _anchored_match(
+    LG, vG = relative_transforms(g_N, integer=False)
+    LH, vH = relative_transforms(h_N, integer=False)
+    base = base_reference(g_N)
+    return anchored_match(
         LG, vG, LH, vH,
-        context._self_iso_by_ref[base],
-        context._self_iso_tr_by_ref[base],
+        context.self_iso_by_ref[base],
+        context.self_iso_tr_by_ref[base],
         lambda a, b: np.allclose(a, b, atol=atol),
         lambda s: s.T,  # orthogonal -> inverse is transpose
     )
 
 
-def _same_multimer_geom(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-3) -> bool:
+def same_multimer_geom(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-3) -> bool:
     """Return True iff the two clusters' reconstructed, Z-labeled atom clouds are
     congruent under some isometry (rotation, translation, or reflection).
 
@@ -212,12 +212,12 @@ def _same_multimer_geom(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-3) -> b
     :param atol: Absolute tolerance in Angstroms
     :returns: True iff the two clusters' atom clouds are congruent
     """
-    A = _cluster_atoms_cart(g_N)
-    B = _cluster_atoms_cart(h_N)
+    A = cluster_atoms_cart(g_N)
+    B = cluster_atoms_cart(h_N)
     if A.shape != B.shape:
         return False
-    ZA = np.concatenate([context._Z_by_ref[g_N.ref_indices[k]] for k in range(len(g_N))])
-    ZB = np.concatenate([context._Z_by_ref[h_N.ref_indices[k]] for k in range(len(h_N))])
+    ZA = np.concatenate([context.Z_by_ref[g_N.ref_indices[k]] for k in range(len(g_N))])
+    ZB = np.concatenate([context.Z_by_ref[h_N.ref_indices[k]] for k in range(len(h_N))])
     if sorted(ZA) != sorted(ZB):
         return False
     A = A - A.mean(axis=0)
@@ -256,7 +256,7 @@ def _same_multimer_geom(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-3) -> b
                     continue
                 P = A[[ia, ib, ic]]
                 Q = B[[jb, jd, jc]]
-                R = _kabsch(P, Q)         # allows reflection
+                R = kabsch(P, Q)         # allows reflection
                 if R is None:
                     continue
                 mapped = A @ R.T
@@ -277,7 +277,7 @@ def _same_multimer_geom(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-3) -> b
     return False
 
 
-def _kabsch(P: NDArray, Q: NDArray) -> NDArray | None:
+def kabsch(P: NDArray, Q: NDArray) -> NDArray | None:
     """Return the orthogonal R (det +/-1) minimizing ||P R^T - Q|| for centered
     corresponding point sets, or None if degenerate.
 

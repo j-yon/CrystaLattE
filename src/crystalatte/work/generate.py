@@ -7,7 +7,7 @@ split across three siblings, each with one job:
   each reference monomer and combining the partners within the cutoff.
 - :mod:`crystalatte.work.dedup` — decide which candidates are the same
   multimer. Internally: ``invariants`` (isometry invariants of a cluster),
-  ``matchers`` (the equivalence tests), ``bijection`` (routing + bucket dedup),
+  ``matchers`` (the equivalence tests), ``equivalence`` (routing + bucket dedup),
   and ``context`` (the per-run state they share).
 - this module — supercell bounds, tolerance plumbing, and turning each
   surviving cluster into a :class:`~crystalatte.core.multimer.Multimer`.
@@ -25,7 +25,7 @@ from ..core.multimer import Monomer, Multimer
 from ..core.space_group import SITE_ATOL
 from ..core.sym_ops import SymOpList
 from .dedup import context
-from .neighbors import _generate_neighbors
+from .neighbors import generate_neighbors
 
 
 def _process_multimer(g_N: SymOpList) -> Multimer | None:
@@ -47,12 +47,12 @@ def _process_multimer(g_N: SymOpList) -> Multimer | None:
         return None
     mons: list[Monomer] = []
     for k, g in enumerate(ops):
-        base = context._monomers[refs[k]]
-        masses = context._mass_by_ref[refs[k]]
+        base = context.references[refs[k]]
+        masses = context.mass_by_ref[refs[k]]
         mon_frac = g.apply(base.frac_coords)
-        mon_cart = context._crystal.to_cartesian(mon_frac)
+        mon_cart = context.active_crystal.to_cartesian(mon_frac)
         com_frac = np.average(mon_frac, axis=0, weights=masses)
-        com_cart = context._crystal.to_cartesian(com_frac)
+        com_cart = context.active_crystal.to_cartesian(com_frac)
         mons.append(Monomer(base.symbols, mon_frac, mon_cart, com_frac, com_cart, g))
     return Multimer(mons, g_N, g_N.multiplicity)
 
@@ -69,7 +69,7 @@ def generate(crystal: Crystal, N: int, R: float, *, detect_symmetry=True, sympre
     :param detect_symmetry: If True, automatically detect and apply symmetry via
         :meth:`Crystal.detect_symmetry` before enumeration (default: True)
     :param symprec: Symmetry detection tolerance in Angstroms (default: 1e-3)
-    :param kwargs: Additional options forwarded to :func:`_generate_neighbors`
+    :param kwargs: Additional options forwarded to :func:`generate_neighbors`
     :returns: A list of unique :class:`~crystalatte.core.multimer.Multimer`
         objects representing the multimers found in the crystal
     """
@@ -95,7 +95,7 @@ def generate(crystal: Crystal, N: int, R: float, *, detect_symmetry=True, sympre
         "site_atol", max(SITE_ATOL, float(symprec) / float(d.min()))
     )
 
-    unique_neighbors, _ = _generate_neighbors(crystal, monomers, bounds, R, N, **kwargs)
+    unique_neighbors, _ = generate_neighbors(crystal, monomers, bounds, R, N, **kwargs)
 
     multimers: list[Multimer] = []
     for g_N in tqdm(

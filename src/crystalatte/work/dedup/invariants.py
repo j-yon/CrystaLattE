@@ -10,7 +10,7 @@ from numpy.typing import NDArray
 from ...core.sym_ops import SymOpList
 from . import context
 
-def _int_inv(M: NDArray) -> NDArray:
+def int_inv(M: NDArray) -> NDArray:
     """Return the exact integer inverse of a unimodular integer matrix.
 
     Lattice-basis rotations are integer with ``det = ±1`` but are not
@@ -24,12 +24,12 @@ def _int_inv(M: NDArray) -> NDArray:
     inv = np.rint(np.linalg.inv(M)).astype(np.int64)
     identity = np.broadcast_to(np.eye(3, dtype=np.int64), np.shape(M))
     assert np.array_equal(inv @ np.asarray(M, dtype=np.int64), identity), (
-        "_int_inv called on a non-unimodular matrix (exact integer inverse does not exist)"
+        "int_inv called on a non-unimodular matrix (exact integer inverse does not exist)"
     )
     return inv
 
 
-def _relative_transforms(g_N: SymOpList, integer: bool) -> tuple[NDArray, NDArray]:
+def relative_transforms(g_N: SymOpList, integer: bool) -> tuple[NDArray, NDArray]:
     """Return the cluster's pairwise relative transforms
     ``Delta[a,b] = T_a^-1 T_b = (L[a,b], v[a,b])``.
 
@@ -62,10 +62,10 @@ def _relative_transforms(g_N: SymOpList, integer: bool) -> tuple[NDArray, NDArra
     if integer:
         R = g_N.rot_cache.astype(np.int64)                  # (n, 3, 3)
         t = g_N.tr_cache.astype(np.int64)                   # (n, 3), twelfths
-        R_inv = _int_inv(R)                                 # batched
+        R_inv = int_inv(R)                                 # batched
     else:
-        R = context._A @ g_N.rot_cache.astype(float) @ context._A_inv       # (n, 3, 3)
-        t = (context._A @ (g_N.tr_cache.astype(float) / 12.0).T).T  # (n, 3)
+        R = context.frac_to_cart @ g_N.rot_cache.astype(float) @ context.cart_to_frac       # (n, 3, 3)
+        t = (context.frac_to_cart @ (g_N.tr_cache.astype(float) / 12.0).T).T  # (n, 3)
         R_inv = np.linalg.inv(R)
 
     L = np.einsum("aij,bjk->abik", R_inv, R)                # (n, n, 3, 3)
@@ -75,16 +75,16 @@ def _relative_transforms(g_N: SymOpList, integer: bool) -> tuple[NDArray, NDArra
     return L, v
 
 
-def _relative_transforms_int(g_N: SymOpList) -> tuple[NDArray, NDArray]:
-    """Exact integer-basis :func:`_relative_transforms`. See that function.
+def relative_transforms_int(g_N: SymOpList) -> tuple[NDArray, NDArray]:
+    """Exact integer-basis :func:`relative_transforms`. See that function.
 
     :param g_N: The cluster whose integer relative transforms are requested
     :returns: A tuple ``(L, v)`` of shapes ``(n, n, 3, 3)`` and ``(n, n, 3)``
     """
-    return _relative_transforms(g_N, integer=True)
+    return relative_transforms(g_N, integer=True)
 
 
-def _base(g_N: SymOpList) -> int:
+def base_reference(g_N: SymOpList) -> int:
     """Return the (single) base reference index of a mono-reference cluster.
 
     :param g_N: The cluster whose base reference index is requested
@@ -93,7 +93,7 @@ def _base(g_N: SymOpList) -> int:
     return int(g_N.ref_indices[0])
 
 
-def _mono(g_N: SymOpList) -> bool:
+def is_mono_reference(g_N: SymOpList) -> bool:
     """Return True iff every member of ``g_N`` shares the same base reference.
 
     :param g_N: The cluster to test
@@ -102,23 +102,23 @@ def _mono(g_N: SymOpList) -> bool:
     return len(set(g_N.ref_indices.tolist())) == 1
 
 
-def _cluster_atoms_cart(g_N: SymOpList) -> NDArray:
+def cluster_atoms_cart(g_N: SymOpList) -> NDArray:
     """Reconstruct the cluster's Cartesian atom positions from the module-level
-    ``context._monomers`` / ``context._crystal`` bindings, using each member's base reference.
+    ``context.references`` / ``context.active_crystal`` bindings, using each member's base reference.
 
     The result is not cached: this is called only by
-    :func:`_distance_fingerprint`, which caches the derived fingerprint, so a
+    :func:`distance_fingerprint`, which caches the derived fingerprint, so a
     per-object cache here would never be re-read.
 
     :param g_N: The cluster whose atom positions are requested
     :returns: An ``(n_atoms, 3)`` array of Cartesian coordinates
     """
     ref = g_N.ref_indices
-    parts = [op.apply(context._monomers[ref[k]].frac_coords) for k, op in enumerate(g_N)]
-    return context._crystal.to_cartesian(np.vstack(parts))
+    parts = [op.apply(context.references[ref[k]].frac_coords) for k, op in enumerate(g_N)]
+    return context.active_crystal.to_cartesian(np.vstack(parts))
 
 
-def _distance_fingerprint(g_N: SymOpList) -> tuple[NDArray, NDArray]:
+def distance_fingerprint(g_N: SymOpList) -> tuple[NDArray, NDArray]:
     """Return the cluster's cached Z-tagged sorted pairwise atom-distance
     fingerprint: interatomic distances sorted lexicographically by
     ``(Z_i * Z_j, distance)``.
@@ -139,9 +139,9 @@ def _distance_fingerprint(g_N: SymOpList) -> tuple[NDArray, NDArray]:
     cached = getattr(g_N, "_dist_fp_cache", None)
     if cached is not None:
         return cached
-    atoms = _cluster_atoms_cart(g_N)
+    atoms = cluster_atoms_cart(g_N)
     ref = g_N.ref_indices
-    Z = np.concatenate([context._Z_by_ref[ref[k]] for k in range(len(g_N))])
+    Z = np.concatenate([context.Z_by_ref[ref[k]] for k in range(len(g_N))])
     i_idx, j_idx = np.triu_indices(len(atoms), k=1)
     dists = np.linalg.norm(atoms[i_idx] - atoms[j_idx], axis=1)
     zz = Z[i_idx] * Z[j_idx]
@@ -151,13 +151,13 @@ def _distance_fingerprint(g_N: SymOpList) -> tuple[NDArray, NDArray]:
     return fp
 
 
-def _fingerprints_match(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-6) -> bool:
+def fingerprints_match(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-6) -> bool:
     """Return True iff the two clusters' Z-tagged distance fingerprints coincide.
 
     This is the cheap necessary gate run before the exact and anchored branches.
     The tight ``atol`` is safe because equivalent clusters share
     exact-arithmetic distances; homometric false positives (rare) are caught
-    downstream by :func:`_same_multimer`.
+    downstream by :func:`same_multimer`.
 
     :param g_N: The first cluster
     :param h_N: The second cluster
@@ -166,8 +166,8 @@ def _fingerprints_match(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-6) -> b
     """
     if len(g_N) != len(h_N):
         return False
-    zz_g, d_g = _distance_fingerprint(g_N)
-    zz_h, d_h = _distance_fingerprint(h_N)
+    zz_g, d_g = distance_fingerprint(g_N)
+    zz_h, d_h = distance_fingerprint(h_N)
     if zz_g.shape != zz_h.shape or not np.array_equal(zz_g, zz_h):
         return False
     return np.allclose(d_g, d_h, atol=atol, rtol=0.0)

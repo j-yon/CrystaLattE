@@ -17,8 +17,8 @@ from ..core.multimer import Monomer
 from ..core.space_group import SITE_ATOL
 from ..core.sym_ops import SymOp, SymOpList
 from .dedup import context
-from .dedup.bijection import _process_bucket
-from .dedup.context import _init_bucket_worker
+from .dedup.equivalence import deduplicate_bucket
+from .dedup.context import init_worker
 
 def _distance_mode(kwargs: dict) -> str:
     """Resolve the distance convention once, rather than per candidate.
@@ -60,7 +60,7 @@ def _neighbor_distance(
     return float(cdist(monomer.cart_coords, cart_mon).min())
 
 
-def _generate_neighbors(
+def generate_neighbors(
     crystal: Crystal,
     monomers: list[Monomer],
     cutoff: NDArray,
@@ -70,7 +70,7 @@ def _generate_neighbors(
 ) -> tuple[list[SymOpList], list[SymOpList]]:
     """Generate all unique N-mers in the supercell defined by ``cutoff`` by
     anchoring each reference monomer in turn, then deduplicate via a
-    centroid-distance bucketing and :func:`_is_bijection`.
+    centroid-distance bucketing and :func:`are_equivalent`.
 
     :param crystal: The crystal containing the monomers
     :param monomers: The reference monomers (one per crystal asymmetric unit);
@@ -92,8 +92,8 @@ def _generate_neighbors(
     else:
         translations = list(product(*[range(cm, cp + 1) for cm, cp in cutoff]))
 
-    # Bind per-reference state (workers below get the same via _init_bucket_worker).
-    context._bind_globals(crystal, monomers, site_atol)
+    # Bind per-reference state (workers below get the same via init_worker).
+    context.bind(crystal, monomers, site_atol)
 
     # Full partner pool across ALL references: (base_index j, SymOp placing monomers[j]).
     pool = []
@@ -117,7 +117,7 @@ def _generate_neighbors(
             if j == i and op == SymOp.identity():
                 continue
             partner_cart = crystal.to_cartesian(op.apply(monomers[j].frac_coords))
-            if _neighbor_distance(partner_cart, context._mass_by_ref[j], anchor, mode) <= R:
+            if _neighbor_distance(partner_cart, context.mass_by_ref[j], anchor, mode) <= R:
                 near.append((j, op))
         if verbose:
             print(f"Reference {i}: {len(near)} monomers within {R} Angstroms.")
@@ -143,7 +143,7 @@ def _generate_neighbors(
             # equivalent clusters' centroid distances agree to ~1e-9, so a 0.01 A
             # bin never straddles a rounding boundary in practice, while any
             # extra within-bucket collisions are harmless — correctness is
-            # decided by _is_bijection, not by the bucket key itself.
+            # decided by are_equivalent, not by the bucket key itself.
             if len(member_cens) > 1:
                 dfp = np.sort(np.round(pdist(member_cens), 2))
             else:
@@ -165,12 +165,12 @@ def _generate_neighbors(
         n_jobs = max(1, min(kwargs["n_jobs"], len(buckets), cpu_count() - 1))
         with ProcessPoolExecutor(
             max_workers=n_jobs,
-            initializer=_init_bucket_worker,
+            initializer=init_worker,
             initargs=(crystal, monomers, site_atol),
         ) as ex:
             results = list(
                 tqdm(
-                    ex.map(_process_bucket, buckets.values()),
+                    ex.map(deduplicate_bucket, buckets.values()),
                     total=len(buckets),
                     desc="Processing buckets",
                     leave=False,
@@ -190,7 +190,7 @@ def _generate_neighbors(
             leave=False,
             disable=not verbose,
         ):
-            local_unique, local_dup = _process_bucket(bucket)
+            local_unique, local_dup = deduplicate_bucket(bucket)
             unique.extend(local_unique)
             duplicate.extend(local_dup)
 

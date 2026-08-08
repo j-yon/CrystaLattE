@@ -6,6 +6,7 @@ import crystalatte as cle
 from crystalatte.core.space_group import SpaceGroup
 from crystalatte.core.sym_ops import SymOp, SymOpList
 from crystalatte.work import generate
+from crystalatte.work.dedup import equivalence, context, invariants, matchers
 
 DATA = Path(__file__).parent
 BENZENE_DIMERS = 3  # captured on pre-Task-5 code: benzene, N=2, R=5.0, use_origin=True
@@ -36,7 +37,7 @@ def _translate(dx12):
 
 def test_relative_transforms_int_pure_translation():
     g = SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1)
-    L, v = generate._relative_transforms_int(g)
+    L, v = invariants.relative_transforms_int(g)
     assert np.array_equal(L[0, 1], np.eye(3, dtype=np.int64))
     assert np.array_equal(v[0, 1], np.array([12, 0, 0]))
     assert np.array_equal(v[1, 0], np.array([-12, 0, 0]))
@@ -47,7 +48,7 @@ def test_relative_transforms_int_nonorthogonal_inverse():
     # its inverse differs from its transpose.
     six = SymOp("x-y,x,z")
     g = SymOpList([SymOp.identity(), six], 1)
-    L, v = generate._relative_transforms_int(g)
+    L, v = invariants.relative_transforms_int(g)
     R = six.rot.astype(np.int64)
     # L[1,0] = rot_inv[1] @ rot[0] = inv(R); verify it is the exact inverse
     assert np.array_equal(L[1, 0] @ R, np.eye(3, dtype=np.int64))
@@ -57,8 +58,8 @@ def test_relative_transforms_int_nonorthogonal_inverse():
 
 def test_relative_transforms_int_is_cached():
     g = SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1)
-    first = generate._relative_transforms_int(g)
-    second = generate._relative_transforms_int(g)
+    first = invariants.relative_transforms_int(g)
+    second = invariants.relative_transforms_int(g)
     assert first[0] is second[0]  # same cached array object
 
 
@@ -66,13 +67,13 @@ def test_same_multimer_int_translation_swap():
     # Same dimer counted from each monomer: [I, T(+1)] ~ [I, T(-1)]. W = {I}.
     G = SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1)
     H = SymOpList([SymOp.identity(), _translate([-12, 0, 0])], 1)
-    assert generate._same_multimer_int(G, H, W=[np.eye(3, dtype=np.int64)]) is True
+    assert matchers.same_multimer_int(G, H, W=[np.eye(3, dtype=np.int64)]) is True
 
 
 def test_same_multimer_int_non_match():
     G = SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1)
     H = SymOpList([SymOp.identity(), _translate([24, 0, 0])], 1)
-    assert generate._same_multimer_int(G, H, W=[np.eye(3, dtype=np.int64)]) is False
+    assert matchers.same_multimer_int(G, H, W=[np.eye(3, dtype=np.int64)]) is False
 
 
 def test_same_multimer_int_inversion_needs_W():
@@ -84,14 +85,14 @@ def test_same_multimer_int_inversion_needs_W():
     )
     H = SymOpList([SymOp.identity(), h_partner], 1)
 
-    assert generate._same_multimer_int(G, H, W=[np.eye(3, dtype=np.int64)]) is False
+    assert matchers.same_multimer_int(G, H, W=[np.eye(3, dtype=np.int64)]) is False
 
-    assert generate._same_multimer_int(
+    assert matchers.same_multimer_int(
         G, H, W=[np.eye(3, dtype=np.int64), -np.eye(3, dtype=np.int64)]
     ) is True
 
 
-def test_bind_globals_sets_site_symmetry_and_gate():
+def test_bind_sets_site_symmetry_and_gate():
     from pathlib import Path
 
     import crystalatte as cle
@@ -99,51 +100,51 @@ def test_bind_globals_sets_site_symmetry_and_gate():
     DATA = Path(__file__).parent
 
     crystal, monomer = next(cle.from_cif(str(DATA / "x23/benzene/benzene.cif")))
-    generate._bind_globals(crystal, crystal.get_references())
+    context.bind(crystal, crystal.get_references())
 
     # Benzene is on an inversion centre: identity + inversion in the dressing.
-    assert any(np.array_equal(w, np.eye(3, dtype=np.int64)) for w in generate._W_lin_by_ref[0])
-    assert any(np.array_equal(w, -np.eye(3, dtype=np.int64)) for w in generate._W_lin_by_ref[0])
+    assert any(np.array_equal(w, np.eye(3, dtype=np.int64)) for w in context.W_lin_by_ref[0])
+    assert any(np.array_equal(w, -np.eye(3, dtype=np.int64)) for w in context.W_lin_by_ref[0])
     # Molecular point group (D6h-ish) is richer than the site symmetry.
-    assert generate._check_congruence_by_ref[0] is True
+    assert context.check_congruence_by_ref[0] is True
 
 
-def test_is_bijection_fallback_gated_by_check_congruence(monkeypatch):
+def test_are_equivalent_fallback_gated_by_check_congruence(monkeypatch):
     # Two clusters that the integer matcher rejects; the float fallback must run
-    # only when _check_congruence_by_ref[0] is True. Both clusters default to
+    # only when check_congruence_by_ref[0] is True. Both clusters default to
     # ref_indices = [0, 0] (mono-reference, base 0).
-    generate._W_lin_by_ref = [[np.eye(3, dtype=np.int64)]]
+    context.W_lin_by_ref = [[np.eye(3, dtype=np.int64)]]
     G = SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1)
     H = SymOpList([SymOp.identity(), _translate([24, 0, 0])], 1)
 
     calls = []
-    monkeypatch.setattr(generate, "_fingerprints_match", lambda a, b, **k: True)
+    monkeypatch.setattr(equivalence, "fingerprints_match", lambda a, b, **k: True)
     monkeypatch.setattr(
-        generate, "_same_multimer", lambda a, b, **k: calls.append(1) or False
+        matchers, "same_multimer", lambda a, b, **k: calls.append(1) or False
     )
 
-    generate._check_congruence_by_ref = [False]
-    assert generate._is_bijection(G, H) is False
+    context.check_congruence_by_ref = [False]
+    assert equivalence.are_equivalent(G, H) is False
     assert calls == []  # gated off: float fallback not called
 
-    generate._check_congruence_by_ref = [True]
-    assert generate._is_bijection(G, H) is False
+    context.check_congruence_by_ref = [True]
+    assert equivalence.are_equivalent(G, H) is False
     assert calls == [1]  # gated on: float fallback called once
 
 
-def test_is_bijection_integer_path_matches_without_fallback(monkeypatch):
+def test_are_equivalent_integer_path_matches_without_fallback(monkeypatch):
     # A crystallographic merge must be decided by the integer path alone.
-    generate._W_lin_by_ref = [[np.eye(3, dtype=np.int64)]]
-    generate._check_congruence_by_ref = [True]
+    context.W_lin_by_ref = [[np.eye(3, dtype=np.int64)]]
+    context.check_congruence_by_ref = [True]
     G = SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1)
     H = SymOpList([SymOp.identity(), _translate([-12, 0, 0])], 1)
 
     def _boom(*a, **k):
         raise AssertionError("float fallback should not run for integer merges")
 
-    monkeypatch.setattr(generate, "_fingerprints_match", lambda a, b, **k: True)
-    monkeypatch.setattr(generate, "_same_multimer", _boom)
-    assert generate._is_bijection(G, H) is True
+    monkeypatch.setattr(equivalence, "fingerprints_match", lambda a, b, **k: True)
+    monkeypatch.setattr(matchers, "same_multimer", _boom)
+    assert equivalence.are_equivalent(G, H) is True
 
 
 def test_generate_dimer_count_regression():
@@ -156,7 +157,7 @@ def test_int_inv_rejects_non_unimodular():
     import pytest
     # det = 2 is not unimodular: no exact integer inverse exists.
     with pytest.raises(AssertionError):
-        generate._int_inv(np.array([[2, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.int64))
+        invariants.int_inv(np.array([[2, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.int64))
 
 
 
@@ -188,19 +189,19 @@ def test_self_isometry_linear_part_is_not_a_symmetry():
     assert worst_linear > 1.0  # linear part alone is badly wrong
 
 
-def test_bind_globals_sets_dressing_translations():
+def test_bind_sets_dressing_translations():
     crystal, _ = next(cle.from_cif(str(DATA / "x23/urea/urea.cif")))
     crystal = crystal.detect_symmetry(1e-3)
-    generate._bind_globals(crystal, crystal.get_references())
+    context.bind(crystal, crystal.get_references())
 
-    S = generate._self_iso_by_ref[0]
-    D = generate._self_iso_tr_by_ref[0]
-    W = generate._W_lin_by_ref[0]
-    W_tr = generate._W_tr_by_ref[0]
+    S = context.self_iso_by_ref[0]
+    D = context.self_iso_tr_by_ref[0]
+    W = context.W_lin_by_ref[0]
+    W_tr = context.W_tr_by_ref[0]
     assert len(D) == len(S)
     assert len(W_tr) == len(W)
 
-    c = generate._monomers[0].centroid_cart
+    c = context.references[0].centroid_cart
     for s, d in zip(S, D):
         assert np.allclose(d, c - s @ c)
     # urea's centroid is NOT a fixed point of its point group, so some
@@ -209,18 +210,18 @@ def test_bind_globals_sets_dressing_translations():
     assert max(int(np.abs(t).max()) for t in W_tr) > 0
 
     # the integer dressings must fix the centroid EXACTLY (in twelfths)
-    c_frac = generate._monomers[0].centroid_frac
+    c_frac = context.references[0].centroid_frac
     for r, t in zip(W, W_tr):
         assert np.allclose(r @ c_frac + t / 12.0, c_frac, atol=1e-6)
 
 
-def test_bind_globals_dressing_translations_vanish_for_benzene():
+def test_bind_dressing_translations_vanish_for_benzene():
     # Benzene's centroid is a fixed point of its point group, so every
     # dressing translation is zero and the pre-fix code was accidentally right.
     crystal, _ = next(cle.from_cif(str(DATA / "x23/benzene/benzene.cif")))
-    generate._bind_globals(crystal, crystal.get_references())
-    assert all(np.allclose(d, 0.0) for d in generate._self_iso_tr_by_ref[0])
-    assert all(not np.any(t) for t in generate._W_tr_by_ref[0])
+    context.bind(crystal, crystal.get_references())
+    assert all(np.allclose(d, 0.0) for d in context.self_iso_tr_by_ref[0])
+    assert all(not np.any(t) for t in context.W_tr_by_ref[0])
 
 
 def test_same_multimer_int_needs_dressing_translation():
@@ -230,8 +231,8 @@ def test_same_multimer_int_needs_dressing_translation():
     crystal, _ = next(cle.from_cif(str(DATA / "x23/urea/urea.cif")))
     crystal = crystal.detect_symmetry(1e-3)
     refs = crystal.get_references()
-    generate._bind_globals(crystal, refs)
-    W, W_tr = generate._W_lin_by_ref[0], generate._W_tr_by_ref[0]
+    context.bind(crystal, refs)
+    W, W_tr = context.W_lin_by_ref[0], context.W_tr_by_ref[0]
 
     rot = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, -1]], dtype=np.int16)
     g = SymOpList([SymOp.identity(),
@@ -239,9 +240,9 @@ def test_same_multimer_int_needs_dressing_translation():
     h = SymOpList([SymOp.identity(),
                    SymOp.from_components(rot, np.array([-12, 12, 0], dtype=np.int16))], 1)
 
-    assert generate._same_multimer_int(g, h, W, W_tr) is True
+    assert matchers.same_multimer_int(g, h, W, W_tr) is True
     # without the translation parts the same pair is missed
-    assert generate._same_multimer_int(g, h, W) is False
+    assert matchers.same_multimer_int(g, h, W) is False
 
 
 def test_urea_dimer_count_regression():
