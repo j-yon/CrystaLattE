@@ -224,15 +224,29 @@ def same_multimer_geom(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-3) -> bo
     B = B - B.mean(axis=0)
 
     n = len(A)
-    # anchor triple in A: first three mutually non-collinear atoms
+
     def _triple(P):
-        i0 = 0
+        """Return the BEST-conditioned anchor triple, not merely the first
+        acceptable one.
+
+        A triple only has to clear ``|cross| > 1e-3`` to be usable, but a
+        barely-acceptable one is a terrible basis to fit a rotation from: the
+        rotation about its near-degenerate axis is poorly determined, and that
+        error is amplified by the lever arm out to distant atoms. Measured, a
+        triple at the acceptance threshold amplifies a 1e-6 A coordinate
+        perturbation to ~4e-3 A at an atom 20 A away — larger than the ``atol``
+        the fit is then judged against, so a correct correspondence can fail its
+        own test. Maximising the triangle area costs the same O(n^2) scan.
+        """
+        i0, best, best_area = 0, None, 1e-3
         for i1 in range(1, n):
+            v1 = P[i1] - P[i0]
             for i2 in range(i1 + 1, n):
-                v1, v2 = P[i1] - P[i0], P[i2] - P[i0]
-                if np.linalg.norm(np.cross(v1, v2)) > 1e-3:
-                    return (i0, i1, i2)
-        return None
+                area = np.linalg.norm(np.cross(v1, P[i2] - P[i0]))
+                if area > best_area:
+                    best, best_area = (i0, i1, i2), area
+        return best
+
     tri = _triple(A)
     if tri is None:          # (near-)linear cluster: fall back to full-pair distance check
         DA = np.sort(cdist(A, A).ravel())
@@ -254,25 +268,40 @@ def same_multimer_geom(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-3) -> bo
                 dcand = np.array([DB_full[jb, jd], DB_full[jb, jc], DB_full[jd, jc]])
                 if not np.allclose(dref, dcand, atol=atol):
                     continue
-                P = A[[ia, ib, ic]]
-                Q = B[[jb, jd, jc]]
-                R = kabsch(P, Q)         # allows reflection
+                R = kabsch(A[[ia, ib, ic]], B[[jb, jd, jc]])   # allows reflection
                 if R is None:
                     continue
+
+                # The triple only BOOTSTRAPS a correspondence; it is too small a
+                # basis to judge the fit by. Assign each atom to its nearest
+                # unused same-Z partner (most confident first, so a clear match
+                # is never displaced by an ambiguous one), then re-fit the
+                # rotation on the FULL correspondence. Error then averages down
+                # over n atoms instead of being amplified out from three.
                 mapped = A @ R.T
-                # every mapped atom must coincide with a same-Z atom of B
-                ok = True
+                pairing = np.full(n, -1, dtype=int)
                 used = np.zeros(n, dtype=bool)
+                order = []
                 for k in range(n):
                     cand = same[ZA[k]]
-                    dists = np.linalg.norm(B[cand] - mapped[k], axis=1)
-                    hit = cand[dists < atol]
-                    hit = [h for h in hit if not used[h]]
-                    if not hit:
-                        ok = False
+                    d = np.linalg.norm(B[cand] - mapped[k], axis=1)
+                    order.append((float(d.min()), k))
+                for _, k in sorted(order):
+                    cand = same[ZA[k]]
+                    d = np.linalg.norm(B[cand] - mapped[k], axis=1)
+                    free = [(d[t], c) for t, c in enumerate(cand) if not used[c]]
+                    if not free:
                         break
-                    used[hit[0]] = True
-                if ok:
+                    _, pick = min(free)
+                    pairing[k], used[pick] = pick, True
+                if (pairing < 0).any():
+                    continue
+
+                R = kabsch(A, B[pairing])
+                if R is None:
+                    continue
+                # Accept only on the refined map, at the tight tolerance.
+                if np.abs(A @ R.T - B[pairing]).max() < atol:
                     return True
     return False
 

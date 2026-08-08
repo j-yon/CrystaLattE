@@ -322,3 +322,60 @@ def test_ice_dedup_is_complete():
     mers = generate.generate(crystal, 2, 8.0, use_origin=True, n_jobs=1, verbose=0)
     n_classes, _ = count_chemistry_classes(mers, atol=1e-8)
     assert n_classes == len(mers)
+
+
+# --- Kabsch conditioning -----------------------------------------------------
+
+def _random_rotation(seed, improper=False):
+    rng = np.random.default_rng(seed)
+    R = np.linalg.qr(rng.normal(size=(3, 3)))[0]
+    if (np.linalg.det(R) < 0) != improper:
+        R[:, 0] *= -1
+    return R
+
+
+def test_kabsch_recovers_a_known_rotation():
+    rng = np.random.default_rng(0)
+    P = rng.normal(size=(12, 3)); P -= P.mean(axis=0)
+    R = _random_rotation(1)
+    assert np.allclose(matchers.kabsch(P, P @ R.T), R, atol=1e-10)
+
+
+def test_kabsch_allows_reflection():
+    # Deliberate deviation from textbook Kabsch, which forces det = +1: a
+    # mirror-image cluster has the same interaction energy, so enantiomers
+    # must merge. Reflections have to be recoverable, not corrected away.
+    rng = np.random.default_rng(2)
+    P = rng.normal(size=(12, 3)); P -= P.mean(axis=0)
+    R = _random_rotation(3, improper=True)
+    fitted = matchers.kabsch(P, P @ R.T)
+    assert np.linalg.det(fitted) < 0
+    assert np.allclose(fitted, R, atol=1e-10)
+
+
+def test_kabsch_returns_none_on_non_finite_input():
+    P = np.zeros((3, 3)); P[0, 0] = np.nan
+    assert matchers.kabsch(P, np.eye(3)) is None
+
+
+def test_kabsch_full_correspondence_beats_a_thin_anchor_triple():
+    # A triple that only just clears the non-collinearity threshold is a poor
+    # basis to fit a rotation from: the error is amplified by the lever arm out
+    # to distant atoms, and can exceed the atol the fit is judged against.
+    # Re-fitting on the full correspondence removes that dependence.
+    # The property is about the WORST case over configurations, not any single
+    # draw: a thin triple is sometimes accidentally well-oriented.
+    worst_triple = worst_full = 0.0
+    for seed in range(40):
+        rng = np.random.default_rng(seed)
+        A = rng.normal(scale=7.0, size=(24, 3))
+        A[0], A[1], A[2] = [0, 0, 0], [1.0, 0, 0], [0, 2e-3, 0]  # near-degenerate
+        A -= A.mean(axis=0)
+        R = _random_rotation(seed + 100)
+        B = A @ R.T + rng.normal(scale=1e-6, size=A.shape)
+        B -= B.mean(axis=0)
+        worst_triple = max(worst_triple, np.abs(A @ matchers.kabsch(A[:3], B[:3]).T - B).max())
+        worst_full = max(worst_full, np.abs(A @ matchers.kabsch(A, B).T - B).max())
+
+    assert worst_full < worst_triple / 10
+    assert worst_full < 1e-4        # comfortably inside same_multimer_geom's atol
