@@ -9,7 +9,7 @@ output, then replace each None with the observed value to lock it in as a
 regression target.
 
 Run with:
-    conda run -n cle python -m pytest Tests/test_generate.py -v
+    conda run -n cle python -m pytest tests/test_generate.py -v
 """
 
 from pathlib import Path

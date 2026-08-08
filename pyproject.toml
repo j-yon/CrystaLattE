@@ -40,7 +40,7 @@ tests = [
 find = {where = ["src"]}
 
 [tool.pytest.ini_options]
-testpaths = ["Tests"]
+testpaths = ["tests"]
 
 [tool.coverage.run]
 omit = ["*/tests/*"]
