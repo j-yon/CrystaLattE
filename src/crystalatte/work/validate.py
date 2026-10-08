@@ -9,12 +9,12 @@ from ..core.multimer import Multimer
 
 def _nre(elem: list[str], geom: NDArray) -> float:
     """Compute the nuclear repulsion energy of a multimer
-    (Exact copy of the original CLE code)
 
     :param elem: List of atomic symbols of each atom.
     :param geom: Array of 3 columns with the coordinates of the system.
     :returns: Nuclear repulsion energy of the system.
     """
+    # exact copy of the original CLE code
     Z = np.array([qcel.periodictable.to_Z(e) for e in elem])
     dist = np.sqrt(
         np.sum((geom[:, np.newaxis, :] - geom[np.newaxis, :, :]) ** 2, axis=2)
@@ -27,14 +27,13 @@ def _nre(elem: list[str], geom: NDArray) -> float:
 
 
 def _chsev(elem: list[str], geom: NDArray) -> NDArray:
-    """Diagonalize the chemical space matrix of a multimer 
-    (Exact copy of the original CLE code)
+    """Diagonalize the chemical space matrix of a multimer
 
     :param elem: List of atomic symbols of each atom.
     :param geom: Array of 3 columns with the coordinates of the system.
     :returns: Sorted eigenvalues of the chemical space matrix.
     """
-
+    # exact copy of the original CLE code
     Z = np.array([qcel.periodictable.to_Z(e) for e in elem])
     dist = np.sqrt(
         np.sum((geom[:, np.newaxis, :] - geom[np.newaxis, :, :]) ** 2, axis=2)
@@ -82,11 +81,10 @@ def count_chemistry_classes(
     multimers: list[Multimer], atol: float = 1e-9
 ) -> tuple[int, list[list[int]]]:
     """Group `multimers` into chemistry-equivalence classes via (NRE, CHSEV) comparison
-    (The original CLE code has atol = 1e-8)
 
     :param multimers: list of Multimer objects to classify.
-    :param atol: absolute tolerance for comparing NRE and CHSEV values.
-    :returns: tuple of number of classes and a list of lists containing indices of partitioned multimers
+    :param atol: tolerance for comparing NRE and CHSEV (original CLE used 1e-8)
+    :returns: number of classes, and the multimer indices in each class
     """
     fingerprints = [_nre_chsev(m) for m in multimers]
     classes: list[list[int]] = []

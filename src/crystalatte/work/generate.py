@@ -44,23 +44,18 @@ def generate(
     """Generate unique multimers of every reference molecule in the crystal
 
     :param crystal: crystal structure to generate multimers from
-    :param N: number of monomers in the multimer 
-    :param R: maximum center-to-center monomer distance in Angstroms 
-    :param detect_symmetry: if True, automatically detect and apply symmetry before enumeration
-    :param symprec: symmetry detection tolerance in Angstroms 
-    :param kwargs: additional options forwarded to :func:`generate_neighbors`.
+    :param N: number of monomers in the multimer
+    :param R: maximum center-to-center monomer distance in Angstroms
+    :param detect_symmetry: detect and apply higher symmetry before enumeration
+    :param symprec: symmetry detection tolerance in Angstroms
+    :param kwargs: additional options forwarded to :func:`generate_neighbors`
     :returns: list of unique multimers found in the crystal
     :raises ValueError: if ``N`` is not an integer ``>= 2``
 
     .. warning::
-       **LINEAR MONOMERS ARE NOT SUPPORTED.** A linear molecule (CO2, N2,
-       acetylene) has only two rotational degrees of freedom, but a placement is
-       stored as a full 3x3 rotation. The extra parameter — the twist about the
-       molecular axis — is physically meaningless yet is still compared, so two
-       placements of the identical molecule can disagree and their multimers fail
-       to merge. Deduplication is therefore INCOMPLETE for such crystals and the
-       returned list will contain duplicates. A ``RuntimeWarning`` is emitted when this is
-       detected. See the note in :mod:`crystalatte.work.dedup`.
+       Linear monomers (CO2, N2, acetylene) are not supported. Their placements
+       still carry a meaningless twist about the molecular axis, so identical
+       multimers can fail to merge; a ``RuntimeWarning`` flags the duplicates.
     """
     # check N validity
     if not isinstance(N, (int, np.integer)) or isinstance(N, bool) or N < 2:

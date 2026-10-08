@@ -41,8 +41,7 @@ def _neighbor_distance(
     """Return the cutoff distance for a partner monomer
 
     :param cart_mon: partner monomer's Cartesian coordinates
-    :param partner_masses: partner's atomic masses, aligned with ``cart_mon``. 
-        (these must come from the partner's own base reference for ``Z' > 1``)
+    :param partner_masses: atomic masses from the partner's own base reference
     :param monomer: anchor monomer
     :param mode: desired distance convention
     :returns: partner-to-anchor distance in Angstroms
@@ -64,12 +63,12 @@ def generate_neighbors(
     N: int,
     **kwargs,
 ) -> list[SymOpList]:
-    """Generate and deduplicate all unique N-mers in the supercell defined by ``cutoff`` 
+    """Generate and deduplicate all unique N-mers in the supercell defined by ``cutoff``
 
     :param crystal: crystal containing the monomers
     :param monomers: reference monomer(s) used to anchor the N-mer search
     :param cutoff: per-axis ``(low, high)`` integer lattice translation bounds
-    :param R: distance cutoff in Angstroms. The distance convention is selected by ``kwargs``
+    :param R: distance cutoff in Angstroms, convention selected by ``kwargs``
     :param N: N-mer order
     :param kwargs: additional options (``n_jobs``, ``verbose``, etc.)
     :returns: unique cluster lists
