@@ -9,19 +9,16 @@ because `count_chemistry_classes` agrees with them on every case.
 
 Run with:
     python -m pytest tests/test_generate.py -v
-"""
 
-from pathlib import Path
+See tests/README.md for the suite map.
+"""
 
 import pytest
 
 import crystalatte as cle
 from crystalatte.work.validate import count_chemistry_classes
 
-DATA = Path(__file__).parent
-
-# kwargs shared across all generate calls
-_GENERATE_KWARGS = {"use_origin": True, "n_jobs": 1, "verbose": 0}
+from conftest import GENERATE_KW, crystal
 
 # Tolerance used by the original CrystaLattE oracle
 _ATOL = 1e-8

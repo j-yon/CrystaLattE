@@ -1,11 +1,9 @@
 import pickle
 import numpy as np
-import crystalatte as cle
-from pathlib import Path
 from crystalatte.core.space_group import SpaceGroup
 from crystalatte.core.sym_ops import SymOp
 
-DATA = Path(__file__).parent
+from conftest import load
 
 
 def test_from_sym_ops_holds_explicit_ops():
@@ -50,7 +48,7 @@ def test_get_unique_sym_ops_db_behavior_preserved():
 
 
 def test_detect_symmetry_ammonia_p1_to_p213():
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/ammonia/ammonia.cif")))
+    crystal, _ = load("ammonia")
     assert len(crystal.space_group.sym_ops) == 1          # declared P1
     detected = crystal.detect_symmetry()
     assert len(detected.space_group.sym_ops) == 12        # P2_13
@@ -60,7 +58,7 @@ def test_detect_symmetry_ammonia_p1_to_p213():
 
 
 def test_detect_symmetry_benzene_no_change():
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/benzene/benzene.cif")))
+    crystal, _ = load("benzene")
     detected = crystal.detect_symmetry()
     # benzene's declared SG 61 is already correct -> not strictly higher -> self
     assert detected is crystal
@@ -68,7 +66,7 @@ def test_detect_symmetry_benzene_no_change():
 
 def test_detect_symmetry_graceful_on_failure(monkeypatch):
     import spglib
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/ammonia/ammonia.cif")))
+    crystal, _ = load("ammonia")
     monkeypatch.setattr(spglib, "get_symmetry", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     assert crystal.detect_symmetry() is crystal            # falls back, no raise
 
@@ -77,7 +75,7 @@ def test_detect_symmetry_benzene_full_cell_expansion():
     # Benzene is non-P1 (SG 61, Z=4); detection must expand ASU to full cell
     # before passing to spglib. Verify it works (returns self, no raise/warning).
     import warnings
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/benzene/benzene.cif")))
+    crystal, _ = load("benzene")
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         detected = crystal.detect_symmetry()
@@ -92,7 +90,7 @@ from crystalatte.work import generate
 
 def test_generate_detection_invariant_ammonia():
     # Detection changes HOW (fast integer path), not WHAT (the unique n-mer set).
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/ammonia/ammonia.cif")))
+    crystal, _ = load("ammonia")
     for kw in (dict(use_origin=True), dict()):  # use_origin and default conventions
         n_on = len(generate.generate(crystal, 2, 5.0, n_jobs=1, detect_symmetry=True, **kw))
         n_off = len(generate.generate(crystal, 2, 5.0, n_jobs=1, detect_symmetry=False, **kw))
@@ -102,11 +100,11 @@ def test_generate_detection_invariant_ammonia():
 def test_generate_detection_uses_single_reference_path_ammonia():
     # With detection, ammonia collapses to Z'=1 (one reference), so the integer
     # matcher (not the float cloud congruence) handles it.
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/ammonia/ammonia.cif")))
+    crystal, _ = load("ammonia")
     detected = crystal.detect_symmetry()
     assert len(detected.get_references()) == 1
 
 
 def test_generate_benzene_regression_with_detection():
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/benzene/benzene.cif")))
+    crystal, _ = load("benzene")
     assert len(generate.generate(crystal, 2, 5.0, use_origin=True, n_jobs=1)) == 3

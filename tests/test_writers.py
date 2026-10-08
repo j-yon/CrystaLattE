@@ -2,10 +2,10 @@
 write_inputs entry point (src/crystalatte/work/setup.py).
 
 Run with:
-    conda run -n cle python -m pytest tests/test_writers.py -v
-"""
+    python -m pytest tests/test_writers.py -v
 
-from pathlib import Path
+See tests/README.md for the suite map.
+"""
 
 import numpy as np
 import pytest

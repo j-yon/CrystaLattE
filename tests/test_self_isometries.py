@@ -7,14 +7,12 @@ closed under composition — it contains no rotoreflections beyond ``i`` and
 properties the deduper relies on.
 """
 
-from pathlib import Path
 
 import numpy as np
 import pytest
+import qcelemental as qcel
 
-import crystalatte as cle
-
-DATA = Path(__file__).parent
+from conftest import load
 
 # Orders of the finite subgroups of O(3) that a molecule can realise.
 VALID_ORDERS = {1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 20, 24, 28, 32, 36,
@@ -26,8 +24,8 @@ CRYSTALS = ["benzene", "uracil", "formamide", "cytosine", "ammonia",
 
 
 def _isometries(name):
-    crystal, _ = next(cle.from_cif(str(DATA / f"x23/{name}/{name}.cif")))
-    return crystal.get_references()[0].self_isometries
+    crystal, _ = load(name)
+    return crystal.get_references()[0].point_group
 
 
 def _contains(G, X, atol=1e-3):

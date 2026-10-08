@@ -1,19 +1,20 @@
 import numpy as np
-import crystalatte as cle
-from pathlib import Path
 
-DATA = Path(__file__).parent
+from crystalatte.core.sym_ops import SymOp, SymOpList
+from crystalatte.work import generate
+from crystalatte.work.dedup import cloud, context, equivalence, invariants
 
+from conftest import GENERATE_KW, load
 
 def test_get_references_z1_benzene():
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/benzene/benzene.cif")))
+    crystal, _ = load("benzene")
     refs = crystal.get_references()
     assert len(refs) == 1
     assert len(refs[0].symbols) == 12  # full benzene
 
 
 def test_get_references_z4_ammonia_p1():
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/ammonia/ammonia.cif")))
+    crystal, _ = load("ammonia")
     refs = crystal.get_references()
     assert len(refs) == 4                      # 4 independent NH3 in P1
     assert all(len(r.symbols) == 4 for r in refs)  # each NH3 = N + 3H
@@ -23,19 +24,17 @@ def test_get_references_z4_ammonia_p1():
 
 
 def test_get_reference_is_first_of_references():
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/benzene/benzene.cif")))
+    crystal, _ = load("benzene")
     assert np.allclose(crystal.get_reference().centroid_frac,
                        crystal.get_references()[0].centroid_frac)
 
 
 def test_symoplist_ref_indices_default_zeros():
-    from crystalatte.core.sym_ops import SymOp, SymOpList
     s = SymOpList([SymOp.identity(), SymOp.identity()], 1)
     assert list(s.ref_indices) == [0, 0]
 
 
 def test_symoplist_ref_indices_explicit():
-    from crystalatte.core.sym_ops import SymOp, SymOpList
     s = SymOpList([SymOp.identity(), SymOp.identity()], 1)
     s.ref_indices = np.array([0, 1])
     assert list(s.ref_indices) == [0, 1]
@@ -46,8 +45,7 @@ def test_symoplist_ref_indices_explicit():
 
 
 def test_bind_multi_reference_state():
-    from crystalatte.work.dedup import context
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/ammonia/ammonia.cif")))
+    crystal, _ = load("ammonia")
     refs = crystal.get_references()
     context.bind(crystal, refs)
     assert len(context.references) == 4
@@ -61,9 +59,7 @@ def test_bind_multi_reference_state():
 def test_fingerprint_uses_per_member_reference():
     # A 2-member cluster whose members come from different NH3 references must
     # reconstruct atoms from each base reference; fingerprint is well-defined.
-    from crystalatte.core.sym_ops import SymOp, SymOpList
-    from crystalatte.work.dedup import equivalence, context, invariants, matchers
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/ammonia/ammonia.cif")))
+    crystal, _ = load("ammonia")
     refs = crystal.get_references()
     context.bind(crystal, refs)
     g = SymOpList([SymOp.identity(), SymOp.identity()], 1)
@@ -77,9 +73,7 @@ def is_mono_reference(g):
 
 
 def test_cloud_congruence_matches_translated_and_mirror():
-    from crystalatte.core.sym_ops import SymOp, SymOpList
-    from crystalatte.work.dedup import equivalence, context, invariants, matchers
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/ammonia/ammonia.cif")))
+    crystal, _ = load("ammonia")
     refs = crystal.get_references()
     context.bind(crystal, refs)
     # Same physical pair described two ways: (ref0 @ I, ref1 @ I) vs itself.
@@ -93,9 +87,7 @@ def test_cloud_congruence_matches_translated_and_mirror():
 
 
 def test_are_equivalent_routes_mono_reference_to_integer(monkeypatch):
-    from crystalatte.core.sym_ops import SymOp, SymOpList
-    from crystalatte.work.dedup import equivalence, context, invariants, matchers
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/ammonia/ammonia.cif")))
+    crystal, _ = load("ammonia")
     refs = crystal.get_references()
     context.bind(crystal, refs)
     # two mono-reference (base 0) clusters -> must go through the integer matcher
@@ -110,7 +102,6 @@ def test_are_equivalent_routes_mono_reference_to_integer(monkeypatch):
 
 
 def _tr(dx12):
-    from crystalatte.core.sym_ops import SymOp
     return SymOp.identity().translate(np.array(dx12, dtype=np.int16))
 
 
@@ -127,16 +118,14 @@ AMMONIA_DIMERS_DEFAULT = 4
 
 
 def test_benzene_regression_unchanged():
-    from crystalatte.work import generate
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/benzene/benzene.cif")))
-    mers = generate.generate(crystal, 2, 5.0, use_origin=True, n_jobs=1)
+    crystal, _ = load("benzene")
+    mers = generate.generate(crystal, 2, 5.0, **GENERATE_KW)
     assert len(mers) == 3          # Z'=1 path unchanged
 
 
 def test_ammonia_physical_dimers():
-    from crystalatte.work import generate
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/ammonia/ammonia.cif")))
-    mers = generate.generate(crystal, 2, 5.0, use_origin=True, n_jobs=1)
+    crystal, _ = load("ammonia")
+    mers = generate.generate(crystal, 2, 5.0, **GENERATE_KW)
     # now includes the real ~3.94 A hetero-molecular contacts, not just self-translates
     assert len(mers) == AMMONIA_DIMERS   # captured from the run in Step 4
     assert AMMONIA_DIMERS > 2
@@ -148,8 +137,7 @@ def test_ammonia_physical_dimers_default_convention():
     # Anchor-relative behavior locked independently of use_origin: the
     # default closest-contact convention must also find more than the old
     # self-translate-only artifact count.
-    from crystalatte.work import generate
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/ammonia/ammonia.cif")))
+    crystal, _ = load("ammonia")
     mers = generate.generate(crystal, 2, 5.0, n_jobs=1)
     assert len(mers) == AMMONIA_DIMERS_DEFAULT
     assert AMMONIA_DIMERS_DEFAULT > 2

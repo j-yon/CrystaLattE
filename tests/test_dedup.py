@@ -1,15 +1,33 @@
-from pathlib import Path
+import concurrent.futures as cf
 
 import numpy as np
+import pytest
+import qcelemental as qcel
+from scipy.spatial.distance import pdist
 
-import crystalatte as cle
+from crystalatte import count_chemistry_classes
 from crystalatte.core.space_group import SpaceGroup
 from crystalatte.core.sym_ops import SymOp, SymOpList
-from crystalatte.work import generate
-from crystalatte.work.dedup import equivalence, context, invariants, matchers
+from crystalatte.work import generate, neighbors
+from crystalatte.work.dedup import cloud, equivalence, context, invariants, matchers
+from crystalatte.work.dedup.invariants import cluster_atoms_cart
+from crystalatte.work.validate import _chsev, _nre
 
-DATA = Path(__file__).parent
-BENZENE_DIMERS = 3  # captured on pre-Task-5 code: benzene, N=2, R=5.0, use_origin=True
+from conftest import GENERATE_KW, load
+
+#: benzene, N = 2, R = 5.0, anchor-relative convention. Captured before the
+#: integer matcher replaced the float one and unchanged by it, so it pins
+#: agreement between the two implementations rather than just the current one.
+BENZENE_DIMERS = 3
+#: pyrazole is Z' = 2 (Pna2_1, and detection does not collapse it), so it is the
+#: regression case for the cross-reference path. Captured while the point-cloud
+#: matcher still decided those pairs, so it pins agreement between the two.
+PYRAZOLE_DIMERS_R8 = 42
+#: fomepizole is Z' = 3 (Pca2_1), the only fixture with three independent
+#: molecules. `dedup/cloud.py` claims the integer matcher reproduces every merge
+#: the point-cloud matcher used to make on BOTH multi-reference crystals; until
+#: this constant existed, only the Z' = 2 half of that claim was tested.
+FOMEPIZOLE_DIMERS_R7 = 34
 
 
 def test_get_site_symmetry_inversion_center():
@@ -93,13 +111,7 @@ def test_same_multimer_int_inversion_needs_W():
 
 
 def test_bind_sets_site_symmetry_and_gate():
-    from pathlib import Path
-
-    import crystalatte as cle
-
-    DATA = Path(__file__).parent
-
-    crystal, monomer = next(cle.from_cif(str(DATA / "x23/benzene/benzene.cif")))
+    crystal, monomer = load("benzene")
     context.bind(crystal, crystal.get_references())
 
     # Benzene is on an inversion centre: identity + inversion in the dressing.
@@ -148,18 +160,15 @@ def test_are_equivalent_integer_path_matches_without_fallback(monkeypatch):
 
 
 def test_generate_dimer_count_regression():
-    crystal, monomer = next(cle.from_cif(str(DATA / "x23/benzene/benzene.cif")))
+    crystal, monomer = load("benzene")
     mers = generate.generate(crystal, 2, 5.0, use_origin=True, n_jobs=1)
     assert len(mers) == BENZENE_DIMERS   # from Step 5
 
 
 def test_int_inv_rejects_non_unimodular():
-    import pytest
     # det = 2 is not unimodular: no exact integer inverse exists.
     with pytest.raises(AssertionError):
         invariants.int_inv(np.array([[2, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.int64))
-
-
 
 
 # --- dressing translations (isometries about the centroid, not the origin) ---
@@ -174,7 +183,7 @@ def test_self_isometry_linear_part_is_not_a_symmetry():
     # itself unless the centroid happens to be a fixed point. Urea is a case
     # where it does not: the linear part displaces the molecule by several
     # Angstroms, which is exactly why the affine translation part is required.
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/urea/urea.cif")))
+    crystal, _ = load("urea")
     mon = crystal.get_references()[0]
     X, c = mon.cart_coords, mon.centroid_cart
 
@@ -190,7 +199,7 @@ def test_self_isometry_linear_part_is_not_a_symmetry():
 
 
 def test_bind_sets_dressing_translations():
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/urea/urea.cif")))
+    crystal, _ = load("urea")
     crystal = crystal.detect_symmetry(1e-3)
     context.bind(crystal, crystal.get_references())
 
@@ -218,7 +227,7 @@ def test_bind_sets_dressing_translations():
 def test_bind_dressing_translations_vanish_for_benzene():
     # Benzene's centroid is a fixed point of its point group, so every
     # dressing translation is zero and the pre-fix code was accidentally right.
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/benzene/benzene.cif")))
+    crystal, _ = load("benzene")
     context.bind(crystal, crystal.get_references())
     assert all(np.allclose(d, 0.0) for d in context.self_iso_tr_by_ref[0])
     assert all(not np.any(t) for t in context.W_tr_by_ref[0])
@@ -228,7 +237,7 @@ def test_same_multimer_int_needs_dressing_translation():
     # Two urea dimers related by a crystallographic isometry whose dressing
     # does not fix the centroid. They merge only when the dressing carries its
     # translation part; with W_tr omitted the guard is unsatisfiable.
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/urea/urea.cif")))
+    crystal, _ = load("urea")
     crystal = crystal.detect_symmetry(1e-3)
     refs = crystal.get_references()
     context.bind(crystal, refs)
@@ -246,10 +255,9 @@ def test_same_multimer_int_needs_dressing_translation():
 
 
 def test_urea_dimer_count_regression():
-    from crystalatte import count_chemistry_classes
 
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/urea/urea.cif")))
-    mers = generate.generate(crystal, 2, 10.0, use_origin=True, n_jobs=1, verbose=0)
+    crystal, _ = load("urea")
+    mers = generate.generate(crystal, 2, 10.0, **GENERATE_KW)
     assert len(mers) == UREA_DIMERS_R10
     # dedup completeness: no two survivors share a chemistry class
     n_classes, _ = count_chemistry_classes(mers, atol=1e-8)
@@ -264,7 +272,7 @@ def test_get_unique_sym_ops_ambiguous_wyckoff_position():
     # once (in SG 217: g/e/c all collapse onto [0,0,0] alongside the genuine
     # fixed position a). The multiplicity check must not fire on such an
     # ambiguous match -- the orbit size is fixed by orbit-stabilizer.
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/hexamine/hexamine.cif")))
+    crystal, _ = load("hexamine")
     crystal = crystal.detect_symmetry(1e-3)
     sg = crystal.space_group
     centroid = crystal.get_references()[0].centroid_frac
@@ -277,8 +285,8 @@ def test_get_unique_sym_ops_ambiguous_wyckoff_position():
 def test_generate_runs_on_high_symmetry_crystals():
     # These three crash outright if the Wyckoff multiplicity check misfires.
     for name in ("adamantane", "carbon_dioxide", "hexamine"):
-        crystal, _ = next(cle.from_cif(str(DATA / f"x23/{name}/{name}.cif")))
-        mers = generate.generate(crystal, 2, 6.0, use_origin=True, n_jobs=1, verbose=0)
+        crystal, _ = load(name)
+        mers = generate.generate(crystal, 2, 6.0, **GENERATE_KW)
         assert len(mers) > 0
 
 
@@ -289,8 +297,8 @@ def test_linear_monomer_dedup_is_complete():
     # congruence instead.
     from crystalatte import count_chemistry_classes
 
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/carbon_dioxide/carbon_dioxide.cif")))
-    mers = generate.generate(crystal, 2, 15.0, use_origin=True, n_jobs=1, verbose=0)
+    crystal, _ = load("carbon_dioxide")
+    mers = generate.generate(crystal, 2, 15.0, **GENERATE_KW)
     n_classes, _ = count_chemistry_classes(mers, atol=1e-8)
     assert n_classes == len(mers)
 
@@ -302,10 +310,9 @@ def test_special_position_tolerance_absorbs_cif_rounding():
     # a 1e-6 site-symmetry tolerance, so the 3-fold used to be missed, the
     # molecule was replicated 3x essentially on top of itself, and the
     # resulting "dimers" had coincident atoms.
-    from scipy.spatial.distance import pdist
 
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/ice/ice.cif")))
-    mers = generate.generate(crystal, 2, 8.0, use_origin=True, n_jobs=1, verbose=0)
+    crystal, _ = load("ice")
+    mers = generate.generate(crystal, 2, 8.0, **GENERATE_KW)
     assert mers
 
     worst = min(
@@ -316,10 +323,9 @@ def test_special_position_tolerance_absorbs_cif_rounding():
 
 
 def test_ice_dedup_is_complete():
-    from crystalatte import count_chemistry_classes
 
-    crystal, _ = next(cle.from_cif(str(DATA / "x23/ice/ice.cif")))
-    mers = generate.generate(crystal, 2, 8.0, use_origin=True, n_jobs=1, verbose=0)
+    crystal, _ = load("ice")
+    mers = generate.generate(crystal, 2, 8.0, **GENERATE_KW)
     n_classes, _ = count_chemistry_classes(mers, atol=1e-8)
     assert n_classes == len(mers)
 
