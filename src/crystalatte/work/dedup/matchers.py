@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import numpy as np
 from numpy.typing import NDArray
 
@@ -5,77 +7,57 @@ from ...core.sym_ops import SymOpList
 from . import context
 from .invariants import int_inv, relative_transforms
 
-def as_per_reference(groups, n_refs: int):
+def as_per_reference(
+    groups: list[NDArray] | list[list[NDArray]],
+    n_refs: int,
+) -> list[list[NDArray]]:
     """Normalize a dressing-group argument to one group per base reference.
 
-    Accepts either form:
-
-    - a single group (a sequence of ``(3, 3)`` matrices), meaning every
-      reference shares it. This is the right thing to pass for a mono-reference
-      cluster, and is what the callers did before ``Z' > 1`` was supported.
-    - a list of groups, already indexed by base reference.
-
-    The two are told apart by the first element: a lone group's first element is
-    a bare array (a ``(3, 3)`` linear part or a ``(3,)`` translation), whereas a
-    per-reference list's first element is itself a group, i.e. a sequence. Note
-    the test cannot be on dimensionality alone -- a per-reference list of
-    translation groups and a single group of linear parts are both "two deep".
+    Accepts either a single group (a sequence of ``(3, 3)`` linear parts or
+    ``(3,)`` translations) shared by every reference -- correct for a
+    mono-reference cluster -- or a list of groups already indexed by reference.
 
     :param groups: A single dressing group, or one per reference
     :param n_refs: How many references the caller needs covered
     :returns: A list of ``n_refs`` groups
     """
     first = groups[0]
+    # A lone group's first element is a bare array; a per-reference list's is
+    # itself a group. Dimensionality of ``groups`` alone can't tell them apart:
+    # a per-reference list of translation groups and a single group of linear
+    # parts are both two levels deep.
     if isinstance(first, np.ndarray) and first.ndim <= 2:
         return [groups] * n_refs
     return groups
 
 
-def anchored_match(LG, vG, LH, vH, S, D, refG, refH, eq, inv, verify_all=True) -> bool:
+def anchored_match(
+    LG: NDArray,
+    vG: NDArray,
+    LH: NDArray,
+    vH: NDArray,
+    S: list[list[NDArray]],
+    D: list[list[NDArray]],
+    refG: list[int],
+    refH: list[int],
+    eq: Callable[[NDArray, NDArray], bool],
+    inv: Callable[[NDArray], NDArray],
+    verify_all: bool = True,
+) -> bool:
     """Anchored relative-transform search: the shared core of both matchers.
 
-    Decides whether two clusters satisfy the matching condition of
-    ``docs/dedup_correctness.tex`` Thm 1, i.e. whether there is a permutation
-    ``pi`` and per-monomer dressings ``sigma_a = (s_a, d_a)`` drawn from
-    ``(S, D)`` with ``Delta^G_ab = sigma_a^-1 Delta^H_(pi a)(pi b) sigma_b``.
-    Splitting into linear and translation parts, that is
+    Decides the matching condition of ``docs/dedup_correctness.tex``
+    (``thm:match``): is there a reference-compatible permutation ``pi`` and
+    per-monomer dressings ``sigma_a = (s_a, d_a)``, drawn from the group of
+    member ``a``'s own base reference, such that for all ``a, b``
 
         L^G[a,b] = s_a^-1 @ L^H[pa,pb] @ s_b
         v^G[a,b] = s_a^-1 @ (L^H[pa,pb] @ d_b + v^H[pa,pb] - d_a)
 
-    The dressing is AFFINE because a self-isometry fixes the monomer's CENTROID,
-    not the coordinate origin: ``d = c - s @ c``. Dropping ``d`` is valid only
-    when every ``s`` fixes ``c``; otherwise it compares frame-origin offsets
-    that are not the same geometric quantity, and since every ``s`` is
-    orthogonal (norm-preserving) the guard becomes unsatisfiable at ANY
-    tolerance whenever the two ``v`` norms differ (the urea case).
-
-    Solved by anchoring node 0: enumerate its image ``h0 = pi(0)`` and dressing
-    index ``k0`` (only ``n * |S|`` choices). For each candidate image of ``b``
-    the dressing-free linear equation ``s_b = (L^H[h0, pi b])^-1 s0 L^G[0,b]``
-    is solved first — that fixes ``d_b``, which the translation guard then needs
-    — and finally all pairs are verified. ``O(|S| * n^3)`` instead of the
-    ``O(n! * |S|^n)`` brute force, exploring the identical condition, so
-    completeness is preserved (Thm 2).
-
-    The closing ``verify`` sweep is LOGICALLY REDUNDANT: the anchor row is tested
-    in full during the descent, and relative transforms compose
-    (``Delta_ab Delta_bc = Delta_ac``), so no other pair can fail — see
-    ``docs/dedup_correctness.tex`` Lemma ``lem:row``. Measured over six crystals
-    it rejected 0 of 3981 leaves. It is kept because in the tolerant Cartesian
-    instantiation that composition only holds up to accumulated tolerance, which
-    makes the sweep a cheap backstop; in the exact integer instantiation it
-    cannot fail at all.
-
-    Note ``(L^H[a,b])^-1`` is just ``L^H[b,a]``: since ``L[a,b] = R_a^-1 R_b``,
-    ``L[b,a] = L[a,b]^-1`` exactly, so no inverse is computed in the inner loop.
-
-    Each member is dressed by the group of ITS OWN base reference, and ``pi`` is
-    restricted to reference-compatible images (``refH[pi(a)] == refG[a]``). Both
-    are Definition~2's requirements rather than additions to it, so the theory
-    above is unchanged; the restriction on ``pi`` also prunes the search. Under
-    ``Z' = 1`` every member shares one group and the behaviour is identical to
-    the single-group form.
+    Runs in ``O(|S| * n^3)`` rather than the ``O(n! * |S|^n)`` brute force, and
+    explores exactly the same condition, so it stays complete (``thm:search``).
+    Under ``Z' = 1`` every member shares one group and this reduces to the
+    single-group form.
 
     :param LG: Cluster G's relative linear parts, shape ``(n, n, 3, 3)``
     :param vG: Cluster G's relative translations, shape ``(n, n, 3)``
@@ -90,13 +72,13 @@ def anchored_match(LG, vG, LH, vH, S, D, refG, refH, eq, inv, verify_all=True) -
         Cartesian one)
     :param inv: Inverse of a dressing linear part (transpose for orthogonal
         Cartesian matrices, adjugate for integer lattice-basis ones)
-    :param verify_all: Re-check all ``n^2`` pairs before accepting. Provably
-        unnecessary in exact arithmetic (see the note on the closing sweep
-        below), so the integer instantiation passes False; the tolerant
-        Cartesian one keeps it as a numerical backstop.
+    :param verify_all: Re-check all ``n^2`` pairs before accepting. Redundant in
+        exact arithmetic; kept as a backstop where ``eq`` is tolerant.
     :returns: True iff the clusters match under some ``(pi, dressings)``
     """
     n = len(LG)
+    # Dressing inverses are reused across every anchor and branch, and the
+    # integer-basis adjugate is not free, so compute each one once.
     inv_cache: dict[tuple[int, int], NDArray] = {}
 
     def s_inv(ref: int, k: int) -> NDArray:
@@ -111,6 +93,12 @@ def anchored_match(LG, vG, LH, vH, S, D, refG, refH, eq, inv, verify_all=True) -
                 return k
         return None
 
+    # The descent only tests the anchor row (0, b). Relative transforms compose
+    # (Delta_ab Delta_bc = Delta_ac), so every other pair follows from that row
+    # (lem:row) and this sweep cannot reject in exact arithmetic (rem:verify;
+    # 0 rejections in 3981 leaves over six crystals). Under a tolerant ``eq``
+    # the composition holds only up to accumulated error, which is what this
+    # re-check guards against.
     def verify(pi: list[int], ks: list[int]) -> bool:
         for a in range(n):
             ra = refG[a]
@@ -124,8 +112,13 @@ def anchored_match(LG, vG, LH, vH, S, D, refG, refH, eq, inv, verify_all=True) -
                     return False
         return True
 
+    # Anchor member 0: enumerate its image h0 = pi(0) and dressing k0, only
+    # n * |S| choices. Every other member's dressing is then solved for rather
+    # than enumerated.
     r0 = refG[0]
     for h0 in range(n):
+        # pi must map each member onto one of the same base reference
+        # (def:same). Required for correctness; it also prunes the search.
         if refH[h0] != r0:
             continue
         for k0 in range(len(S[r0])):
@@ -141,11 +134,21 @@ def anchored_match(LG, vG, LH, vH, S, D, refG, refH, eq, inv, verify_all=True) -
                 for h in range(n):
                     if used[h] or refH[h] != rb:
                         continue
-                    # Solve the dressing-free linear equation first: it fixes
-                    # s_b, hence d_b, which the translation guard then needs.
+                    # With s_0 fixed, the linear equation for pair (0, b) has
+                    # the unique solution s_b = (L^H[h0, h])^-1 @ s_0 @ L^G[0, b];
+                    # the candidate survives only if that lies in b's group.
+                    # (L^H[h0, h])^-1 is just L^H[h, h0]: L[a,b] = R_a^-1 R_b,
+                    # so the swapped pair is the exact inverse, no solve needed.
                     kb = index_in_S(rb, LH[h, h0] @ S[r0][k0] @ LG[0, b])
                     if kb is None:
                         continue
+                    # Solving s_b first is what makes this check possible: it
+                    # fixes d_b. The dressing is affine, d = c - s @ c, because
+                    # a self-isometry fixes the monomer's centroid, not the
+                    # frame origin. Dropping d compares origin offsets that are
+                    # not the same geometric quantity, and since s preserves
+                    # norms the check then fails at ANY tolerance whenever the
+                    # two v norms differ (urea; rem:centering).
                     if not eq(
                         vG[0, b],
                         s_inv(r0, k0)
@@ -166,35 +169,27 @@ def anchored_match(LG, vG, LH, vH, S, D, refG, refH, eq, inv, verify_all=True) -
 def same_multimer_int(
     g_N: SymOpList,
     h_N: SymOpList,
-    W: list[NDArray],
-    W_tr: list[NDArray] | None = None,
+    W: list[list[NDArray]] | list[NDArray],
+    W_tr: list[list[NDArray]] | list[NDArray] | None = None,
 ) -> bool:
     """Return True iff ``g_N`` and ``h_N`` are the same multimer under a
     crystallographic isometry, working entirely in the exact integer lattice
     basis and modding out the site-symmetry dressing ``(W, W_tr)``.
 
-    Exact-integer form of :func:`anchored_match` — roundoff-free and complete
-    for every same-orbit (multiplicity-required) merge, including
-    centrosymmetric site-inversion cases. Non-crystallographic congruences
-    (dressing outside ``W``) are left to the float fallback in
-    :func:`are_equivalent`.
-
-    Handles cross-reference clusters (``Z' > 1``: co-crystals, hydrates, and
-    single-species crystals with several independent molecules). Each member is
-    dressed by its own reference's site symmetry and ``pi`` is held
-    reference-compatible, which is what Definition 2 asks for.
+    Exact-integer form of :func:`anchored_match`: roundoff-free and complete
+    for every same-orbit merge, including centrosymmetric site-inversion cases.
+    Congruences whose dressing lies outside ``W`` (non-crystallographic) are not
+    found here; :func:`are_equivalent` leaves them to the float fallback.
 
     :param g_N: The first cluster
     :param h_N: The second cluster
     :param W: Site-symmetry linear parts indexed by base reference, i.e.
         ``context.W_lin_by_ref``. A single group is also accepted and applies to
-        every member, which is the right thing only when the cluster is
-        mono-reference (see :func:`as_per_reference`). Required either way:
-        there is no safe default, since defaulting to reference 0 would silently
-        mod out the wrong site symmetry for every other reference.
+        every member, which is only right for a mono-reference cluster (see
+        :func:`as_per_reference`). Required: defaulting to reference 0 would
+        silently mod out the wrong site symmetry for every other reference.
     :param W_tr: The matching dressing translations ``context.W_tr_by_ref``, in
-        twelfths, index-aligned with ``W``. Defaults to zeros, which is correct
-        only when the centroid is a fixed point of every element of ``W``.
+        twelfths, index-aligned with ``W``. Defaults to zeros.
     :returns: True iff the clusters are the same multimer via a crystallographic
         isometry
     """
@@ -202,20 +197,20 @@ def same_multimer_int(
         return False
     refG = g_N.ref_indices.tolist()
     refH = h_N.ref_indices.tolist()
-    # Cheap necessary condition: a reference-compatible permutation exists only
-    # if the two clusters draw on the same references the same number of times.
+    # A reference-compatible pi exists only if both clusters draw on each
+    # reference the same number of times; reject before building transforms.
     if sorted(refG) != sorted(refH):
         return False
     LG, vG = relative_transforms(g_N, integer=True)
     LH, vH = relative_transforms(h_N, integer=True)
     n_refs = max(max(refG), max(refH)) + 1
     S = as_per_reference(W, n_refs)
+    # Zero translations are correct only when every centroid is a fixed point
+    # of every element of its W; otherwise pass W_tr (see rem:centering).
     D = ([[np.zeros(3, dtype=np.int64)] * len(grp) for grp in S]
          if W_tr is None else as_per_reference(W_tr, n_refs))
-    # verify_all=False: in exact integer arithmetic the cocycle identity
-    # Delta_ab Delta_bc = Delta_ac holds exactly, so the anchor row implies every
-    # other pair (Lemma lem:row) and the closing n^2 sweep cannot reject. It was
-    # measured to reject 0 of 3981 leaves while costing ~10% of runtime.
+    # Exact integers: the closing sweep provably cannot reject (lem:row) and
+    # cost ~10% of runtime, so skip it.
     return anchored_match(LG, vG, LH, vH, S, D, refG, refH, np.array_equal, int_inv, verify_all=False)
 
 
@@ -226,19 +221,17 @@ def same_multimer(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-3) -> bool:
     Cartesian form of :func:`anchored_match`, dressed with the FULL molecular
     self-isometry group (:attr:`~crystalatte.core.multimer.Monomer.point_group`)
     rather than just the site symmetry, so it also merges non-crystallographic
-    congruences and — being blind to ``det`` — mirror-image enantiomers.
+    congruences and, being blind to ``det``, mirror-image enantiomers.
 
-    Callers (:func:`are_equivalent`) gate this behind the cheap
-    :func:`fingerprints_match` pre-filter, so it only ever runs on clusters
-    that already share a distance fingerprint (true duplicates plus rare
-    homometric collisions).
+    Expensive relative to :func:`fingerprints_match`; :func:`are_equivalent`
+    only calls this on clusters that already share a distance fingerprint.
 
     :param g_N: The first cluster
     :param h_N: The second cluster
-    :param atol: Absolute tolerance in Angstroms. It can be tight when the
-        relevant self-isometries are exact (identity / crystallographic), and
-        must be looser when the merge relies on an approximate molecular
-        operation recovered from distorted CIF coordinates.
+    :param atol: Absolute tolerance in Angstroms. Can be tight when the
+        relevant self-isometries are exact (identity / crystallographic); must
+        be looser when a merge relies on an approximate molecular operation
+        recovered from distorted CIF coordinates.
     :returns: True iff the two clusters are the same multimer
     """
     if len(g_N) != len(h_N):
@@ -249,9 +242,9 @@ def same_multimer(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-3) -> bool:
         return False
     LG, vG = relative_transforms(g_N, integer=False)
     LH, vH = relative_transforms(h_N, integer=False)
-    # Per-member point groups. Reading a single group off `base_reference` was
-    # correct only for mono-reference clusters, and silently dressed every
-    # member with the FIRST member's point group otherwise.
+    # Pass groups for every reference, not one read off the cluster's
+    # ``base_reference``: each member must be dressed by its OWN reference's
+    # point group, or Z' > 1 clusters get the first member's group throughout.
     return anchored_match(
         LG, vG, LH, vH,
         context.self_iso_by_ref,
