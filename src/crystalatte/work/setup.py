@@ -30,5 +30,5 @@ def write_inputs(
         order_dir = output_dir / f"{_order_name(N)}s"
         order_dir.mkdir(parents=True, exist_ok=True)
         for idx, multimer in enumerate(group, start=1):
-            path = order_dir / f"{_order_name(N)}_{idx:03d}.inp"
+            path = order_dir / f"{_order_name(N)}_{idx:03d}.in"
             writer.write(path, multimer.monomers, config)
