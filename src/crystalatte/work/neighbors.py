@@ -19,6 +19,8 @@ from ..core.sym_ops import SymOp, SymOpList
 from .dedup import context
 from .dedup.equivalence import deduplicate_bucket
 from .dedup.context import init_worker
+# below this much pairwise work, deduplicate serially even when ``n_jobs > 1`` to avoid overhead
+PARALLEL_MIN_PAIR_WORK: Final[int] = 50_000
 
 def _distance_mode(kwargs: dict) -> str:
     """Resolve the distance convention once, rather than per candidate.
@@ -148,6 +150,7 @@ def generate_neighbors(
             sop._bucket_key = hash(dfp.tobytes())
             candidates.append(sop)
 
+    # group candidates by bucket key for parallel deduplication
     buckets: dict[int, list[SymOpList]] = defaultdict(list)
     for g_t in candidates:
         buckets[g_t._bucket_key].append(g_t)
@@ -155,31 +158,52 @@ def generate_neighbors(
     unique: list[SymOpList] = []
     duplicate: list[SymOpList] = []
 
-    if "n_jobs" in kwargs and kwargs["n_jobs"] > 1:
+    # predict pair work by summing number of pairwise comparisons in each bucket
+    pair_work = sum(len(b) * len(b) for b in buckets.values())
+
+    # parallelize if the user requested it and the work is large enough to amortize the overhead
+    if kwargs.get("n_jobs", 1) > 1 and pair_work >= PARALLEL_MIN_PAIR_WORK:
         from concurrent.futures import ProcessPoolExecutor
+        from concurrent.futures.process import BrokenProcessPool
         from multiprocessing import cpu_count
 
+        # limit n_jobs to the number of buckets and available CPUs
         n_jobs = max(1, min(kwargs["n_jobs"], len(buckets), cpu_count() - 1))
-        with ProcessPoolExecutor(
-            max_workers=n_jobs,
-            initializer=init_worker,
-            initargs=(crystal, monomers, site_atol),
-        ) as ex:
-            results = list(
-                tqdm(
-                    ex.map(deduplicate_bucket, buckets.values()),
-                    total=len(buckets),
-                    desc="Processing buckets",
-                    leave=False,
-                    disable=not verbose,
-                )
-            )
 
+        # chunk buckets to amortize pickling overhead
+        chunksize = max(1, len(buckets) // (n_jobs * 8))
+        try:
+            with ProcessPoolExecutor(
+                max_workers=n_jobs,
+                initializer=init_worker,
+                initargs=(crystal, monomers, site_atol, full_congruence),
+            ) as ex:
+                # wrap the parallel map in tqdm for progress reporting
+                results = list(
+                    tqdm(
+                        ex.map(
+                            deduplicate_bucket, buckets.values(), chunksize=chunksize
+                        ),
+                        total=len(buckets),
+                        desc="Processing buckets",
+                        leave=False,
+                        disable=not verbose,
+                    )
+                )
+        except BrokenProcessPool as exc:
+            raise RuntimeError(
+                "the worker pool died during deduplication. The usual cause on macOS and Windows is calling "
+                "generate(..., n_jobs > 1) from a script whose top level is not protected: wrap the call in "
+                '`if __name__ == "__main__":`'
+            ) from exc
+
+        # combine results from all workers
         for local_unique, local_dup in results:
             unique.extend(local_unique)
             duplicate.extend(local_dup)
 
     else:
+        # serial deduplication wrapped in tqdm for progress reporting
         for bucket in tqdm(
             buckets.values(),
             total=len(buckets),
