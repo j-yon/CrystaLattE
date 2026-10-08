@@ -294,82 +294,97 @@ class Crystal:
         :param symprec: spglib symmetry tolerance 
         :returns: A higher-symmetry Crystal, or ``self``
         """
+        import warnings
+
+        import spglib
+
+        lattice = self._frac_to_cart.T
+
+        # Expand ASU to full cell using declared symmetry ops
+        frac, nums = [], []
+        for op in self._space_group.sym_ops:
+            for pos, sym in zip(self._asu.positions, self._asu.atoms):
+                frac.append(op.apply(np.asarray(pos, dtype=float)) % 1.0)
+                nums.append(qcel.periodictable.to_Z(sym))
+        frac = np.array(frac)
+        nums = np.array(nums)
+
+        # Dedup coincident atoms (mod 1)
+        keep = []
+        for i in range(len(frac)):
+            if not keep:
+                keep.append(i)
+                continue
+            d = (frac[keep] - frac[i] + 0.5) % 1.0 - 0.5  # periodic distance
+            if np.all(np.linalg.norm(d, axis=1) >= 1e-3):
+                keep.append(i)
+        positions = frac[keep]
+        numbers = nums[keep].tolist()
+
+        # Call spglib to detect symmetry, ignoring warnings (spglib can be noisy)
+        # spglib signals failure either by raising or by returning None; both fall back
         try:
-            import spglib
-            import warnings
-
-            lattice = self._frac_to_cart.T
-
-            # Expand ASU to full cell using declared symmetry ops
-            frac, nums = [], []
-            for op in self._space_group.sym_ops:
-                for pos, sym in zip(self._asu.positions, self._asu.atoms):
-                    frac.append(op.apply(np.asarray(pos, dtype=float)) % 1.0)
-                    nums.append(qcel.periodictable.to_Z(sym))
-            frac = np.array(frac)
-            nums = np.array(nums)
-
-            # Dedup coincident atoms (mod 1)
-            keep = []
-            for i in range(len(frac)):
-                if not keep:
-                    keep.append(i)
-                    continue
-                d = (frac[keep] - frac[i] + 0.5) % 1.0 - 0.5  # periodic distance
-                if np.all(np.linalg.norm(d, axis=1) >= 1e-3):
-                    keep.append(i)
-            positions = frac[keep]
-            numbers = nums[keep].tolist()
-
-            # Silence spglib's DeprecationWarnings during detection
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 sym = spglib.get_symmetry((lattice, positions, numbers), symprec=symprec)
-
-            if sym is None:
-                return self
-
-            detected = [
-                SymOp.from_components(
-                    np.asarray(r, dtype=np.int16),
-                    np.round(np.asarray(t) * 12).astype(np.int16),
-                )
-                for r, t in zip(sym["rotations"], sym["translations"])
-            ]
-            declared = self._space_group.sym_ops
-            if len(detected) <= len(declared):
-                return self
-
-            # Check that each declared op appears in detected (full op match: rot + tr mod 12)
-            def _same_op(a, b):
-                return np.array_equal(a.rot, b.rot) and np.array_equal(
-                    (a.tr - b.tr) % 12, np.zeros(3, dtype=a.tr.dtype)
-                )
-            if not all(any(_same_op(op, d) for d in detected) for op in declared):
-                return self
-
-            # Isolate metadata call with its own try/except
-            number = None
-            try:
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    ds = spglib.get_symmetry_dataset((lattice, positions, numbers), symprec=symprec)
-                number = getattr(ds, "number", None) if ds is not None else None
-            except Exception:
-                number = None
-
-            new_sg = SpaceGroup.from_sym_ops(detected, number=number)
-            return Crystal(self._vectors, self._angles, new_sg, self._asu)
-        except Exception as e:
-            import warnings
-            warnings.warn(f"symmetry detection failed, using declared symmetry: {e}", RuntimeWarning)
+        except Exception as exc:
+            warnings.warn(
+                f"symmetry detection failed, using declared symmetry: {exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             return self
 
-    def __repr__(self) -> str:
-        return (
-            f"Crystal(vectors={self._vectors}, angles={self._angles}, "
-            f"space_group={self._space_group})"
-        )
+        # If no symmetry is detected, or if the detected symmetry is not strictly higher than the declared symmetry, return with declared symmetry
+        if sym is None:
+            warnings.warn(
+                "symmetry detection failed, using declared symmetry",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return self
+
+        detected = [
+            SymOp.from_components(
+                np.asarray(r, dtype=np.int16),
+                np.round(np.asarray(t) * 12).astype(np.int16),
+            )
+            for r, t in zip(sym["rotations"], sym["translations"])
+        ]
+        declared = self._space_group.sym_ops
+        if len(detected) <= len(declared):
+            if len(detected) < len(declared):
+                warnings.warn(
+                    "symmetry detection found lower symmetry than declared, "
+                    "still using declared symmetry",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            return self
+
+        # Check that each declared op appears in detected (full op match: rot + tr mod 12)
+        def _same_op(a, b):
+            return np.array_equal(a.rot, b.rot) and np.array_equal(
+                (a.tr - b.tr) % 12, np.zeros(3, dtype=a.tr.dtype)
+            )
+
+        if not all(any(_same_op(op, d) for d in detected) for op in declared):
+            return self
+
+        # Isolate metadata and create new Crystal with detected symmetry; the number is
+        # reporting-only, so a failure here must not discard the detected operations
+        number = None
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                ds = spglib.get_symmetry_dataset(
+                    (lattice, positions, numbers), symprec=symprec
+                )
+            number = getattr(ds, "number", None) if ds is not None else None
+        except Exception:
+            number = None
+        new_sg = SpaceGroup.from_sym_ops(detected, number=number)
+        return Crystal(self._vectors, self._angles, new_sg, self._asu)
 
 
 if __name__ == "__main__":
