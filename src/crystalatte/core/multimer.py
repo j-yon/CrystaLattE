@@ -368,6 +368,22 @@ class Monomer:
         """Return the symmetry operation that generates this monomer from the reference monomer, if applicable."""
         return self._symop
 
+    @cached_property
+    def point_group(self) -> PointGroup:
+        """The monomer's point group detected from only its coordinates
+
+        :returns: detected point group
+        """
+        return self.point_group_seeded(())
+
+    def point_group_seeded(self, seed: Sequence[NDArray]) -> PointGroup:
+        """The monomer's point group detected from its coordinates and known "seed" symmetries
+
+        :param seed: Cartesian ``(3, 3)`` operations about the centroid that the caller knows to be exact symmetries
+        :returns: detected point group
+        """
+        return PointGroup.detect(self._symbols, self._cart_coords, seed=seed)
+
     def to_molecule(self) -> qcel.models.Molecule:
         """Convert to QCElemental Molecule object."""
         cart_bohr = self._cart_coords / qcel.constants.bohr2angstroms
