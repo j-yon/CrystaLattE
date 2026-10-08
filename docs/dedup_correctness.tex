@@ -4,6 +4,7 @@
 \usepackage{amsmath, amssymb, amsthm}
 \usepackage{mathtools}
 \usepackage{enumitem}
+\usepackage{booktabs}
 \usepackage{hyperref}
 
 \newtheorem{theorem}{Theorem}
@@ -20,371 +21,778 @@
 \newcommand{\Sym}{\mathrm{Sym}}
 \newcommand{\Grp}{\mathcal{G}}
 \newcommand{\Sgrp}{\mathcal{S}}
+\newcommand{\Dgrp}{\Sigma}
 \newcommand{\id}{\mathrm{id}}
 \newcommand{\inv}{^{-1}}
 \DeclareMathOperator{\Stab}{Stab}
 
-\title{Correctness and Necessity of the Relative--Transform\\
-Multimer--Deduplication Algorithm}
-\author{CrystaLatt\'e \texttt{generate.py} --- design note}
+\title{Completeness of the Relative--Transform\\ Multimer--Matching Algorithm}
+\author{CrystaLatt\'e \texttt{crystalatte.work.dedup} --- design note}
 \date{\today}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-We formalize the equivalence relation that CrystaLatt\'e's $N$-mer deduplication
-is meant to compute, prove that the relative--transform matching condition
-implemented in \texttt{\_same\_multimer} is a sound and complete decision
-procedure for it, prove that the anchored backtracking search explores exactly
-the solution set of that condition, and prove two necessity results: the
-geometric branch (with its internal--symmetry dressing) cannot be replaced by
-the cheap exact--matrix branch, nor by pruning the monomer's site symmetry at
-generation time. The document is self--contained.
+This note proves that CrystaLatt\'e's $N$-mer matcher is a sound and complete
+decision procedure for the equivalence it targets. The chain is: the intended
+relation $\sim$ is an equivalence relation (Proposition~\ref{prop:equiv}); it is
+equivalent to a condition $(\dagger)$ on isometry--invariant relative transforms,
+in which the global map cancels (Theorem~\ref{thm:match}); a solution of
+$(\dagger)$ is pinned by its behaviour relative to a single anchor node
+(Lemma~\ref{lem:row}); and the anchored backtracking search in
+\texttt{anchored\_match} explores exactly the solution set of $(\dagger)$, at
+$O(\lvert\Dgrp\rvert n^3)$ rather than $O(n!\,\lvert\Dgrp\rvert^{\,n})$
+(Theorem~\ref{thm:search}). Corollary~\ref{cor:threeway} compresses the chain into
+one statement: $n$ equations decide a question posed over all of $\Eth$.
+Section~\ref{sec:example} then runs the entire apparatus, in exact integer
+arithmetic, on one real pair of urea dimers --- including what goes wrong if the
+dressing's affine part is dropped. Section~\ref{sec:caveats} states, without
+softening, the eight ways the shipped implementation falls short of the
+theorem --- including one that is measured, not hypothetical.
 \end{abstract}
 
 \section{Setup}
 
-Let $\Eth=\Oth\ltimes\mathbb{R}^3$ be the Euclidean group, an element written
-$T=(R,t)$ acting by $T\cdot x=Rx+t$, with the group law
-$(R_1,t_1)(R_2,t_2)=(R_1R_2,\,R_1t_2+t_1)$ and
-$(R,t)\inv=(R\inv,-R\inv t)$. A \emph{space group} is a discrete
-$\Grp\subset\Eth$.
+Let $\Eth=\Oth\ltimes\mathbb{R}^3$, an element $T=(R,t)$ acting by $T\cdot x=Rx+t$,
+with $(R_1,t_1)(R_2,t_2)=(R_1R_2,\,R_1t_2+t_1)$ and $(R,t)\inv=(R\inv,-R\inv t)$.
+A \emph{space group} is a discrete $\Grp\subset\Eth$.
 
-\paragraph{Reference monomer.}
-A labeled point set $x_1,\dots,x_m\in\mathbb{R}^3$ with atomic numbers
-$Z_1,\dots,Z_m$, translated so that $\sum_i x_i=0$ (centroid at the origin).
+\paragraph{References.}
+The asymmetric unit supplies monomers $\mathcal{M}_0,\dots,\mathcal{M}_{r-1}$
+($r=Z'$). Reference $i$ is a labeled point set $x^{(i)}_1,\dots,x^{(i)}_{m_i}$
+with atomic numbers $Z^{(i)}_k$ and centroid $c_i$. \textbf{Coordinates are not
+re--centred}; they are the raw \texttt{Monomer.cart\_coords}. Every statement
+below therefore carries $c_i$ explicitly.
 
-\paragraph{Molecular self--isometry group.}
-\begin{equation}
-  \Sgrp \;=\; \bigl\{\, Q\in\Oth : \exists\,\sigma\in\Sym(m)\ \text{with}\
-  Qx_i=x_{\sigma(i)}\ \text{and}\ Z_{\sigma(i)}=Z_i\ \forall i \,\bigr\}.
+\paragraph{Molecular self--isometries.}
+\begin{equation}\label{eq:S}
+  \Sgrp_i=\bigl\{s\in\Oth:\exists\,\sigma\in\Sym(m_i),\
+  s(x^{(i)}_k-c_i)=x^{(i)}_{\sigma(k)}-c_i,\ Z^{(i)}_{\sigma(k)}=Z^{(i)}_k\ \forall k\bigr\},
 \end{equation}
-$\Sgrp$ is a finite subgroup of $\Oth$ (the molecular point group of the
-labeled cloud); $I\in\Sgrp$. Because the centroid is at the origin, every
-$Q\in\Sgrp$ fixes it, so elements of $\Sgrp$ carry no translation. This is the
-object \texttt{Monomer.self\_isometries} recovers, and the module global
-\texttt{\_self\_iso}.
+the molecular point group about the centroid (\texttt{Monomer.self\_isometries}).
+
+\paragraph{Dressings are affine.}
+An element of $\Sgrp_i$ is an isometry about $c_i$, so on \emph{raw} coordinates
+it is
+\begin{equation}\label{eq:dressing}
+  \sigma_s:x\mapsto s\,x+d_s,\qquad d_s=c_i-s\,c_i .
+\end{equation}
+Write $\Dgrp_i=\{(s,d_s):s\in\Sgrp_i\}$.
+
+\begin{lemma}[$\Dgrp_i\cong\Sgrp_i$]\label{lem:dress}
+If $\Sgrp_i\le\Oth$ then $\Dgrp_i\le\Eth$ and $s\mapsto(s,d_s)$ is an
+isomorphism; each element is determined by its linear part.
+\end{lemma}
+
+\begin{proof}
+$(s_1,d_{s_1})(s_2,d_{s_2})=(s_1s_2,\ s_1d_{s_2}+d_{s_1})
+=(s_1s_2,\ s_1c_i-s_1s_2c_i+c_i-s_1c_i)=(s_1s_2,\ d_{s_1s_2})$, and
+$(s,d_s)\inv=(s\inv,-s\inv d_s)=(s\inv,d_{s\inv})$.
+\end{proof}
+
+Lemma~\ref{lem:dress} is why the implementation searches only linear parts and
+reads $d$ from an index--aligned array; it presumes the stored linear parts are
+pairwise distinct (Caveat~\ref{cav:distinct}).
+
+\paragraph{Site symmetry.}
+$W_i=\Stab_\Grp(c_i)$ modulo the lattice. \texttt{context.bind} stores its
+distinct linear parts and, for each, the translation making it fix $c_i$
+\emph{exactly},
+$\widetilde{t}_w=t_w-\operatorname{round}(w\,c_i+t_w-c_i)$, in integer twelfths;
+by construction $\widetilde{t}_w=c_i-w\,c_i$, matching \eqref{eq:dressing}. In
+exact geometry a site operation maps $\mathcal{M}_i$ onto itself, so
+$W^{\mathrm{lin}}_i\le\Sgrp_i$. The implementation formerly \emph{violated} this
+containment; it now holds by construction, because $\Sgrp$ is seeded with
+$W^{\mathrm{lin}}$ rather than being asked to rediscover it
+(Caveat~\ref{cav:detect}).
 
 \paragraph{Clusters.}
-A \emph{placement} is $T=(R,t)$ with $R\in\Oth$ (space--group operations are
-isometries). A \emph{cluster} (an $N$-mer, $n=N$) is an ordered tuple
-$G=(T^G_0,\dots,T^G_{n-1})$ of placements. Its physical realization is the
-labeled multiset
-$\rho(G)=\{(Z_i,\,T^G_a x_i):0\le a<n,\ 1\le i\le m\}$. In the code the
-placements come from \texttt{SymOpList}: $R$ is a crystal rotation pushed to
-Cartesian ($R=A\,\mathrm{rot}\,A\inv$) and $t=A\,(\mathrm{tr}/12)$.
+A candidate $N$-mer is a tuple of placements $T^G_0,\dots,T^G_{n-1}\in\Grp$ with
+base--reference indices $\mathrm{ref}_G(a)$. Generation sets $T^G_0=\id$. A
+placement lives in two bases: the exact lattice basis
+$(\mathrm{rot},\mathrm{tr}/12)$ with $\mathrm{rot}\in\mathrm{GL}_3(\mathbb{Z})$
+unimodular; and Cartesian, $R=A\,\mathrm{rot}\,A\inv$ (orthogonal),
+$t=A(\mathrm{tr}/12)$.
 
 \begin{definition}[Same multimer]\label{def:same}
-Clusters $G,H$ of equal size $n$ are \emph{the same multimer}, written
-$G\sim H$, iff there exist a global isometry $M\in\Eth$, a permutation
-$\pi\in\Sym(n)$, and elements $s_0,\dots,s_{n-1}\in\Sgrp$ such that
+$G\sim H$ iff there are $M\in\Eth$, a permutation $\pi$ with
+$\mathrm{ref}_H(\pi(a))=\mathrm{ref}_G(a)$, and
+$\sigma_a\in\Dgrp_{\mathrm{ref}_G(a)}$ such that
 \begin{equation}\label{eq:star}
-  M\,T^G_a \;=\; T^H_{\pi(a)}\,s_a \qquad (0\le a<n). \tag{$\star$}
+  M\,T^G_a=T^H_{\pi(a)}\,\sigma_a\qquad(0\le a<n). \tag{$\star$}
 \end{equation}
 \end{definition}
 
-Equation \eqref{eq:star} says the single rigid motion $M$ carries monomer $a$ of
-$G$ onto monomer $\pi(a)$ of $H$, up to an internal relabeling $s_a$ that leaves
-that monomer setwise fixed. Since $M$ ranges over all of $\Eth$ (including
-$\det M=-1$), $\sim$ merges rotations, lattice translates, and mirror images
-alike. Physical justification for adopting this relation is
-Proposition~\ref{prop:energy}.
+One rigid motion carries monomer $a$ of $G$ onto monomer $\pi(a)$ of $H$ up to an
+internal relabeling that leaves that monomer setwise fixed. $M$ ranges over all
+of $\Eth$, so $\sim$ merges rotations, lattice translates and mirror images
+alike.
+
+\paragraph{Reading $(\star)$.} Three quantifiers, each doing one job.
+\emph{$M$} is the single rigid motion that must take the whole of $G$ onto the
+whole of $H$ --- one map for all monomers, not one per monomer; that is what makes
+$\sim$ a statement about the cluster rather than about its parts.
+\emph{$\pi$} says we do not care which monomer is written first: the two clusters
+are lists, the multimer is a set.
+\emph{$\sigma_a$} is the subtle one. Even when $M$ carries monomer $a$ of $G$ onto
+monomer $\pi(a)$ of $H$ as a \emph{set of atoms}, the two placements
+$M\,T^G_a$ and $T^H_{\pi(a)}$ need not be the same element of $\Eth$: they can
+differ by a symmetry of the monomer itself, which moves no atom. $\sigma_a$
+absorbs exactly that difference. Without it the relation would compare bookkeeping
+(which placement operation was recorded) instead of geometry (where the atoms
+are), and would split classes that are physically identical.
+
+\begin{proposition}[Merging on $\sim$ is safe for the lattice sum]\label{prop:energy}
+If $G\sim H$ then the two clusters have congruent $Z$--labeled nuclear clouds, and
+hence equal Born--Oppenheimer interaction energy.
+\end{proposition}
+
+\begin{proof}
+Let $X_i$ denote reference $i$'s labeled atom set. Monomer $a$ of $G$ is
+$T^G_a X_{\mathrm{ref}_G(a)}$. By \eqref{eq:S} each $\sigma_a\in\Dgrp_i$ permutes
+$X_i$, so $\sigma_a X_i = X_i$ \emph{as a labeled set}. Applying $M$ to monomer
+$a$ of $G$ and using \eqref{eq:star},
+\[
+  M\,T^G_a X_{\mathrm{ref}_G(a)}
+  = T^H_{\pi(a)}\,\sigma_a X_{\mathrm{ref}_G(a)}
+  = T^H_{\pi(a)} X_{\mathrm{ref}_H(\pi(a))},
+\]
+which is monomer $\pi(a)$ of $H$; reference--compatibility is what lets the index
+be rewritten. Since $\pi$ is a bijection, the single isometry $M$ carries the
+union of $G$'s monomers onto the union of $H$'s, matching atomic numbers. The
+interaction energy is a function of the labeled nuclear cloud alone and isometries
+are energy--preserving.
+\end{proof}
+
+This is the bridge from ``the algorithm is complete for $\sim$'' to ``discarding
+one of two $\sim$--equivalent clusters and transferring its multiplicity leaves
+$\sum_i (m_i/N)E_i$ unchanged''. Note it also explains why the coarser
+cloud--congruence relation of Caveat~\ref{cav:cloud} is still sound: the
+conclusion of Proposition~\ref{prop:energy}, not its hypothesis, is what the
+lattice sum needs.
+
+\begin{proposition}[$\sim$ is an equivalence relation]\label{prop:equiv}
+If every $\Dgrp_i$ is a group, $\sim$ is reflexive, symmetric and transitive.
+\end{proposition}
+
+\begin{proof}
+Reflexive: $M=\id$, $\pi=\id$, $\sigma_a=\id$. Symmetric: \eqref{eq:star} gives
+$M\inv T^H_{\pi(a)}=T^G_a\sigma_a\inv$; reindex by $b=\pi(a)$, using inverses in
+$\Dgrp$. Transitive: if $M_1T^G_a=T^H_{\pi_1(a)}\sigma_a$ and
+$M_2T^H_b=T^K_{\pi_2(b)}\tau_b$ then
+$M_2M_1T^G_a=T^K_{\pi_2\pi_1(a)}\,\tau_{\pi_1(a)}\sigma_a$, and
+$\tau_{\pi_1(a)}\sigma_a\in\Dgrp_{\mathrm{ref}_G(a)}$ by closure, since
+reference--compatibility gives $\mathrm{ref}_H(\pi_1(a))=\mathrm{ref}_G(a)$.
+\end{proof}
+
+Transitivity is used every iteration of \texttt{deduplicate\_bucket}, which
+compares a candidate only against surviving \emph{representatives}. It rests on
+closure of $\Sgrp$ (Caveat~\ref{cav:group}).
 
 \paragraph{Relative transforms.}
-For a cluster $G$ define, for all $a,b$,
-\begin{equation}
-  \Delta^G_{ab} \;=\; (T^G_a)\inv\,T^G_b \;=\; (L^G_{ab},\,v^G_{ab}),\qquad
-  L^G_{ab}=R_a\inv R_b,\quad v^G_{ab}=R_a\inv(t_b-t_a).
+\begin{equation}\label{eq:rel}
+  \Delta^G_{ab}=(T^G_a)\inv T^G_b=(L^G_{ab},v^G_{ab}),\quad
+  L^G_{ab}=R_a\inv R_b,\quad v^G_{ab}=R_a\inv(t_b-t_a),
 \end{equation}
-These are the arrays $(L,v)$ cached by \texttt{\_relative\_transforms}.
+built by \texttt{invariants.relative\_transforms}. Two identities are used
+throughout: the cocycle law $\Delta_{ab}\Delta_{bc}=\Delta_{ac}$ (hence
+$L_{ba}=L_{ab}\inv$ exactly, so no inverse is taken in the inner loop), and
+invariance under $G\mapsto MG$ for any $M\in\Eth$, since $M$ cancels in
+$(MT_a)\inv(MT_b)$.
 
-\section{The matching condition is sound and complete}
+\begin{remark}[The global isometry is never formed]\label{rem:noM}
+Definition~\ref{def:same} quantifies over $M\in\Eth$. That is a
+\emph{specification}. The implementation never constructs $M$, never searches for
+it, and never represents an element of $\Eth$ outside $\Grp$: by
+Theorem~\ref{thm:match} it cancels identically, and only the $\Delta$'s are
+compared. This is what permits exact integer arithmetic, and what makes the
+procedure blind to $\det M$ --- mirror--related clusters merge with no special
+case. The undressed test ``$\exists c:\ c\cdot\{T^G_a\}=\{T^H_b\}$'' is the
+special case $\sigma_a=\id$ of $(\dagger)$ below, and is strictly weaker.
+\end{remark}
 
-The following theorem is the mathematical content of \texttt{\_same\_multimer}:
-it replaces the unknown global map $M$ of \eqref{eq:star} by a condition on the
-$M$-independent quantities $\Delta_{ab}$.
+\section{The matching condition}
 
 \begin{theorem}[Matching condition]\label{thm:match}
-$G\sim H$ if and only if there exist $\pi\in\Sym(n)$ and
-$s_0,\dots,s_{n-1}\in\Sgrp$ such that, for all $a,b$,
+$G\sim H$ if and only if there are a reference--compatible $\pi$ and dressings
+$\sigma_a=(s_a,d_a)\in\Dgrp_{\mathrm{ref}_G(a)}$ with
 \begin{equation}\label{eq:dagger}
-  \Delta^G_{ab} \;=\; s_a\inv\,\Delta^H_{\pi(a)\pi(b)}\,s_b, \tag{$\dagger$}
+  \Delta^G_{ab}=\sigma_a\inv\,\Delta^H_{\pi(a)\pi(b)}\,\sigma_b
+  \qquad\text{for all }a,b, \tag{$\dagger$}
 \end{equation}
-which, splitting into linear and translational parts (using that $s\in\Oth$ has
-no translation), is exactly
+equivalently, splitting into linear and translational parts,
 \begin{equation}\label{eq:dagger2}
-  L^G_{ab}=s_a\inv L^H_{\pi(a)\pi(b)} s_b,
-  \qquad
-  v^G_{ab}=s_a\inv v^H_{\pi(a)\pi(b)}.
+  L^G_{ab}=s_a\inv L^H_{\pi(a)\pi(b)}s_b,\qquad
+  v^G_{ab}=s_a\inv\bigl(L^H_{\pi(a)\pi(b)}d_b+v^H_{\pi(a)\pi(b)}-d_a\bigr).
 \end{equation}
 \end{theorem}
 
-\begin{remark}[The centering hypothesis is load--bearing]\label{rem:centering}
-Equation \eqref{eq:dagger2} drops the translational part of $s_a$ \emph{only}
-because the reference monomer was defined with its centroid at the origin, so
-that every $Q\in\Sgrp$ fixes the origin and carries no translation. If the
-placements $T_a$ instead act on \emph{un--centred} reference coordinates --- as
-they do in the implementation, where $T_a$ is built from the crystal symmetry
-operation and applied to \texttt{Monomer.cart\_coords} --- then a self--isometry
-about the centroid $c$ is the \emph{affine} map
-\begin{equation}
-  \sigma(x) \;=\; s\,x + d, \qquad d \;=\; c - s\,c ,
-\end{equation}
-and $(\dagger)$ splits instead as
-\begin{equation}\label{eq:dagger3}
-  L^G_{ab}=s_a\inv L^H_{\pi(a)\pi(b)} s_b,
-  \qquad
-  v^G_{ab}=s_a\inv\bigl(L^H_{\pi(a)\pi(b)}\,d_b + v^H_{\pi(a)\pi(b)} - d_a\bigr).
-\end{equation}
-The $d$ terms vanish iff $s\,c=c$ for every $s$ used, which is why the
-un--dressed form is correct for monomers sitting at a fixed point of their own
-point group (benzene, uracil, ammonia) and wrong otherwise (urea). The failure
-is not a tolerance effect: each $s$ is orthogonal, hence norm--preserving, so
-whenever $\lVert v^G_{ab}\rVert \neq \lVert v^H_{\pi(a)\pi(b)}\rVert$ the
-un--dressed guard is unsatisfiable at \emph{any} tolerance. The implementation
-carries \eqref{eq:dagger3} rather than pre--centring the reference monomer;
-\texttt{\_self\_iso\_tr\_by\_ref} and \texttt{\_W\_tr\_by\_ref} hold the $d$
-values, the latter exactly in twelfths in the lattice basis.
-\end{remark}
-
 \begin{proof}
-($\Rightarrow$) Assume \eqref{eq:star}. Then $T^G_a=M\inv T^H_{\pi(a)}s_a$, hence
-$(T^G_a)\inv=s_a\inv (T^H_{\pi(a)})\inv M$, so
-\begin{align*}
-  \Delta^G_{ab}
-   &= (T^G_a)\inv T^G_b
-    = s_a\inv (T^H_{\pi(a)})\inv \,M M\inv\, T^H_{\pi(b)} s_b
-    = s_a\inv \,(T^H_{\pi(a)})\inv T^H_{\pi(b)}\, s_b
-    = s_a\inv \Delta^H_{\pi(a)\pi(b)} s_b .
-\end{align*}
-The global $M$ cancels identically; this is why the condition is blind to the
-choice of $M$ and, in particular, to $\det M$.
-
-($\Leftarrow$) Assume \eqref{eq:dagger}. Define
-$M:=T^H_{\pi(0)}\,s_0\,(T^G_0)\inv\in\Eth$. We show $M\,T^G_a=T^H_{\pi(a)}s_a$ for
-every $a$, i.e.\ \eqref{eq:star}. Equivalently
-$M=T^H_{\pi(a)}s_a (T^G_a)\inv$ must be independent of $a$. Comparing the
-$a$-th and $0$-th expressions,
+($\Rightarrow$) From \eqref{eq:star}, $(T^G_a)\inv=\sigma_a\inv(T^H_{\pi(a)})\inv M$,
+so
 \[
-  T^H_{\pi(a)}s_a (T^G_a)\inv = T^H_{\pi(0)}s_0 (T^G_0)\inv
-  \iff
-  (T^H_{\pi(0)})\inv T^H_{\pi(a)}\,s_a = s_0\,(T^G_0)\inv T^G_a
-  \iff
-  \Delta^H_{\pi(0)\pi(a)}\,s_a = s_0\,\Delta^G_{0a},
+  \Delta^G_{ab}=(T^G_a)\inv T^G_b
+  =\sigma_a\inv(T^H_{\pi(a)})\inv MM\inv T^H_{\pi(b)}\sigma_b
+  =\sigma_a\inv\Delta^H_{\pi(a)\pi(b)}\sigma_b .
 \]
-which rearranges to $\Delta^G_{0a}=s_0\inv\Delta^H_{\pi(0)\pi(a)}s_a$ --- exactly
-the instance of \eqref{eq:dagger} at $(a,b)=(0,a)$. Thus $M$ is well defined, and
-\eqref{eq:star} holds, so $G\sim H$.
+($\Leftarrow$) Put $M:=T^H_{\pi(0)}\sigma_0(T^G_0)\inv$. Comparing the $a$-th and
+$0$-th expressions of $T^H_{\pi(a)}\sigma_a(T^G_a)\inv$,
+\[
+  T^H_{\pi(a)}\sigma_a(T^G_a)\inv=T^H_{\pi(0)}\sigma_0(T^G_0)\inv
+  \iff \Delta^G_{0a}=\sigma_0\inv\Delta^H_{\pi(0)\pi(a)}\sigma_a,
+\]
+which is the instance of \eqref{eq:dagger} at $(0,a)$; so $M$ is well defined and
+\eqref{eq:star} holds. The split \eqref{eq:dagger2} is the group law:
+$\sigma_a\inv\Delta^H\sigma_b=(s_a\inv L^Hs_b,\ s_a\inv(L^Hd_b+v^H-d_a))$.
 \end{proof}
 
-\begin{remark}
-The reverse direction used only the row $(0,a)$ of \eqref{eq:dagger}. This is
-precisely what makes anchoring node $0$ (Theorem~\ref{thm:search}) complete: a
-solution is fully pinned by its behavior relative to a single node, and the full
-$n^2$ check in \texttt{verify} then confirms the remaining pairs.
+\begin{remark}[The affine part is load--bearing]\label{rem:centering}
+Dropping $d$ is valid \emph{iff} $s\,c_i=c_i$ for every dressing used. It holds
+for a monomer at a fixed point of its own point group (benzene, uracil) and fails
+otherwise (urea). The failure is not a tolerance effect: each $s$ is orthogonal,
+hence norm--preserving, so whenever
+$\lVert v^G_{ab}\rVert\ne\lVert v^H_{\pi(a)\pi(b)}\rVert$ the undressed guard is
+unsatisfiable at \emph{any} tolerance.
 \end{remark}
 
-\section{The anchored search decides the matching condition}
-
-\texttt{\_same\_multimer} does not test \eqref{eq:dagger} over all $\pi$ and all
-$s$--tuples. It anchors node $0$ and forces the rest. We prove this loses
-nothing.
-
-\begin{theorem}[Search soundness and completeness]\label{thm:search}
-Enumerate $h_0\in\{0,\dots,n-1\}$ and $s_0\in\Sgrp$. For fixed $(h_0,s_0)$ set
-$\pi(0)=h_0$. For $b=1,\dots,n-1$, over all as--yet--unused $h$ with
-\begin{equation}\label{eq:vmatch}
-  v^H_{h_0,h}=s_0\,v^G_{0b},
-\end{equation}
-tentatively set $\pi(b)=h$ and
-\begin{equation}\label{eq:ssolve}
-  s_b:=(L^H_{h_0,h})\inv\,s_0\,L^G_{0b},
-\end{equation}
-accepting only if $s_b\in\Sgrp$, and backtracking otherwise; when all nodes are
-assigned, accept iff \eqref{eq:dagger} holds for \emph{all} pairs $(a,b)$. This
-procedure returns \textsc{true} iff \eqref{eq:dagger} has a solution.
-\end{theorem}
+\begin{lemma}[The anchor row suffices]\label{lem:row}
+Fix $\pi$ and $\sigma_0,\dots,\sigma_{n-1}$. If \eqref{eq:dagger} holds for every
+pair $(0,b)$, it holds for every pair $(a,b)$.
+\end{lemma}
 
 \begin{proof}
-\emph{Soundness.} A \textsc{true} is returned only after the final
-\texttt{verify} confirms \eqref{eq:dagger} for all $(a,b)$; the accepted
-$(\pi,s)$ is then a genuine solution.
-
-\emph{Completeness.} Suppose \eqref{eq:dagger} holds for some $(\pi^\ast,
-s^\ast)$. Consider the enumeration branch $h_0=\pi^\ast(0)$, $s_0=s^\ast_0$. For
-each $b$, the translational part of \eqref{eq:dagger2} at $(0,b)$ gives
-$v^G_{0b}=s_0\inv v^H_{h_0,\pi^\ast(b)}$, i.e.\
-$v^H_{h_0,\pi^\ast(b)}=s_0 v^G_{0b}$; hence $h=\pi^\ast(b)$ satisfies the guard
-\eqref{eq:vmatch} and is among the candidates the loop tries. The linear part at
-$(0,b)$ gives $L^G_{0b}=s_0\inv L^H_{h_0,\pi^\ast(b)}s^\ast_b$, i.e.\
-$s^\ast_b=(L^H_{h_0,\pi^\ast(b)})\inv s_0 L^G_{0b}$, which is exactly the value
-\eqref{eq:ssolve} assigned; and $s^\ast_b\in\Sgrp$, so the membership test
-passes. Thus the branch reaching $(\pi^\ast,s^\ast)$ is explored, \texttt{verify}
-succeeds, and \textsc{true} is returned.
+By the cocycle law $(\Delta_{0a})\inv=\Delta_{a0}$ and
+$\Delta_{a0}\Delta_{0b}=\Delta_{ab}$. Assuming row $0$,
+\begin{align*}
+  \Delta^G_{ab}&=(\Delta^G_{0a})\inv\Delta^G_{0b}
+   =\bigl(\sigma_0\inv\Delta^H_{\pi(0)\pi(a)}\sigma_a\bigr)\inv
+    \bigl(\sigma_0\inv\Delta^H_{\pi(0)\pi(b)}\sigma_b\bigr)\\
+   &=\sigma_a\inv\Delta^H_{\pi(a)\pi(0)}\,\sigma_0\sigma_0\inv\,
+     \Delta^H_{\pi(0)\pi(b)}\sigma_b
+   =\sigma_a\inv\Delta^H_{\pi(a)\pi(b)}\sigma_b .
+\end{align*}
 \end{proof}
 
-\begin{corollary}[Complexity]
-Because $s_b$ is \emph{solved}, not searched, and $\pi$ is forced up to the
-degeneracy of the vectors $v^H_{h_0,\cdot}$, each of the $n\lvert\Sgrp\rvert$
-anchors drives an assignment that is linear in $n$ up to that degeneracy, with an
-$O(n^2)$ verification, giving $O(\lvert\Sgrp\rvert\,n^3)$ in the generic
-(distinct--vector) case, versus $O(n!\,\lvert\Sgrp\rvert^{\,n})$ for the naive
-search of \eqref{eq:dagger}. Theorem~\ref{thm:search} guarantees the speedup
-explores the identical solution set.
+Theorem~\ref{thm:match} and Lemma~\ref{lem:row} are best read together, because
+their combination is the entire content of the algorithm.
+
+\begin{corollary}[What the matcher actually decides]\label{cor:threeway}
+Fix a reference--compatible $\pi$ and dressings $\sigma_0,\dots,\sigma_{n-1}$. The
+following are equivalent:
+\begin{enumerate}[leftmargin=2em,label=(\alph*)]
+\item $G\sim H$ is witnessed by $(\pi,\sigma)$, i.e.\ some $M\in\Eth$ satisfies
+      \eqref{eq:star};
+\item \eqref{eq:dagger} holds for all $n^2$ pairs $(a,b)$;
+\item \eqref{eq:dagger} holds for the $n$ pairs $(0,b)$ --- the anchor row alone.
+\end{enumerate}
 \end{corollary}
 
-\section{The distance fingerprint is a sound gate}
-
-\begin{proposition}[Necessary pre--filter]\label{prop:fp}
-If $G\sim H$ then the multisets
-$\{(Z_iZ_j,\ \lVert p-q\rVert): (Z_i,p),(Z_j,q)\in\rho(G),\ p\ne q\}$ and the
-analogous one for $H$ coincide. Consequently a fingerprint mismatch certifies
-$G\not\sim H$.
-\end{proposition}
-
 \begin{proof}
-Every $M\in\Eth$ preserves all pairwise distances, and each $s_a\in\Sgrp$
-permutes atoms within a monomer while preserving their $Z$ (Definition of
-$\Sgrp$). Hence \eqref{eq:star} carries the $Z$-tagged distance multiset of
-$\rho(G)$ onto that of $\rho(H)$.
+(a)$\Leftrightarrow$(b) is Theorem~\ref{thm:match}; (b)$\Rightarrow$(c) is
+trivial; (c)$\Rightarrow$(b) is Lemma~\ref{lem:row}. Alternatively
+(c)$\Rightarrow$(a) directly: the $(\Leftarrow)$ half of
+Theorem~\ref{thm:match}'s proof constructs $M$ from the anchor row only.
 \end{proof}
 
-This justifies the gate \texttt{\_fingerprints\_match} run before the exact and
-geometric branches. It is not sufficient (homometric clusters share a
-fingerprint), which is why an exact test follows it.
+The practical reading: \textbf{$n$ equations settle a question posed over all of
+$\Eth$.} The existential over $M$ --- a six--parameter continuum --- is discharged
+by Theorem~\ref{thm:match}, which makes it cancel rather than searching for it;
+the $n^2$ resulting conditions collapse to $n$ by Lemma~\ref{lem:row}; and what
+is left is a finite search over $(\pi,\sigma)$, which \S\ref{sec:search}
+organises so that even that is not enumerated blindly.
+Section~\ref{sec:example} carries one real pair of clusters through all three
+stages.
 
-\section{Necessity}
+\section{The anchored search is sound and complete}\label{sec:search}
 
-We now show the geometric branch cannot be dropped. Let $W:=\Stab_\Grp(\text{ref
-monomer})=\{w\in\Grp:\ w\ \text{fixes the reference monomer setwise}\}$ be the
-crystallographic site symmetry; its linear parts form a subgroup
-$W_{\mathrm{lin}}\le\Sgrp$. Candidate generation
-(\texttt{get\_unique\_sym\_ops}) keeps one representative per coset in
-$\Grp/W$ by deduplicating operations that agree on the monomer's centroid.
-
-\begin{proposition}[Site--symmetry pruning is necessary]\label{prop:prune}
-If generation does not quotient by $W$, then for any placement $g$ and any
-$\id\ne w\in W$ the operations $g$ and $gw$ produce the identical physical
-monomer (their atoms differ only by the relabeling $w\in\Sgrp$), yielding
-duplicated or degenerate clusters. Quotienting by $W$ removes this. A single
-prune at the reference site also removes the redundancy at every partner site
-$C=g(\text{origin})$, because the partner's site operation
-$w_C=g\,w\,g\inv$ satisfies $w_C\,g=g\,w$, so $w_C g$ and $g$ share a centroid
-and collapse to one representative.
-\end{proposition}
+\begin{theorem}[Search soundness and completeness]\label{thm:search}
+For each reference $i$ let $\Dgrp_i=\{(s^{(i)}_k,d^{(i)}_k)\}$ have pairwise
+distinct linear parts. Enumerate $h_0$ with
+$\mathrm{ref}_H(h_0)=\mathrm{ref}_G(0)$, and $k_0$; set $\pi(0)=h_0$,
+$\sigma_0=(s^{(r_0)}_{k_0},d^{(r_0)}_{k_0})$ with $r_0=\mathrm{ref}_G(0)$.
+For $b=1,\dots,n-1$, over all unused $h$ with
+$\mathrm{ref}_H(h)=\mathrm{ref}_G(b)$:
+\begin{enumerate}[leftmargin=2em,label=(\roman*)]
+\item \emph{solve} the linear equation
+\begin{equation}\label{eq:ssolve}
+  s_b:=L^H_{h,h_0}\,s_{k_0}\,L^G_{0b}=(L^H_{h_0,h})\inv s_{k_0}L^G_{0b},
+\end{equation}
+and reject $h$ unless $s_b$ equals some $s^{(r_b)}_{k_b}$ stored for
+$r_b=\mathrm{ref}_G(b)$ --- \emph{that member's own reference} --- which also
+fixes $d_b:=d^{(r_b)}_{k_b}$, by distinctness;
+\item then test the translation guard
+\begin{equation}\label{eq:vmatch}
+  v^G_{0b}=s_{k_0}\inv\bigl(L^H_{h_0,h}\,d^{(r_b)}_{k_b}+v^H_{h_0,h}
+           -d^{(r_0)}_{k_0}\bigr);
+\end{equation}
+\item on success set $\pi(b)=h$, mark $h$ used, recurse; otherwise backtrack.
+\end{enumerate}
+This returns \textsc{true} iff \eqref{eq:dagger} has a solution over the
+$\Dgrp_i$.
+\end{theorem}
 
 \begin{proof}
-$(gw)\cdot x_i=g(w x_i)=g(x_{\sigma(i)})$ with $\sigma$ the atom permutation of
-$w$; so $gw$ and $g$ realize the same labeled monomer up to $w\in\Sgrp$. The
-conjugation identity is immediate: $w_C=gwg\inv\Rightarrow w_Cg=gw$, and $gw$,
-$g$ act identically on the centroid since $w$ fixes it.
+\emph{Soundness.} Steps (i)--(ii) are exactly the linear and translational parts
+of \eqref{eq:dagger2} at $(0,b)$, so a completed assignment satisfies the whole
+anchor row; by Lemma~\ref{lem:row} it satisfies \eqref{eq:dagger} at every pair.
+The \texttt{used} array makes $\pi$ a bijection, and the
+$\mathrm{ref}_H(h)=\mathrm{ref}_G(b)$ filter makes it reference--compatible.
+Hence the accepted $(\pi,\sigma)$ is a genuine solution.
+
+\emph{Completeness.} Suppose \eqref{eq:dagger} holds for some
+$(\pi^\ast,\sigma^\ast)$. Take the branch $h_0=\pi^\ast(0)$,
+$s_{k_0}=s^\ast_0$ (some $k_0$ indexes it in $\Dgrp_{r_0}$, and
+$d_{k_0}=d^\ast_0$ by Lemma~\ref{lem:dress}). Fix $b$ and take $h=\pi^\ast(b)$,
+unused at depth $b$ and reference--compatible because $\pi^\ast$ is. Since
+$\sigma^\ast_b\in\Dgrp_{\mathrm{ref}_G(b)}$ by Definition~\ref{def:same}, it is
+among the operations step~(i) searches. The linear part of \eqref{eq:dagger2} at
+$(0,b)$ reads
+$L^G_{0b}=(s^\ast_0)\inv L^H_{h_0,h}s^\ast_b$, i.e.\
+$s^\ast_b=(L^H_{h_0,h})\inv s^\ast_0L^G_{0b}$ --- precisely the value assigned in
+\eqref{eq:ssolve} --- and $s^\ast_b$ is stored, so (i) passes with
+$d_{k_b}=d^\ast_b$. The translational part at $(0,b)$ is then literally
+\eqref{eq:vmatch}, so (ii) passes. The branch reaching
+$(\pi^\ast,\sigma^\ast)$ is therefore generated and accepted. (An earlier branch
+may accept a different valid solution; by soundness that is still correct.)
 \end{proof}
 
-So pruning is real and load--bearing. It is nonetheless \emph{not} a substitute
-for the internal--symmetry dressing of Theorem~\ref{thm:match}, as the next two
-results show. The first needs no chirality at all.
+\begin{remark}[Why the order of (i) and (ii) is forced]
+The guard \eqref{eq:vmatch} contains $d_{k_b}$, a function of $s_b$, so $s_b$ must
+be solved before the guard can be evaluated. Only in the undressed case
+($d\equiv0$) is the guard independent of $s_b$ and usable as a cheap pre--filter.
+Reordering the two tests would be a correctness bug, not a tuning choice.
+\end{remark}
 
-\begin{theorem}[The exact branch is incomplete; dressing is necessary]\label{thm:centro}
-Let $\Grp$ be centrosymmetric with the reference monomer on an inversion centre
-at the origin, so $i_0=(-I,0)\in W$ and $-I\in\Sgrp$. Let $p=(R,t)\in\Grp$ place
-a partner at $P=t\ne 0$, and consider the two \emph{distinct}, separately
-generated dimers
+\begin{remark}[The closing sweep is redundant]\label{rem:verify}
+\texttt{anchored\_match} ends with an $n^2$ \texttt{verify} over all pairs. By
+Lemma~\ref{lem:row} it cannot fail: the descent already tests both parts of the
+anchor row. Instrumented over benzene, urea, ice, hexamine, carbon dioxide and
+ammonia it rejected $0$ of $3981$ leaves. It is retained as a numerical backstop
+for the Cartesian instantiation, where the cocycle law holds only up to
+accumulated tolerance; in the integer instantiation it can never fire.
+\end{remark}
+
+\begin{corollary}[Complexity]
+$s_b$ is solved rather than searched and $\pi$ is forced up to the degeneracy of
+$v^H_{h_0,\cdot}$, so each of the $n\lvert\Dgrp\rvert$ anchors drives an
+assignment linear in $n$ up to that degeneracy: $O(\lvert\Dgrp\rvert n^3)$ in the
+generic case, against $O(n!\,\lvert\Dgrp\rvert^{\,n})$ for the naive search of
+\eqref{eq:dagger}, exploring the identical solution set.
+\end{corollary}
+
+\section{The two instantiations}
+
+\texttt{anchored\_match} is parameterized by the dressing group, an equality
+predicate and a linear--inverse routine, and is instantiated twice.
+
+\textbf{Exact integer} (\texttt{same\_multimer\_int}). The lattice basis:
+$L$ integer, $v$ and $d$ integer twelfths, equality exact, inverse by adjugate
+(\texttt{int\_inv} --- lattice rotations are unimodular but \emph{not} orthogonal,
+so the transpose is wrong). The dressing group is the site symmetry
+$(W^{\mathrm{lin}}_i,\widetilde{t})$. Writing $\sim_W$ for
+Definition~\ref{def:same} restricted to those dressings, this branch decides
+$\sim_W$ exactly and with no roundoff at any distance.
+
+\textbf{Tolerant Cartesian} (\texttt{same\_multimer}). $L$ orthogonal (inverse is
+the transpose), $v,d$ in {\AA}ngstr\"oms, equality within \texttt{atol}, dressing
+group the full $\Dgrp_i$. In exact arithmetic this decides $\sim$ itself.
+
+Since $\Dgrp^W_i\le\Dgrp_i$ we have $\sim_W\subseteq\sim$: the integer branch is
+sound for $\sim$ but incomplete, and the Cartesian branch closes the gap
+\emph{when it is run}. It is not always run --- see Caveat~\ref{cav:gate}, which
+is where the theorems above and the shipped code part company.
+
+\section{A worked example}\label{sec:example}
+
+Everything so far is stated for general $n$ and a general dressing group. This
+section runs the machinery once, end to end, on a real pair of candidate clusters
+from the urea regression case (\texttt{tests/x23/urea/urea.cif}, $P\bar42_1m$,
+No.~113, $Z'=1$, $8$ atoms per monomer). Every number below is exactly what the
+code holds: integer linear parts in the lattice basis, integer translations in
+twelfths.
+
+\paragraph{The reference and its site symmetry.}
+The reference monomer's mass--weighted centroid is
+$c=(0,-\tfrac12,0.316143)$. Its stabiliser has order $4$, and
+\texttt{context.bind} stores the four linear parts with the translations that make
+each fix $c$ \emph{exactly}:
 \[
-  G=(\id,\ p),\qquad G'=(\id,\ i_0\,p).
+\begin{array}{llll}
+w_0=I, & \widetilde t_0=(0,0,0);
+&w_1=\begin{psmallmatrix}-1&0&0\\0&-1&0\\0&0&1\end{psmallmatrix},
+&\widetilde t_1=(0,-12,0);\\[2.2ex]
+w_2=\begin{psmallmatrix}0&1&0\\1&0&0\\0&0&1\end{psmallmatrix},
+&\widetilde t_2=(6,-6,0);
+&w_3=\begin{psmallmatrix}0&-1&0\\-1&0&0\\0&0&1\end{psmallmatrix},
+&\widetilde t_3=(-6,-6,0).
+\end{array}
 \]
-Then $G\sim G'$, but the exact matrix branch
-\textup{(\texttt{\_is\_bijection} stage~(a))} fails to certify it, while the
-geometric branch certifies it with $s_0=-I$. Site--symmetry pruning does not
-remove the pair, since $G$ and $G'$ are genuinely different clusters that must be
-merged.
-\end{theorem}
+$w_1$ is the molecule's own two--fold axis. Check that $\widetilde t_1$ is forced:
+$w_1c=(0,\tfrac12,0.316143)$, which is $c$ only after adding $(0,-1,0)$, i.e.\
+$(0,-12,0)$ twelfths --- precisely $\widetilde t_1 = c-w_1c$ of
+\eqref{eq:dressing}. \textbf{The axis passes through the molecule at
+$y=-\tfrac12$, not through the origin, and that offset is a full lattice vector.}
+Keep this in view; it is the whole point of the example.
 
-\begin{proof}
-$i_0\,p$ places a monomer at $i_0(P)=-P\ne P$, so $G'\ne G$ as clusters; both
-are legitimate distinct candidates (distinct centroids $\{0,P\}$ vs.\ $\{0,-P\}$,
-neither a coset duplicate of the other). Take $M=i_0$, $\pi=\id$. Then
-$M T^{G}_0=i_0=T^{G'}_0\cdot(-I)$, giving $s_0=-I\in\Sgrp$; and
-$M T^{G}_1=i_0 p=T^{G'}_1\cdot I$, giving $s_1=I$. Thus \eqref{eq:star} holds and
-$G\sim G'$; by Theorem~\ref{thm:match} the geometric branch accepts, recovering
-$s_0=-I$.
+\paragraph{The two clusters.}
+Write $P=\begin{psmallmatrix}0&1&0\\-1&0&0\\0&0&-1\end{psmallmatrix}$, the
+$\bar4$ operation of the space group. The dimers are
+\[
+  G:\quad T^G_0=(I,\mathbf{0}),\ \ T^G_1=(P,\mathbf{0});
+  \qquad
+  H:\quad T^H_0=(I,\mathbf{0}),\ \ T^H_1=(P,(0,-12,0)).
+\]
+They differ only in that $H$'s second monomer is the same $\bar4$ image
+translated by $-b$. Geometrically they are the same dimer --- both have diameter
+$4.210576$\,\AA{} and identical sorted interatomic--distance spectra --- but
+nothing in the stored operations says so, and the undressed test
+``$\exists c\in\Eth:\ c\cdot\{T^G_a\}=\{T^H_b\}$'' of Remark~\ref{rem:noM} does
+not certify it.
 
-The exact branch accepts only when some placement $c$ actually present in $G$
-maps $G'$ onto $G$ by \emph{undressed} left multiplication, i.e.\ when
-$\{c\,T^{G'}_j\}_j=\{T^G_k\}_k$ as sets of matrices for some
-$c\in\{T^G_0,T^G_1\}=\{\id,p\}$. The witnessing isometry here is $i_0$, and
-$i_0\notin\{\id,p\}$ (it fixes the origin whereas $p$ translates by $t\ne0$).
-Moreover any undressed correspondence would require $s_0=I$, contradicting the
-computation above that the ref$\leftrightarrow$ref match forces $s_0=-I$. Hence
-no exact match exists and stage~(a) fails, whereas
-Theorem~\ref{thm:search} guarantees stage~(b) succeeds.
-\end{proof}
+\paragraph{Relative transforms.}
+Using $P\inv=P^{\mathsf T}$ (the cell is tetragonal, so $P$ is orthogonal in this
+basis) and \eqref{eq:rel}:
+\[
+\begin{array}{ll}
+  L^G_{01}=P, & v^G_{01}=(0,0,0),\\
+  L^G_{10}=P\inv, & v^G_{10}=(0,0,0),
+\end{array}
+\qquad
+\begin{array}{ll}
+  L^H_{01}=P, & v^H_{01}=(0,-12,0),\\
+  L^H_{10}=P\inv, & v^H_{10}=(-12,0,0),
+\end{array}
+\]
+with $L_{00}=L_{11}=I$ and $v_{00}=v_{11}=\mathbf 0$ in both. Already the
+essential asymmetry is visible: $G$'s relative translations vanish, $H$'s do not.
 
-Theorem~\ref{thm:centro} is the decisive point for the benzene / space--group
-$61$ question: pruning the inversion at generation prevents \emph{duplicate}
-monomers, but the inversion still appears at \emph{matching} time as the relating
-map between two distinct, crystallographically equivalent dimers, and only the
-$s_a$ dressing can absorb the induced atom relabeling.
+\paragraph{The descent (Theorem~\ref{thm:search}).}
+The search anchors node $0$ of $G$ and enumerates $h_0=\pi(0)$ and $k_0$. The
+branch that succeeds is $h_0=1$, $k_0=0$ --- \emph{the anchor of $G$ is matched to
+the non--anchor of $H$}, which is exactly the relabeling $\pi$ exists to permit.
+With $b=1$ the only unused image is $h=0$, and step (i) \emph{solves} rather than
+guesses:
+\[
+  s_1=L^H_{h,h_0}\,s_{k_0}L^G_{0b}
+     =L^H_{01}\,I\,L^G_{01}=P\cdot P=P^2
+     =\begin{psmallmatrix}-1&0&0\\0&-1&0\\0&0&1\end{psmallmatrix}=w_1 .
+\]
+So $k_1=1$, and by Lemma~\ref{lem:dress} this also fixes $d_1=\widetilde
+t_1=(0,-12,0)$; there is no freedom left to search. Step (ii) then tests the
+translation guard \eqref{eq:vmatch}:
+\[
+  s_{k_0}\inv\bigl(L^H_{h_0h}d_{k_1}+v^H_{h_0h}-d_{k_0}\bigr)
+  =P\inv(0,-12,0)+(-12,0,0)-\mathbf 0
+  =(12,0,0)+(-12,0,0)=\mathbf 0=v^G_{01}.\ \checkmark
+\]
+The anchor row holds, so by Corollary~\ref{cor:threeway} all four pairs do; the
+code verifies this and finds it so, but \texttt{verify\_all=False} in the integer
+branch because Lemma~\ref{lem:row} already guarantees it.
 
-\begin{theorem}[Reflections force the global test in chiral groups]\label{thm:sohncke}
-Suppose $\Grp$ is a Sohncke group ($\Grp\subset\SOth\ltimes\mathbb{R}^3$; no
-improper element) and $\Sgrp$ contains an improper operation (the monomer is
-achiral). If two generated clusters $G,H$ satisfy $G\sim H$ with every witness
-$M$ in \eqref{eq:star} having $\det M=-1$, then no test built from exact equality
-against elements of $\Grp$ can certify $G\sim H$; only a $\det$--agnostic
-comparison of the invariants $\Delta_{ab}$ can. Such pairs are generically in
-distinct $\Grp$--orbits, so no relabeling of generation removes them.
-\end{theorem}
+\paragraph{What the dressing was for.}
+$P^2=w_1$ is the content of the match: composing the $\bar4$ placement with
+itself lands on the molecule's \emph{own} two--fold axis. The two clusters are the
+same dimer viewed from opposite ends, and identifying them requires re--gluing one
+monomer by a symmetry of itself. Now drop the affine part, i.e.\ set $d\equiv0$
+and keep only linear parts, as one is tempted to do by Lemma~\ref{lem:dress}. The
+guard at $(0,1)$ becomes
+\[
+  v^G_{01}\overset{?}{=}s_{k_0}\inv v^H_{h_0h}
+  \ \Longrightarrow\ (0,0,0)\overset{?}{=}(-12,0,0),
+\]
+a mismatch of $12$ twelfths --- one full lattice repeat, $5.59$\,\AA. And since
+every $s$ is orthogonal, $\lVert s\inv v^H\rVert=\lVert v^H\rVert$ always, so
+comparing a vector of norm $0$ with one of norm $12$ \textbf{cannot be repaired by
+loosening a tolerance}: it is unsatisfiable at every $\mathtt{atol}$. This is the
+concrete form of Remark~\ref{rem:centering}, and it is why the two clusters merge
+only once $\widetilde t$ is carried alongside $w$.
 
-\begin{proof}
-Any exact/proper certificate exhibits the relating isometry as a composition of
-elements of $\Grp$ and (undressed) identity; all such compositions lie in
-$\SOth\ltimes\mathbb{R}^3$ and have determinant $+1$. But every witness $M$ has
-$\det M=-1$, so no such certificate exists. The invariants $\Delta_{ab}$, by the
-cancellation in Theorem~\ref{thm:match}, are unchanged whether $\det M=+1$ or
-$-1$; thus \eqref{eq:dagger} still holds and the geometric branch certifies the
-merge. Distinctness of orbits: if some $\gamma\in\Grp$ realized $G\sim H$ then
-$\det\gamma=+1$ would be a proper witness, contradicting the hypothesis.
-\end{proof}
+\paragraph{The isometry that was never formed.}
+For completeness, reconstruct the $M$ whose existence
+Definition~\ref{def:same} asserts:
+$M=T^H_{\pi(0)}\sigma_0(T^G_0)\inv=T^H_1=(P,(0,-12,0))$. Verifying
+\eqref{eq:star} at $a=1$ uses $P^2=w_1$ again:
+\[
+  M\,T^G_1=(P,(0,-12,0))(P,\mathbf 0)=(P^2,(0,-12,0))
+  =(I,\mathbf 0)(w_1,\widetilde t_1)=T^H_{\pi(1)}\sigma_1 .\ \checkmark
+\]
+Here $M$ happens to be a space--group operation, but nothing required that, and
+\textbf{the implementation never computes any of this}: $M$ cancelled in
+\eqref{eq:rel} before the search began. That cancellation is what allows the whole
+decision to be made in $\mathbb{Z}$, with \texttt{np.array\_equal} rather than
+\texttt{np.allclose}, at any separation, with no accumulated roundoff.
 
-Merging enantiomeric $N$-mers is not merely allowed but desirable, because it is
-energy--preserving:
+\paragraph{Scope of the example.} This pair is decided by $\sim_W$, the
+crystallographic relation, in the exact integer branch --- as are all $205$
+within--bucket merges in urea's $R=15$ dimer run, and as is every merge in every
+X23 crystal once symmetry detection has run. The tolerant Cartesian branch and the
+point--cloud branch exist for the cases \S\ref{sec:caveats} describes, not for
+this one.
 
-\begin{proposition}[$\sim$ preserves the many--body energy]\label{prop:energy}
-Let $E$ be a molecular interaction energy from a parity-- and
-isometry--invariant Hamiltonian (no external chiral field). Then $E$ is constant
-on $\sim$--classes, and the CrystaLatt\'e lattice sum
-$\sum_i (m_i/N)\,E_i$ over $\sim$--representatives with multiplicities $m_i$ is
-independent of whether enantiomeric classes are merged.
-\end{proposition}
+\section{Caveats}\label{sec:caveats}
 
-\begin{proof}
-$E$ is invariant under any $M\in\Eth$ (including $\det M=-1$, by parity
-invariance) and under atom relabeling within a monomer; by
-Definition~\ref{def:same} it is therefore constant on $\sim$--classes. If two
-enantiomeric classes $A,A'$ are kept separate with multiplicities $m$ each, they
-contribute $(m/N)E_A+(m/N)E_{A'}=(2m/N)E_A$; merging them into one
-representative of multiplicity $2m$ contributes $(2m/N)E_A$ --- identical, since
-$E_A=E_{A'}$. Merging additionally avoids computing $E_{A'}$ redundantly.
-\end{proof}
+Theorem~\ref{thm:search} is a statement about an algorithm given a dressing
+group. The following are the ways the deployed pipeline is weaker than that.
 
-\section{Summary}
+\begin{enumerate}[leftmargin=2em,label=\textbf{C\arabic*.}]
 
-\begin{itemize}[leftmargin=1.4em]
-\item \textbf{Correctness.} Theorem~\ref{thm:match} shows the relative--transform
-condition \eqref{eq:dagger} is equivalent to the intended relation $\sim$
-(Definition~\ref{def:same}); Theorem~\ref{thm:search} shows the anchored search
-decides \eqref{eq:dagger} exactly; Proposition~\ref{prop:fp} shows the
-fingerprint gate is a sound necessary pre--filter. Together these give a sound
-and complete decision procedure for $G\sim H$.
-\item \textbf{Necessity.} Proposition~\ref{prop:prune} shows site--symmetry
-pruning is required at generation but, by Theorem~\ref{thm:centro}, cannot
-replace the internal--symmetry dressing --- the dressing is needed already in a
-centrosymmetric group (e.g.\ benzene in space group $61$) to merge two distinct
-equivalent clusters related by an inversion. Theorem~\ref{thm:sohncke} shows the
-$\det$--agnostic global comparison is the \emph{only} mechanism that can merge
-enantiomeric $N$-mers in a chiral space group, and
-Proposition~\ref{prop:energy} shows such merging is exact for the lattice energy.
-\end{itemize}
+\item\label{cav:gate}\textbf{Completeness is relative to the dressing group
+supplied, and the full one is not always supplied.} The Cartesian branch is
+gated on \texttt{check\_congruence\_by\_ref}, now narrowed to
+$\lvert\Sgrp_i\rvert>\lvert W^{\mathrm{lin}}_i\rvert$ \emph{and} the space group
+being Sohncke with an achiral monomer --- the case where an enantiomeric merge
+forces $\det s_0=-1$ while $W^{\mathrm{lin}}\subset\SOth$ cannot supply it. A
+\emph{proper, finite} dressing in $\Sgrp_i\setminus W^{\mathrm{lin}}_i$ in a
+non--Sohncke group would also require the branch and will not get it, so the
+shipped pipeline decides $\sim_W$ plus that one case, not $\sim$. Measured: over
+$81$ runs ($12$ crystals $\times$ $3$ distance conventions $\times$ $N=2,3$) the
+narrowing changed no count. That is evidence, not proof.
+
+The mitigation is \texttt{full\_congruence\_check=True}, which runs the branch
+unconditionally. Note this flag was itself briefly defective: the gate read
+$\lvert\Sgrp\rvert>\lvert W\rvert$ \emph{and} (\texttt{hatch} or narrow), so on
+any reference whose detected $\Sgrp$ is deficient (Caveat~\ref{cav:detect}) the
+hatch silently did nothing --- inoperative for adamantane, ice, urea and
+hexamine, i.e.\ precisely the crystals most likely to need it. The size test now
+sits inside the narrow arm. The hatch still cannot recover a dressing that was
+never detected; it only guarantees the branch runs when asked.
+
+\item\label{cav:detect}\textbf{$\Sgrp$ is detected numerically, and it
+under--detects --- but not for the reason one expects.} \S1 asserts
+$W^{\mathrm{lin}}_i\le\Sgrp_i$, which is a theorem in exact geometry: a site
+operation maps the monomer onto itself, so its linear part satisfies
+\eqref{eq:S}. The implementation violates it for two of the twelve X23
+references:
+\begin{center}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+crystal & SG & $\lvert W\rvert$ & $\lvert\Sgrp\rvert$
+ & site ops missing from $\Sgrp$\\
+\midrule
+adamantane & $114$ & $4$  & $2$  & $2/4$\\
+ice        & $194$ & $6$  & $2$  & $4/6$\\
+hexamine   & $217$ & $24$ & $24$ & $0/24$\\
+urea       & $113$ & $4$  & $4$  & $0/4$\\
+benzene    & $61$  & $2$  & $4$  & $0/2$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{The coordinates are not the problem.} It is tempting to blame CIF
+coordinate distortion. Measured, that is wrong: applying each site operation to
+the \emph{actual} parsed coordinates and taking the worst same--$Z$ atom
+displacement gives $0.00000$\,\AA{} for eleven of the twelve X23 references and
+$0.00027$\,\AA{} for ice. The site symmetry is exact in the coordinates, as it
+must be --- the atoms were generated by those very operations. Whatever
+distortion a CIF carries, it is distortion \emph{within} the asymmetric unit; it
+cannot perturb the crystallographic symmetry, and $W$ is therefore immune to it.
+
+\paragraph{The candidate library is the problem.} Adamantane's two missing
+operations are $\bar4$ rotoreflections ($\det=-1$, $\mathrm{tr}=-1$), and they are
+absent from \texttt{\_symmetry\_candidates}' output \emph{as matrices}, at any
+tolerance. The library holds $\pm I$, one mirror per candidate axis, and
+\emph{proper} rotations of order $2,3,4,6$; of the $5798$ matrices it generates
+for adamantane, exactly one is an improper operation other than a mirror. Sweeping
+the detection tolerance confirms it is not a threshold effect:
+\begin{center}
+\begin{tabular}{@{}rrr@{}}
+\toprule
+\texttt{atol} (\AA) & operations accepted & of the $4$ exact site ops, found\\
+\midrule
+$0.01$ & $2$   & $2$\\
+$0.05$ & $2$   & $2$\\
+$0.10$ & $6$   & $2$\\
+$0.20$ & $114$ & $2$\\
+$1.00$ & $214$ & $2$\\
+\bottomrule
+\end{tabular}
+\end{center}
+At $1.0$\,\AA{} the filter accepts $214$ operations, essentially all of them
+spurious, and still misses both $\bar4$'s. Closure cannot recover them either:
+$\bar4=(-I)\,C_4^{3}$, and neither $-I$ nor $C_4$ is a symmetry of adamantane, so
+neither factor is ever accepted for the product to be formed from. The repair
+recommended below is therefore not a tolerance adjustment; it is the only route.
+
+\paragraph{And the molecule is not $T_d$.} A related correction. In this crystal
+adamantane's carbons sit at radii $1.5300$ ($\times4$), $1.7640$ ($\times4$),
+$1.7660$ ($\times2$) and its hydrogens at $2.4320, 2.4650, 2.4790, 2.5180$
+($\times4$ each). $T_d$ would require two carbon shells ($4+6$) and two hydrogen
+shells ($4+12$). The observed orbits, of sizes dividing $4$, are exactly those of
+$S_4$. The molecule in the crystal \emph{is} $S_4$ (order $4$, the site symmetry)
+and only approximately $T_d$ (order $24$), the $T_d$ relation being broken at the
+$\sim0.086$\,\AA{} level in the hydrogen shells. So the gap to close is $2\to4$,
+not $2\to24$.
+
+\paragraph{The repair, now taken.} \texttt{context.bind} seeds $\Sgrp$ with
+$W^{\mathrm{lin}}$ pushed to Cartesian and closes
+(\texttt{Monomer.self\_isometries\_seeded}). This sidesteps the library gap
+entirely, because the operations are supplied rather than searched for.
+Measured: adamantane $2\to4$, ice $2\to6$, both coherent groups, the other ten
+references unchanged, and no dimer or trimer count moves. The containment
+$W^{\mathrm{lin}}_i\le\Sgrp_i$ now holds for all twelve X23 references and is
+asserted by
+\texttt{test\_bound\_dressing\_groups\_satisfy\_the\_containment\_theorem}.
+
+One qualification on ``the containment is a theorem, so this cannot introduce a
+spurious operation'': the theorem's hypothesis is that the \emph{site symmetry}
+was determined correctly, and that determination is itself made at a tolerance
+(\texttt{SITE\_ATOL}, \S\ref{sec:caveats}~\ref{cav:gen}). A monomer whose
+centroid sits near but not on a symmetry element could therefore contribute a
+seed operation that is not a real symmetry --- and admitting a false dressing is
+the unrecoverable direction. Each seed element is consequently re--verified
+against the actual coordinates at every rung of the ladder, on the same footing
+as a detected operation, and dropped if it fails. The seed changes where
+candidate operations \emph{come from}; it does not change what is required of
+them.
+
+\paragraph{What under--detection costs.} For adamantane, nothing. SG $114$ is not
+Sohncke, so the congruence gate of Caveat~\ref{cav:gate} is shut, the Cartesian
+branch never runs, and the integer branch already holds all four site operations.
+The $R=15$ dimer count is $17$ as shipped, $17$ with
+\texttt{full\_congruence\_check=True}, and $17$ with $\Sgrp$ repaired to order
+$4$. The deficiency is real but inert.
+
+Where $\Sgrp$ \emph{is} consulted the cost is visible. Ammonia with symmetry
+detection disabled (P1, $Z'=4$) routes $14$ pairs to the Cartesian branch, all of
+which merge. Truncating $\Sgrp$ to $\{I\}$ and re--running yields $22$
+representatives instead of $14$ --- eight classes split --- while
+$\sum_i m_i\,\mathrm{NRE}_i$ is bit--identical at $10724.566485$ both ways. That
+is the direction--of--error claim below, demonstrated as a controlled experiment
+rather than inferred.
+
+\paragraph{On external libraries.} Recovering the \emph{idealised} point group of
+distorted coordinates does remain ill--posed --- at its default tolerance
+\texttt{pymatgen}'s \texttt{PointGroupAnalyzer} returns all $24$ $T_d$ operations
+for adamantane, displacing atoms by up to $0.116$\,\AA, and at a tight tolerance
+returns $3$, fewer than the four that are provable. But that is a different
+question from the one the matcher needs answered. The matcher needs the exact
+symmetry group of the coordinates it was handed, and for the crystallographic part
+of that group the answer is available for free from the space group.
+
+\paragraph{Which way the error runs.} The direction matters more than the
+magnitude, and the two are not symmetric.
+\emph{Under--detection} loses merges, so a class survives as several
+representatives. The bucket loop conserves total multiplicity and the split
+representatives are congruent, hence equal in energy, so
+$\sum_i(m_i/N)E_i$ is unchanged: measured on carbon dioxide, $36$ versus $39$
+representatives give a bit--identical $\sum_i m_i\,\mathrm{NRE}_i$
+($51167.585968$ both ways, relative difference $0$). The cost is redundant
+calculations, not accuracy.
+\emph{Over--detection} admits a dressing that is not a real symmetry, merging two
+genuinely distinct clusters; the survivor absorbs the other's multiplicity and
+the lattice sum is wrong by $(m_B/N)(E_A-E_B)$, with nothing to cancel it.
+Worse, the usual \texttt{n\_classes} $=$ \texttt{len(mers)} oracle check cannot
+see it, since a false merge lowers both sides together. Tolerances in point--group
+detection should therefore always be biased toward \emph{fewer} operations.
+
+\item\label{cav:group}\textbf{$\Sgrp$ is only assumed to be a group.}
+Proposition~\ref{prop:equiv}, and hence the representative--based dedup in
+\texttt{deduplicate\_bucket}, needs closure. The candidate library is not closed
+(it holds $\pm I$, one mirror per axis and rotations of order $2,3,4,6$, but no
+rotoreflections, so a $T_d$ monomer filters to $18$ operations and $18\nmid24$),
+and \texttt{\_self\_isometries} repairs this by closing under composition at the
+most permissive tolerance rung whose closure is coherent. \emph{If no rung
+succeeds it returns the raw filter unchanged}, in which case $\Sgrp$ need not be a
+group, $\sim$ need not be transitive, and the output can depend on candidate
+order. All twelve X23 crystals currently pass the closure test; the fallback path
+is unguarded.
+
+\item\label{cav:linear}\textbf{Linear monomers are excluded by construction, and
+no dressing group can rescue them.} A placement's linear part carries three
+rotational degrees of freedom; a linear molecule's orientation has two. The
+third --- the twist about the molecular axis --- is physically vacuous, since
+every atom lies \emph{on} that axis. Measured on carbon dioxide, a twist of
+\emph{any} angle displaces no atom by more than $0.000000$\,\AA. So the map from
+stored placement to physical arrangement is three--to--two, with a
+\emph{continuous} one--parameter fibre, and $L_{ab}=R_a\inv R_b$ compares the
+fibre coordinate along with everything else.
+
+This is not a tolerance or a detection defect. Quotienting a continuous fibre
+requires a continuous dressing group --- here the true $\Sgrp$ is $D_{\infty h}$
+--- and every dressing group the implementation can hold is finite. Carbon
+dioxide has $\lvert W\rvert=6$ and detected $\lvert\Sgrp\rvert=48$; of all twists
+about the molecular axis only $0$, $120$ and $240$ degrees are integral in the
+lattice basis, so $W$ can capture at most three points of a continuum however the
+crystal is set up.
+
+Measured at $R=15$ over the $18$ pairs the integer branch rejects: every one is
+genuinely congruent (superposition residual $\sim10^{-15}$\,\AA), so these are
+real missed merges; the relating isometry $M$ has rotation angles $38.21$, $60$,
+$158.21$ and $180$ degrees, and for $8$ of the $18$ that $M$ has \emph{no}
+integral representation, so $W$ provably cannot supply the dressing; the
+Cartesian branch, dressed with the $48$--element sample of $D_{\infty h}$, merges
+$6$ of $18$ --- exactly those whose required twist happened to be sampled; and
+\texttt{same\_multimer\_geom} merges $18$ of $18$.
+
+Deduplication is therefore incomplete for such crystals --- carbon dioxide
+returns $39$ dimers at $R=15$ where $36$ is correct --- and \texttt{generate}
+emits a \texttt{RuntimeWarning} so the duplicates are never silent.
+\texttt{full\_congruence\_check=True} recovers part of the gap ($39\to38$). The
+principled fix is to stop comparing the vacuous coordinate at all, by routing
+linear monomers to point--cloud congruence, which does not see it; that is
+deferred, not impossible. Note the multi--reference generalisation of
+Theorem~\ref{thm:search} does \emph{nothing} for this case: it is the same
+matcher with per--member groups, still comparing full $3\times3$ linear parts,
+still needing a finite group to quotient a continuum.
+
+\item\label{cav:bucket}\textbf{Completeness is per bucket.} Candidates are
+partitioned by a hash of the sorted, \emph{rounded} ($2$ d.p.) pairwise
+member--centroid distances, and only within--bucket pairs are ever compared. The
+key is an isometry invariant --- $\sigma_a$ fixes its monomer's centroid, and $M$
+preserves distances --- so equivalent clusters agree on it to $\sim10^{-9}$; but a
+pair sitting within $10^{-9}$ of a bin edge would be split and never compared.
+This is the one place in the pipeline where correctness rests on a numerical
+margin rather than a proof.
+
+\item\label{cav:tol}\textbf{Tolerance breaks exact transitivity.} The Cartesian
+branch decides \eqref{eq:dagger} only within \texttt{atol}, so the relation it
+computes is not exactly transitive and the surviving representative can depend on
+candidate order. The integer branch has no such defect, which is the reason
+routing tries it first --- not merely that it is faster.
+
+\item\label{cav:cloud}\textbf{The cross--reference fallback decides a coarser
+relation, heuristically.} \texttt{anchored\_match} takes one dressing group per
+base reference and holds $\pi$ reference--compatible, exactly as
+Definition~\ref{def:same} specifies, so cross--reference clusters are decided by
+the exact integer branch like any others. It previously took a single group,
+which forced every such pair out to the point cloud. Measured on the two
+multi--reference structures available --- pyrazole ($Z'=2$, $Pna2_1$) and
+fomepizole ($Z'=3$, $Pca2_1$) --- the integer branch reproduces all $132$ merges
+the cloud matcher made, with no disagreement in either direction, and the cloud
+matcher is no longer reached.
+
+\texttt{same\_multimer\_geom} remains the fallback, and is still needed. It
+decides cloud congruence, which is strictly coarser than $\sim$: it may pair
+atoms \emph{across} monomer boundaries, which a reference--compatible relation
+structurally cannot. That is still energy--preserving by the conclusion of
+Proposition~\ref{prop:energy}, so it is genuine capability rather than slack. Its
+\emph{search}, however, is heuristic: a best--conditioned anchor triple plus
+greedy nearest--same--$Z$ pairing, refitted on the full correspondence.
+Acceptance still requires the full residual test, so the failure mode is a missed
+merge, never a false one. Collinear clusters admit no anchor triple and are
+declined outright. It is also the intended home for linear monomers
+(Caveat~\ref{cav:linear}).
+
+\item\label{cav:gen}\textbf{Generation--side assumptions.} Everything above
+presumes the candidate set is right. \texttt{get\_unique\_sym\_ops} keeps one
+representative per coset of $W_i$ at tolerance \texttt{site\_atol}, which must be
+the same tolerance used to build the stabilizer at matching time or orbit and
+stabilizer disagree; it cannot be tightened arbitrarily, since a CIF writes a
+special position such as $(1/3,2/3,z)$ as rounded decimals, putting the site
+$\sim10^{-4}$ off the element. Separately, the cutoff is \emph{anchor--centric}:
+for $N>2$ a candidate's partners are each within $R$ of the anchor but may be
+arbitrarily far from one another. That is a deliberate convention, but it means
+the enumerated set is not ``all $N$-mers of diameter $R$''.
+
+\item\label{cav:distinct}\textbf{Distinct linear parts are a precondition, not a
+theorem.} Theorem~\ref{thm:search} needs $s_b$ to determine $d_b$, i.e.\ the
+stored dressings to have pairwise distinct linear parts, so that
+\texttt{index\_in\_S} returning the first match loses nothing. This is enforced by
+explicit deduplication in \texttt{context.bind} and in \texttt{\_self\_isometries}
+(at $10^{-4}$), and holds for all twelve X23 crystals, but it is an invariant of
+the construction rather than something proved.
+
+\end{enumerate}
 
 \end{document}
