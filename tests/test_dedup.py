@@ -110,6 +110,182 @@ def test_same_multimer_int_inversion_needs_W():
     ) is True
 
 
+# ---------------------------------------------------------------------------
+# Multi-reference (Z' > 1) support in the exact integer matcher
+#
+# docs/dedup_correctness.tex Def. 2 is already multi-reference: it draws each
+# dressing from D_{ref_G(a)} and requires pi to be reference-compatible. Only
+# `anchored_match`'s signature was single-group, which forced every
+# cross-reference pair out to the heuristic point-cloud matcher.
+# ---------------------------------------------------------------------------
+
+
+def _refs(sym_op_list, indices):
+    sym_op_list.ref_indices = np.array(indices, dtype=np.int64)
+    return sym_op_list
+
+
+def test_same_multimer_int_requires_reference_compatibility():
+    # Identical placement algebra in both halves; only the reference labels
+    # differ. The permutation must map each member onto a member drawn from the
+    # SAME base reference (Def. 2), so the first pair merges and the second --
+    # a ref0-with-ref0 dimer against a ref1-with-ref1 dimer, i.e. two different
+    # molecules -- must not.
+    W_by_ref = [[np.eye(3, dtype=np.int64)], [np.eye(3, dtype=np.int64)]]
+
+    def dimer(indices):
+        return _refs(SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1), indices)
+
+    assert matchers.same_multimer_int(dimer([0, 1]), dimer([0, 1]), W_by_ref) is True
+    assert matchers.same_multimer_int(dimer([0, 0]), dimer([1, 1]), W_by_ref) is False
+
+
+def test_same_multimer_int_reference_compatibility_binds_the_permutation():
+    # The two assertions above are decided by the CHEAP GUARD, not by the
+    # constraint they are named for: `sorted(refG) != sorted(refH)` rejects a
+    # ref0-ref0 dimer against a ref1-ref1 dimer before any permutation is
+    # considered. Deleting the reference-compatibility test inside
+    # `anchored_match` leaves them both passing.
+    #
+    # This case gets past the guard. Both clusters draw on references {0, 1}
+    # exactly once, and the placement algebra is IDENTICAL; only the order of
+    # the labels differs. Reference-compatibility then forces pi(0) onto H's
+    # member 1, so the matcher compares Delta^G_01 = (I, +t) against
+    # Delta^H_10 = (I, -t) and correctly declines. Without it the identity
+    # permutation matches trivially and two different hetero dimers are merged.
+    W_by_ref = [[np.eye(3, dtype=np.int64)], [np.eye(3, dtype=np.int64)]]
+
+    def dimer(indices):
+        return _refs(SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1), indices)
+
+    g, h = dimer([0, 1]), dimer([1, 0])
+    assert sorted(g.ref_indices.tolist()) == sorted(h.ref_indices.tolist()), (
+        "the cheap guard must NOT fire here, or this test degenerates into the "
+        "one above"
+    )
+    assert matchers.same_multimer_int(g, h, W_by_ref) is False, (
+        "a reference-incompatible permutation was accepted: member 0 of one "
+        "cluster was matched to a member of the other drawn from a different "
+        "base reference, which merges two genuinely different hetero dimers"
+    )
+
+    # A THREE-member case, because at n = 2 the constraint is enforced twice
+    # over and either copy alone suffices: `anchored_match` screens the anchor
+    # image (refH[h0] != r0) and each subsequent image (refH[h] != rb), and with
+    # only one member left to place after the anchor, whichever screen survives
+    # forces the same answer. Deleting just one of the two therefore changes
+    # nothing above.
+    #
+    # With refG = [0, 0, 1] against refH = [0, 1, 0] there are two members to
+    # place after the anchor, so the per-image screen is doing work the anchor
+    # screen cannot: anchoring correctly on H's member 0 still leaves G's second
+    # ref-0 member free to be paired with H's ref-1 member. The reference
+    # multiset is unchanged, so again the cheap guard stays silent.
+    def trimer(indices):
+        return _refs(
+            SymOpList(
+                [SymOp.identity(), _translate([12, 0, 0]), _translate([0, 24, 0])], 1
+            ),
+            indices,
+        )
+
+    assert matchers.same_multimer_int(trimer([0, 0, 1]), trimer([0, 1, 0]), W_by_ref) \
+        is False, (
+        "a reference-incompatible permutation was accepted on a three-member "
+        "cluster: the per-image screen in anchored_match is not binding"
+    )
+
+    # Note the ANCHOR screen has no case of its own here, and cannot have one:
+    # given the reference-multiset guard in `same_multimer_int` and the
+    # per-image screen, it is redundant. `pi` is a bijection, so if every image
+    # from b = 1 on is reference-compatible and the two multisets agree, the one
+    # reference left over on each side is the same one -- the anchor is
+    # compatible by counting. It is kept as pruning (it fails a bad anchor
+    # immediately instead of after a full descent), not as correctness, which is
+    # why deleting it alone changes no answer in this suite.
+
+
+def test_same_multimer_int_merges_a_cross_reference_pair():
+    # The same hetero dimer written from each end: anchored on reference 0 with
+    # reference 1 a cell over, versus anchored on reference 1 with reference 0 a
+    # cell back. pi = [1, 0] is reference-compatible and no dressing is needed.
+    G = _refs(SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1), [0, 1])
+    H = _refs(SymOpList([SymOp.identity(), _translate([-12, 0, 0])], 1), [1, 0])
+    W_by_ref = [[np.eye(3, dtype=np.int64)], [np.eye(3, dtype=np.int64)]]
+
+    assert matchers.same_multimer_int(G, H, W_by_ref) is True
+
+
+def test_same_multimer_int_draws_the_dressing_from_the_members_own_reference():
+    # As test_same_multimer_int_inversion_needs_W, but split across two
+    # references. Working through (dagger), the inversion has to be supplied by
+    # the ANCHOR's reference (member 0), not the partner's: with s_0 = I the
+    # translation guard wants (-12,0,0) to equal (12,0,0).
+    G = _refs(SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1), [0, 1])
+    h_partner = SymOp.from_components(
+        -np.eye(3, dtype=np.int16), np.array([-12, 0, 0], dtype=np.int16)
+    )
+    H = _refs(SymOpList([SymOp.identity(), h_partner], 1), [0, 1])
+
+    I = np.eye(3, dtype=np.int64)
+    assert matchers.same_multimer_int(G, H, [[I, -I], [I]]) is True
+    # the same operation offered on the wrong reference must not be usable
+    assert matchers.same_multimer_int(G, H, [[I], [I, -I]]) is False
+
+
+# Both multi-reference fixtures, because the claim in `dedup/cloud.py` is about
+# both: pyrazole is Z' = 2 (Pna2_1) and fomepizole is Z' = 3 (Pca2_1), and
+# symmetry detection collapses neither. Before `anchored_match` took one dressing
+# group per base reference, every hetero pair in these crystals fell out to
+# `same_multimer_geom`.
+@pytest.mark.parametrize("name,zprime,R,expected", [
+    ("pyrazole",   2, 8.0, PYRAZOLE_DIMERS_R8),
+    ("fomepizole", 3, 7.0, FOMEPIZOLE_DIMERS_R7),
+])
+def test_cross_reference_dimers_no_longer_need_the_cloud_matcher(
+    name, zprime, R, expected, monkeypatch
+):
+    calls = []
+    real = cloud.same_multimer_geom
+    monkeypatch.setattr(
+        cloud, "same_multimer_geom",
+        lambda g, h, **kw: (calls.append(1), real(g, h, **kw))[1],
+    )
+    crystal, _ = load(name)
+    # Assert the premise rather than trusting the fixture: if detection ever
+    # collapsed these to Z' = 1 the test would still pass while testing nothing.
+    assert len(crystal.detect_symmetry(1e-3).get_references()) == zprime, (
+        f"{name} is no longer Z' = {zprime}; this test no longer exercises the "
+        "cross-reference path"
+    )
+
+    mers = generate.generate(crystal, 2, R, **GENERATE_KW)
+
+    assert len(mers) == expected
+    assert calls == [], (
+        f"{name} (Z'={zprime}): the cloud matcher was still consulted "
+        f"{len(calls)} times; the integer matcher should now decide "
+        "cross-reference pairs"
+    )
+
+
+@pytest.mark.parametrize("name,N,R", [
+    ("pyrazole",   2, 8.0), ("pyrazole",   3, 6.0),
+    ("fomepizole", 2, 7.0), ("fomepizole", 3, 6.0), ("fomepizole", 4, 5.5),
+])
+def test_cross_reference_dedup_stays_complete(name, N, R):
+    # Completeness of the multi-reference path, now across orders as well as
+    # across Z'. A cross-reference cluster at N = 4 draws on three different
+    # dressing groups at once, which is where a per-member indexing error would
+    # show up and a dimer would not.
+
+    crystal, _ = load(name)
+    mers = generate.generate(crystal, N, R, **GENERATE_KW)
+    n_classes, _ = count_chemistry_classes(mers, atol=1e-8)
+    assert mers, f"{name} N={N}: nothing generated, test is vacuous"
+    assert n_classes == len(mers)
+
+
 def test_bind_sets_site_symmetry_and_gate():
     crystal, monomer = load("benzene")
     context.bind(crystal, crystal.get_references())
@@ -117,8 +293,12 @@ def test_bind_sets_site_symmetry_and_gate():
     # Benzene is on an inversion centre: identity + inversion in the dressing.
     assert any(np.array_equal(w, np.eye(3, dtype=np.int64)) for w in context.W_lin_by_ref[0])
     assert any(np.array_equal(w, -np.eye(3, dtype=np.int64)) for w in context.W_lin_by_ref[0])
-    # Molecular point group (D6h-ish) is richer than the site symmetry.
-    assert context.check_congruence_by_ref[0] is True
+    # The molecular point group IS richer than the site symmetry ...
+    assert len(context.self_iso_by_ref[0]) > len(context.W_lin_by_ref[0])
+    # ... but that alone no longer opens the Cartesian congruence gate: benzene
+    # is neither linear nor in a Sohncke group, and the branch was measured to
+    # yield zero merges for it. See test_float_branch_gate_is_minimal.
+    assert context.check_congruence_by_ref[0] is False
 
 
 def test_are_equivalent_fallback_gated_by_check_congruence(monkeypatch):
@@ -162,7 +342,7 @@ def test_are_equivalent_integer_path_matches_without_fallback(monkeypatch):
 def test_generate_dimer_count_regression():
     crystal, monomer = load("benzene")
     mers = generate.generate(crystal, 2, 5.0, use_origin=True, n_jobs=1)
-    assert len(mers) == BENZENE_DIMERS   # from Step 5
+    assert len(mers) == BENZENE_DIMERS
 
 
 def test_int_inv_rejects_non_unimodular():
@@ -191,7 +371,7 @@ def test_self_isometry_linear_part_is_not_a_symmetry():
         return max(np.min(np.linalg.norm(X - p, axis=1)) for p in P)
 
     worst_linear = 0.0
-    for s in mon.self_isometries:
+    for s in mon.point_group:
         worst_linear = max(worst_linear, max_mismatch(X @ s.T))
         # the affine form about the centroid IS a symmetry
         assert max_mismatch((X - c) @ s.T + c) < 1e-8
@@ -290,17 +470,86 @@ def test_generate_runs_on_high_symmetry_crystals():
         assert len(mers) > 0
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="linear monomers are out of scope; deduplication is knowingly "
+           "incomplete for them. Kept as the target so a future fix shows up "
+           "as XPASS. See the limitation note in crystalatte.work.dedup",
+)
 def test_linear_monomer_dedup_is_complete():
-    # CO2 is linear, so its point group (D_inf_h) is CONTINUOUS. The finite
-    # self-isometry sample cannot supply the dressing the relative-transform
-    # matchers need, so such monomers must be decided by point-cloud
-    # congruence instead.
-    from crystalatte import count_chemistry_classes
+    # CO2 is linear, so every atom lies ON the molecular axis and a twist about
+    # that axis moves nothing. But a placement stores a full 3x3 rotation, so
+    # that physically meaningless twist is still compared, and two placements of
+    # the identical molecule can fail to match.
+    #
+    # This used to be absorbed by the tolerant Cartesian matcher, dressed by a
+    # finite SAMPLE of CO2's continuous point group. That was removed: the
+    # dressings did no physical work (one displaced no atom by more than 0.000
+    # A) and it only worked when the needed twist fell inside the sample.
+    #
+    # Consequence, and what this test pins: 3 duplicate pairs now survive, so
+    # n_classes (36) < len(mers) (39). The fix is to compare atoms rather than
+    # rotations for linear monomers -- cloud.same_multimer_geom already merges
+    # all 108 affected pairs.
 
     crystal, _ = load("carbon_dioxide")
     mers = generate.generate(crystal, 2, 15.0, **GENERATE_KW)
     n_classes, _ = count_chemistry_classes(mers, atol=1e-8)
     assert n_classes == len(mers)
+
+
+def test_linear_monomer_emits_a_warning():
+    # The one remaining linearity test in the codebase is purely diagnostic: it
+    # must warn, and must not change any result.
+    with pytest.warns(RuntimeWarning, match="linear molecule"):
+        crystal, _ = load("carbon_dioxide")
+        generate.generate(crystal, 2, 6.0, **GENERATE_KW)
+
+
+def test_nonlinear_monomer_emits_no_warning(recwarn):
+    crystal, _ = load("benzene")
+    generate.generate(crystal, 2, 6.0, **GENERATE_KW)
+    assert not [w for w in recwarn if "linear molecule" in str(w.message)]
+
+
+def test_float_branch_gate_is_minimal():
+    # The Cartesian congruence branch is provably needed in ONE case: a Sohncke
+    # group with an achiral monomer, where enantiomers force an improper dressing
+    # that W_lin, being entirely proper, cannot supply. `len(S) > len(W)` alone is
+    # far too weak a gate -- it holds for benzene, urea, imidazole, ice and
+    # hexamine, where the branch costs 32-44% of trimer runtime for ZERO merges.
+    def _gate(name, **kw):
+        crystal, _ = load(name)
+        crystal = crystal.detect_symmetry(1e-3)
+        context.bind(crystal, crystal.get_references(), **kw)
+        return context.check_congruence_by_ref[0]
+
+    assert _gate("ammonia") is True           # P2_13 is Sohncke, NH3 achiral
+    # Rich molecular symmetry is NOT on its own a reason to open the gate.
+    assert _gate("benzene") is False          # |S| > |W| but not Sohncke
+    assert _gate("urea") is False
+    assert _gate("ice") is False
+    # Linear monomers deliberately no longer open it -- they are out of scope.
+    assert _gate("carbon_dioxide") is False
+
+
+def test_full_congruence_check_is_unconditional():
+    # The escape hatch must run the branch for EVERY reference, including those
+    # whose detected S is deficient. `len(S) > len(W)` belongs inside the narrow
+    # arm: S is detected numerically and under-detects (adamantane finds 2 of 24
+    # operations, ice 2 of 6), so guarding the hatch with it made the hatch
+    # silently inoperative for exactly the crystals most likely to need it.
+    def _gate(name, **kw):
+        crystal, _ = load(name)
+        crystal = crystal.detect_symmetry(1e-3)
+        context.bind(crystal, crystal.get_references(), **kw)
+        return context.check_congruence_by_ref[0]
+
+    for name in ("benzene", "carbon_dioxide", "ammonia",
+                 "adamantane", "ice", "urea", "hexamine"):
+        assert _gate(name, full_congruence_check=True) is True, (
+            f"escape hatch inoperative for {name}"
+        )
 
 
 def test_special_position_tolerance_absorbs_cif_rounding():
@@ -344,7 +593,7 @@ def test_kabsch_recovers_a_known_rotation():
     rng = np.random.default_rng(0)
     P = rng.normal(size=(12, 3)); P -= P.mean(axis=0)
     R = _random_rotation(1)
-    assert np.allclose(matchers.kabsch(P, P @ R.T), R, atol=1e-10)
+    assert np.allclose(cloud.kabsch(P, P @ R.T), R, atol=1e-10)
 
 
 def test_kabsch_allows_reflection():
@@ -354,14 +603,14 @@ def test_kabsch_allows_reflection():
     rng = np.random.default_rng(2)
     P = rng.normal(size=(12, 3)); P -= P.mean(axis=0)
     R = _random_rotation(3, improper=True)
-    fitted = matchers.kabsch(P, P @ R.T)
+    fitted = cloud.kabsch(P, P @ R.T)
     assert np.linalg.det(fitted) < 0
     assert np.allclose(fitted, R, atol=1e-10)
 
 
 def test_kabsch_returns_none_on_non_finite_input():
     P = np.zeros((3, 3)); P[0, 0] = np.nan
-    assert matchers.kabsch(P, np.eye(3)) is None
+    assert cloud.kabsch(P, np.eye(3)) is None
 
 
 def test_kabsch_full_correspondence_beats_a_thin_anchor_triple():
@@ -380,8 +629,329 @@ def test_kabsch_full_correspondence_beats_a_thin_anchor_triple():
         R = _random_rotation(seed + 100)
         B = A @ R.T + rng.normal(scale=1e-6, size=A.shape)
         B -= B.mean(axis=0)
-        worst_triple = max(worst_triple, np.abs(A @ matchers.kabsch(A[:3], B[:3]).T - B).max())
-        worst_full = max(worst_full, np.abs(A @ matchers.kabsch(A, B).T - B).max())
+        worst_triple = max(worst_triple, np.abs(A @ cloud.kabsch(A[:3], B[:3]).T - B).max())
+        worst_full = max(worst_full, np.abs(A @ cloud.kabsch(A, B).T - B).max())
 
     assert worst_full < worst_triple / 10
     assert worst_full < 1e-4        # comfortably inside same_multimer_geom's atol
+
+
+# ---------------------------------------------------------------------------
+# Over-merging
+#
+# The dedup can fail in two directions and they are NOT symmetric:
+#
+#   under-merge  a class survives as several representatives. Harmless to the
+#                lattice energy (multiplicities are conserved and the pieces are
+#                congruent, so sum(m_i/N * E_i) is unchanged) and visible as
+#                n_classes < len(mers).
+#   over-merge   two genuinely distinct clusters are declared identical, one is
+#                discarded, and the survivor absorbs its multiplicity. The
+#                lattice sum is then WRONG by (m_B/N)(E_A - E_B), and the usual
+#                `n_classes == len(mers)` check CANNOT see it -- a false merge
+#                lowers both sides together.
+#
+# The exact-count rows in test_generate.py do catch over-merging indirectly (a
+# spurious merge drops the count below the locked value), but only for those
+# crystals at those radii. The tests below check the property directly and
+# independently of the dedup's own logic.
+# ---------------------------------------------------------------------------
+
+
+def _cluster_referee(g_N):
+    """``(NRE, CHSEV)`` for a cluster, computed from its reconstructed atoms.
+
+    Both are isometry invariants that no part of the dedup path consults, so
+    they can referee it. They are NOT equally strong, and the difference is the
+    whole reason CHSEV is here:
+
+    - NRE is ``sum_{i<j} Z_i Z_j / r_ij`` -- a pure function of the multiset of
+      Z-tagged interatomic distances. That multiset is exactly what
+      :func:`fingerprints_match` already gates on, so NRE agrees to machine
+      precision on ANY pair that clears the gate. As a referee it can only catch
+      a merge that bypassed the gate, and is blind to every over-merge committed
+      downstream of it -- which is where the integer matcher, the Cartesian
+      fallback and the cloud matcher all live.
+    - CHSEV is the sorted eigenvalue spectrum of the Coulomb matrix. The same
+      distances appear in it, but the eigenvalues depend on how they are
+      ARRANGED in the matrix, not merely on their multiset, so CHSEV sees inside
+      the gate. See
+      :func:`test_chsev_separates_a_homometric_pair_that_nre_cannot`, which
+      exhibits two clouds with identical fingerprints and identical NRE whose
+      CHSEV differs by 4.7.
+
+    NRE is kept alongside it as a cheap first discriminator; CHSEV is the one
+    that closes the gap.
+    """
+
+    atoms = cluster_atoms_cart(g_N)
+    symbols = np.concatenate(
+        [context.references[g_N.ref_indices[k]].symbols for k in range(len(g_N))]
+    )
+    bohr = atoms / 0.52917721067
+    return float(_nre(symbols, bohr)), _chsev(symbols, bohr)
+
+
+def test_chsev_separates_a_homometric_pair_that_nre_cannot():
+    # Locks in the property that makes CHSEV the load-bearing half of the
+    # referee above. {0,1,4,10,12,17} and {0,1,8,11,13,17} are homometric: their
+    # difference multisets coincide, so the two clouds have identical
+    # interatomic distances -- identical distance fingerprints, and therefore
+    # identical NRE. Any over-merge between such a pair is invisible to an
+    # NRE-only referee. CHSEV separates them.
+    #
+    # If this ever fails, the referee in the over-merge test has quietly lost
+    # its teeth and is no stronger than the gate it is supposed to be checking.
+
+    A = np.array([[0.0, 0, 0], [1, 0, 0], [4, 0, 0], [10, 0, 0], [12, 0, 0], [17, 0, 0]])
+    B = np.array([[0.0, 0, 0], [1, 0, 0], [8, 0, 0], [11, 0, 0], [13, 0, 0], [17, 0, 0]])
+    sym = ["C"] * 6
+
+    def distances(P):
+        i, j = np.triu_indices(len(P), 1)
+        return np.sort(np.linalg.norm(P[i] - P[j], axis=1))
+
+    assert np.allclose(distances(A), distances(B), atol=1e-12), \
+        "the pair is no longer homometric, so it no longer tests anything"
+    assert abs(_nre(sym, A) - _nre(sym, B)) < 1e-9, \
+        "NRE must be blind here -- it is a function of the distance multiset"
+    assert np.abs(_chsev(sym, A) - _chsev(sym, B)).max() > 1.0, \
+        "CHSEV must separate them, or it adds nothing over NRE"
+
+
+# Parametrized over ORDER as well as crystal. The direct over-merge check used
+# to run only at N = 2, which left the regime where the anchored search works
+# hardest -- its cost is O(|S| n^3) in cluster size and the permutation
+# bookkeeping gets structurally harder with order -- entirely unrefereed. The
+# higher-order rows are deliberately at tighter R so they stay cheap: the point
+# is to exercise the matcher on 3- and 4-member permutations, not to enumerate
+# a large shell.
+@pytest.mark.parametrize("name,N,R", [
+    ("benzene", 2, 8.0), ("urea", 2, 8.0), ("ice", 2, 7.0),
+    ("adamantane", 2, 8.0), ("hexamine", 2, 9.0), ("ammonia", 2, 7.0),
+    ("benzene", 3, 7.0), ("urea", 3, 7.0), ("pyrazole", 3, 6.0),
+    ("benzene", 4, 6.0), ("ammonia", 4, 5.0),
+    ("fomepizole", 2, 7.0), ("fomepizole", 3, 6.0),   # Z' = 3
+    ("benzene", 5, 5.5), ("urea", 5, 5.5),
+])
+def test_no_over_merge_every_discarded_cluster_matches_a_survivor(name, N, R, monkeypatch):
+    # Direct over-merge test. Every cluster the deduper THREW AWAY must be
+    # genuinely equivalent to one it KEPT; otherwise a distinct interaction was
+    # silently deleted and another double-counted. Refereed by the nuclear
+    # repulsion energy, which no part of the dedup path consults.
+    #
+    # `generate_neighbors` returns only the survivors, so the discarded clusters
+    # are collected one layer down, where they still exist: `deduplicate_bucket`
+    # returns `(unique, duplicate)` per bucket. Wrapping it keeps this test at
+    # full strength without asking the enumeration to carry the duplicates back
+    # out, and the wrapper is pure observation -- the real function still does
+    # the work and its result is passed through untouched.
+
+    crystal, _ = load(name)
+    crystal = crystal.detect_symmetry(1e-3)
+    refs = crystal.get_references()
+    bounds = np.array([[-1, 1], [-1, 1], [-1, 1]])
+
+    duplicate = []
+    real_dedup = neighbors.deduplicate_bucket
+
+    def _capture(bucket):
+        local_unique, local_dup = real_dedup(bucket)
+        duplicate.extend(local_dup)
+        return local_unique, local_dup
+
+    monkeypatch.setattr(neighbors, "deduplicate_bucket", _capture)
+    unique = neighbors.generate_neighbors(
+        crystal, refs, bounds, R, N, **GENERATE_KW
+    )
+    assert duplicate, f"{name} N={N}: no duplicates generated, test is vacuous"
+
+    survivors = [_cluster_referee(u) for u in unique]
+    for d in duplicate:
+        nre_d, chsev_d = _cluster_referee(d)
+        near_nre = [c for n, c in survivors if abs(nre_d - n) < 1e-6]
+        assert near_nre, (
+            f"{name} N={N}: a discarded cluster (NRE={nre_d:.9f}) matches no "
+            f"survivor on NRE (closest is "
+            f"{min(abs(nre_d - n) for n, _ in survivors):.3e} away) -- this is "
+            f"an OVER-MERGE: a distinct multimer was deleted and another's "
+            f"multiplicity inflated"
+        )
+        gap = min(float(np.abs(chsev_d - c).max()) for c in near_nre)
+        assert gap < 1e-6, (
+            f"{name} N={N}: a discarded cluster matches a survivor on NRE but "
+            f"NOT on CHSEV (closest spectrum is {gap:.3e} away) -- this is an "
+            f"OVER-MERGE of two HOMOMETRIC clusters: same interatomic distances, "
+            f"different structure. An NRE-only referee cannot see this case, "
+            f"which is exactly why CHSEV is checked too"
+        )
+
+
+def test_no_over_merge_multiplicity_is_conserved(monkeypatch):
+    # Whatever the dedup decides, every candidate must be accounted for exactly
+    # once. A bug that dropped clusters outright would show here even if the
+    # survivors happened to look self-consistent.
+    #
+    # Stated against the candidates going IN rather than the duplicates coming
+    # out, so it needs nothing from `generate_neighbors` beyond the survivors:
+    # every candidate is either a survivor or folded into one's multiplicity,
+    # so the multiplicities must sum to the number of candidates enumerated.
+
+    crystal, _ = load("benzene")
+    crystal = crystal.detect_symmetry(1e-3)
+    refs = crystal.get_references()
+
+    candidates = 0
+    real_dedup = neighbors.deduplicate_bucket
+
+    def _count(bucket):
+        nonlocal candidates
+        candidates += len(bucket)
+        return real_dedup(bucket)
+
+    monkeypatch.setattr(neighbors, "deduplicate_bucket", _count)
+    unique = neighbors.generate_neighbors(
+        crystal, refs, np.array([[-1, 1], [-1, 1], [-1, 1]]), 8.0, 2,
+        **GENERATE_KW,
+    )
+    assert candidates, "no candidates enumerated, test is vacuous"
+    assert sum(u.multiplicity for u in unique) == candidates
+
+
+@pytest.mark.parametrize("name", [
+    "benzene", "uracil", "formamide", "cytosine", "ammonia", "acetic_acid",
+    "imidazole", "urea", "adamantane", "carbon_dioxide", "hexamine", "ice",
+])
+def test_every_dressing_is_a_symmetry_of_its_monomer(name):
+    # The ONLY protection against over-merging lives in how the dressing groups
+    # are built. `anchored_match` trusts whatever group it is handed -- it solves
+    # the relative-transform equations over that group and never asks whether a
+    # dressing is a real symmetry. So the invariant that matters is checked here:
+    # every stored dressing must actually map its monomer onto itself.
+    #
+    # W is derived from the space group, so it is EXACT (a site operation
+    # necessarily permutes the atoms of the molecule it fixes).
+    # S is detected numerically at atol=0.05, so its operations are only good to
+    # that tolerance -- measured worst case 0.0482 A on imidazole. That gap is
+    # the over-merge exposure; loosening detection widens it, and this test is
+    # what would notice.
+
+    crystal, _ = load(name)
+    crystal = crystal.detect_symmetry(1e-3)
+    refs = crystal.get_references()
+    context.bind(crystal, refs)
+
+    mon = refs[0]
+    X = np.asarray(mon.cart_coords, float)
+    pos = X - X.mean(axis=0)
+    Z = np.array([qcel.periodictable.to_Z(s) for s in mon.symbols])
+    A = np.asarray(crystal.lattice_vectors, float)
+
+    def worst_displacement(ops):
+        worst = 0.0
+        for u in ops:
+            Y = pos @ np.asarray(u, float).T
+            for i in range(len(pos)):
+                same_z = [j for j in range(len(pos)) if Z[j] == Z[i]]
+                worst = max(worst, min(np.linalg.norm(pos[j] - Y[i]) for j in same_z))
+        return worst
+
+    W_cart = [A @ w.astype(float) @ np.linalg.inv(A)
+              for w in context.W_lin_by_ref[0]]
+    dW = worst_displacement(W_cart)
+    dS = worst_displacement(context.self_iso_by_ref[0])
+
+    assert dW < 1e-3, (
+        f"{name}: a site-symmetry dressing displaces an atom by {dW:.4f} A. "
+        "W is supposed to be exact by construction -- this means the site "
+        "symmetry does not actually preserve the molecule."
+    )
+    assert dS <= 0.05 + 1e-9, (
+        f"{name}: a molecular dressing displaces an atom by {dS:.4f} A, beyond "
+        "the 0.05 A detection tolerance. Dressings this far from a real symmetry "
+        "can merge genuinely distinct clusters (over-merge), which corrupts the "
+        "lattice sum and is invisible to the n_classes == len(mers) check."
+    )
+
+
+@pytest.mark.parametrize("name", [
+    "benzene", "uracil", "formamide", "cytosine", "ammonia", "acetic_acid",
+    "imidazole", "urea", "adamantane", "carbon_dioxide", "hexamine", "ice",
+])
+def test_bound_dressing_groups_satisfy_the_containment_theorem(name):
+    # W_lin <= S is a theorem, and `bind` is where the two groups meet, so this
+    # is where the containment has to actually hold. It is the previous test's
+    # companion: that one checks no dressing is spurious (no over-detection),
+    # this one checks none is missing (no under-detection). The first protects
+    # the lattice energy; the second protects against redundant QC jobs.
+    crystal, _ = load(name)
+    crystal = crystal.detect_symmetry(1e-3)
+    refs = crystal.get_references()
+    context.bind(crystal, refs)
+
+    A = np.asarray(crystal.lattice_vectors, float)
+    A_inv = np.linalg.inv(A)
+    for i in range(len(refs)):
+        S = context.self_iso_by_ref[i]
+        for w in context.W_lin_by_ref[i]:
+            w_cart = A @ np.asarray(w, float) @ A_inv
+            assert any(np.allclose(w_cart, s, atol=1e-3) for s in S), (
+                f"{name}: reference {i} has a site operation absent from S. "
+                "Any merge that needs it as a dressing is lost."
+            )
+
+
+# ---------------------------------------------------------------------------
+# Parallel dedup path
+#
+# generate_neighbors only spawns a pool when the estimated pairwise work clears
+# PARALLEL_MIN_PAIR_WORK, because below that the pool costs more than it saves.
+# No crystal in this suite is anywhere near that threshold, so without forcing
+# it the parallel branch is never executed by the tests -- which is exactly how
+# an ImportError in that branch reached a production-scale benchmark unnoticed.
+# ---------------------------------------------------------------------------
+
+
+def test_parallel_branch_executes_and_agrees_with_serial(monkeypatch):
+
+    crystal, _ = load("benzene")
+    crystal = crystal.detect_symmetry(1e-3)
+    refs = crystal.get_references()
+    bounds = np.array([[-1, 1], [-1, 1], [-1, 1]])
+
+    serial_u = neighbors.generate_neighbors(
+        crystal, refs, bounds, 8.0, 2, **GENERATE_KW
+    )
+
+    # force the pool on despite the small workload
+    monkeypatch.setattr(neighbors, "PARALLEL_MIN_PAIR_WORK", 0)
+    par_u = neighbors.generate_neighbors(
+        crystal, refs, bounds, 8.0, 2, use_origin=True, n_jobs=2, verbose=0
+    )
+
+    assert len(par_u) == len(serial_u)
+    # No separate duplicate-count assertion is needed: the multiplicities sum to
+    # the candidate total either way, so equal multiplicity multisets already
+    # pin the number of duplicates the two paths folded away.
+    assert sorted(u.multiplicity for u in par_u) == \
+           sorted(u.multiplicity for u in serial_u)
+
+
+def test_parallel_is_skipped_below_the_work_threshold(monkeypatch):
+    # The threshold must actually gate: a small run with n_jobs > 1 should never
+    # reach the pool. Poison ProcessPoolExecutor so that touching it fails.
+
+    def _boom(*a, **k):
+        raise AssertionError("pool started for a workload below the threshold")
+
+    monkeypatch.setattr(cf, "ProcessPoolExecutor", _boom)
+    monkeypatch.setattr(neighbors, "PARALLEL_MIN_PAIR_WORK", 10**12)
+
+    crystal, _ = load("benzene")
+    crystal = crystal.detect_symmetry(1e-3)
+    refs = crystal.get_references()
+    unique = neighbors.generate_neighbors(
+        crystal, refs, np.array([[-1, 1], [-1, 1], [-1, 1]]), 6.0, 2,
+        use_origin=True, n_jobs=8, verbose=0,
+    )
+    assert unique

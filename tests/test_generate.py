@@ -25,46 +25,47 @@ _ATOL = 1e-8
 
 
 # ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-def _load(cif_rel: str):
-    """Parse the first block of a CIF file and return (crystal, reference)."""
-    return next(cle.from_cif(str(DATA / cif_rel)))
-
-
-# ---------------------------------------------------------------------------
 # Dimer (N=2) counts
 # ---------------------------------------------------------------------------
 
 # Counts captured once the deduper agreed with the NRE+CHSEV oracle on every
 # crystal; each was additionally confirmed by explicit Kabsch congruence, so a
 # change here means the dedup changed, not that the reference drifted.
-@pytest.mark.parametrize("cif_rel,R,expected", [
-    ("x23/benzene/benzene.cif",              15.0, 52),
-    ("x23/uracil/uracil.cif",               15.0, 111),
-    ("x23/formamide/formamide.cif",          15.0, 193),
-    ("x23/cytosine/cytosine.cif",            15.0, 89),
-    ("x23/ammonia/ammonia.cif",              15.0, 82),
-    ("x23/acetic_acid/acetic_acid.cif",      15.0, 120),
-    ("x23/imidazole/imidazole.cif",          15.0, 135),
-    ("x23/urea/urea.cif",                    15.0, 49),
-    ("x23/adamantane/adamantane.cif",        15.0, 17),
-    ("x23/carbon_dioxide/carbon_dioxide.cif", 15.0, 36),
-    ("x23/hexamine/hexamine.cif",            15.0, 9),
-    ("x23/ice/ice.cif",                      15.0, 205),
+@pytest.mark.parametrize("name,R,expected", [
+    ("benzene",              15.0, 52),
+    ("uracil",               15.0, 111),
+    ("formamide",          15.0, 193),
+    ("cytosine",            15.0, 89),
+    ("ammonia",              15.0, 82),
+    ("acetic_acid",      15.0, 120),
+    ("imidazole",          15.0, 135),
+    ("urea",                    15.0, 49),
+    ("adamantane",        15.0, 17),
     pytest.param(
-        "x23/naphthalene/naphthalene.cif", 15.0, None,
+        "carbon_dioxide", 15.0, 36,
         marks=pytest.mark.xfail(
-            raises=ValueError, strict=True,
-            reason="CIF carries neither a space-group number nor a Hall symbol; "
-                   "see crystalatte.io.cif",
+            strict=True,
+            reason="linear monomer: deduplication is knowingly incomplete, so 3 "
+                   "duplicate pairs survive and 39 are returned. 36 is the "
+                   "correct answer and is kept here as the target; see the "
+                   "limitation note in crystalatte.work.dedup",
         ),
     ),
+    ("hexamine",            15.0, 9),
+    ("ice",                      15.0, 205),
+    # Z' = 3 (Pca2_1) -- three symmetry-independent molecules, so every dimer
+    # here is drawn from a pair of possibly-different references. Lives under
+    # other/ rather than x23/.
+    ("fomepizole",      15.0, 276),
+    # Named only by Hermann-Mauguin symbol -- no number, no Hall symbol -- so
+    # this row also covers the H-M -> Hall resolution path end to end. The
+    # setting matters: read as the standard P2_1/c instead of the P2_1/a the
+    # file means, the operations differ and this count moves.
+    ("naphthalene",          15.0, 49),
 ])
-def test_dimer_count(cif_rel, R, expected):
-    crystal, reference = _load(cif_rel)
-    multimers = cle.generate(crystal, N=2, R=R, **_GENERATE_KWARGS)
+def test_dimer_count(name, R, expected):
+    xtal = crystal(name)
+    multimers = cle.generate(xtal, N=2, R=R, **GENERATE_KW)
 
     n_classes, _ = count_chemistry_classes(multimers, atol=_ATOL)
 
@@ -83,14 +84,14 @@ def test_dimer_count(cif_rel, R, expected):
 # Trimer (N=3) counts
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("cif_rel,R,expected", [
-    ("x23/benzene/benzene.cif",  10.0, 676),
-    ("x23/uracil/uracil.cif",    10.0, 1173),
-    ("x23/formamide/formamide.cif", 10.0, 3204),
+@pytest.mark.parametrize("name,R,expected", [
+    ("benzene",  10.0, 676),
+    ("uracil",    10.0, 1173),
+    ("formamide", 10.0, 3204),
 ])
-def test_trimer_count(cif_rel, R, expected):
-    crystal, reference = _load(cif_rel)
-    multimers = cle.generate(crystal, N=3, R=R, **_GENERATE_KWARGS)
+def test_trimer_count(name, R, expected):
+    xtal = crystal(name)
+    multimers = cle.generate(xtal, N=3, R=R, **GENERATE_KW)
 
     n_classes, _ = count_chemistry_classes(multimers, atol=_ATOL)
 
@@ -105,20 +106,120 @@ def test_trimer_count(cif_rel, R, expected):
 
 
 # ---------------------------------------------------------------------------
+# Tetramer (N=4) counts
+#
+# The suite ran only N=2 and N=3 for a long time. Order matters to the matcher:
+# the anchored search is O(|S| n^3) in cluster size, the permutation it solves
+# for has n! candidate images before reference-compatibility prunes them, and
+# the dressing bookkeeping is per-member -- so an indexing error that is
+# invisible on a pair can surface on a quadruple. Radii are tight so these stay
+# under a second each; the point is the order, not the shell size.
+#
+# Each count was confirmed against the chemistry oracle at capture time (the
+# assertion below re-checks it on every run) and verified stable across repeated
+# runs.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name,R,expected", [
+    ("benzene",   6.0, 234),
+    ("urea",         6.0, 278),
+    ("pyrazole", 6.0, 850),   # Z' = 2: cross-reference tetramers
+    ("fomepizole", 5.5, 742),  # Z' = 3: three groups at once
+])
+def test_tetramer_count(name, R, expected):
+    xtal = crystal(name)
+    multimers = cle.generate(xtal, N=4, R=R, **GENERATE_KW)
+
+    n_classes, _ = count_chemistry_classes(multimers, atol=_ATOL)
+
+    assert n_classes == len(multimers), (
+        f"Duplicate multimers detected: {len(multimers)} generated but only "
+        f"{n_classes} distinct chemistry classes"
+    )
+
+    assert len(multimers) == expected, (
+        f"Expected {expected} tetramers, got {len(multimers)}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Pentamer (N=5) counts
+#
+# The smallest order at which a cluster can hold five distinct dressing choices
+# simultaneously. Kept to three short rows at tight R -- each under a second --
+# because the value here is the arity, not the shell: past N=4 the enumeration
+# grows as C(M, N-1) and a larger radius buys cost rather than coverage.
+#
+# pyrazole is included because a Z' = 2 pentamer mixes two dressing groups
+# across five members, which is the most demanding shape the matcher currently
+# sees anywhere in the suite.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name,R,expected", [
+    ("benzene",   5.5, 243),
+    ("urea",         5.5, 272),
+    ("pyrazole", 5.0, 1334),  # Z' = 2
+])
+def test_pentamer_count(name, R, expected):
+    xtal = crystal(name)
+    multimers = cle.generate(xtal, N=5, R=R, **GENERATE_KW)
+
+    n_classes, _ = count_chemistry_classes(multimers, atol=_ATOL)
+
+    assert n_classes == len(multimers), (
+        f"Duplicate multimers detected: {len(multimers)} generated but only "
+        f"{n_classes} distinct chemistry classes"
+    )
+
+    assert len(multimers) == expected, (
+        f"Expected {expected} pentamers, got {len(multimers)}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Input validation
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("bad_N", [1, 0, -1, -3])
+def test_generate_rejects_orders_below_two(bad_N):
+    # A multimer is an interaction between monomers, so N < 2 has nothing to
+    # mean. N = 1 was the dangerous case: it ran to completion and returned one
+    # "multimer" per reference -- the anchor alone, because combinations(near, 0)
+    # yields a single empty tuple -- so the caller got a confidently wrong answer
+    # instead of an error.
+    xtal = crystal("benzene")
+    with pytest.raises(ValueError, match="N must be an integer >= 2"):
+        cle.generate(xtal, N=bad_N, R=5.0, **GENERATE_KW)
+
+
+@pytest.mark.parametrize("bad_N", [2.0, "2", None, 2.5])
+def test_generate_rejects_non_integer_orders(bad_N):
+    # N indexes a combination width; a float or a string cannot. Rejected at the
+    # door rather than deep inside itertools, where the error names neither N
+    # nor generate().
+    xtal = crystal("benzene")
+    with pytest.raises(ValueError, match="N must be an integer >= 2"):
+        cle.generate(xtal, N=bad_N, R=5.0, **GENERATE_KW)
+
+
+def test_generate_accepts_the_smallest_valid_order():
+    # The gate must not have moved the boundary: N = 2 is valid and still works.
+    xtal = crystal("benzene")
+    assert cle.generate(xtal, N=2, R=5.0, **GENERATE_KW)
+
+
+# ---------------------------------------------------------------------------
 # Regression: R-cutoff sensitivity
 # Verifies that tightening R monotonically reduces (or holds) the count.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("cif_rel", [
-    "x23/benzene/benzene.cif",
-    "x23/uracil/uracil.cif",
-])
-def test_dimer_count_decreases_with_tighter_R(cif_rel):
-    crystal, reference = _load(cif_rel)
+@pytest.mark.parametrize("name", ["benzene", "uracil"])
+def test_dimer_count_decreases_with_tighter_R(name):
+    xtal = crystal(name)
 
     counts = []
     for R in [20.0, 15.0, 10.0, 7.0]:
-        multimers = cle.generate(crystal, N=2, R=R, **_GENERATE_KWARGS)
+        multimers = cle.generate(xtal, N=2, R=R, **GENERATE_KW)
         counts.append(len(multimers))
 
     assert counts == sorted(counts, reverse=True), (

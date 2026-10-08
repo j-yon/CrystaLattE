@@ -1,3 +1,9 @@
+"""Multi-reference (Z' > 1) enumeration and deduplication.
+
+Covers reference discovery, per-member `ref_indices` plumbing, per-reference
+binding, and the physical dimers of a Z' = 4 cell. See tests/README.md.
+"""
+
 import numpy as np
 
 from crystalatte.core.sym_ops import SymOp, SymOpList
@@ -79,11 +85,27 @@ def test_cloud_congruence_matches_translated_and_mirror():
     # Same physical pair described two ways: (ref0 @ I, ref1 @ I) vs itself.
     g = SymOpList([SymOp.identity(), SymOp.identity()], 1); g.ref_indices = np.array([0, 1])
     h = SymOpList([SymOp.identity(), SymOp.identity()], 1); h.ref_indices = np.array([0, 1])
-    assert matchers.same_multimer_geom(g, h) is True
-    # A genuinely different partner molecule must NOT match.
+    assert cloud.same_multimer_geom(g, h) is True
+    # A DIFFERENT PARTNER REFERENCE, same placement. This must match, and the
+    # assertion is `is True` rather than a shrug: all four ammonia molecules in
+    # the P1 cell lie in a single symmetry orbit (the true group is P2_1 3), so
+    # the (ref0, ref1) and (ref0, ref2) pairs really are congruent clouds.
+    # Confirmed independently of the matcher by the chemistry referee:
+    # |NRE(0,1) - NRE(0,2)| = 0.000e+00 and max|CHSEV diff| = 4.3e-14.
     h2 = SymOpList([SymOp.identity(), SymOp.identity()], 1); h2.ref_indices = np.array([0, 2])
-    # (may or may not be congruent depending on geometry; assert it's a bool)
-    assert isinstance(matchers.same_multimer_geom(g, h2), bool)
+    assert cloud.same_multimer_geom(g, h2) is True
+
+    # THE NEGATIVE CASE. The two assertions above only ever ask the matcher to
+    # say yes, so on their own they are equally happy with a matcher that never
+    # says no. Pushing the partner one cell along c gives a genuinely different
+    # arrangement -- the referee puts it 1.69 hartree away in NRE, far outside
+    # any tolerance here -- and the matcher must reject it.
+    far = SymOpList(
+        [SymOp.identity(),
+         SymOp.identity().translate(np.array([0, 0, 12], dtype=np.int16))], 1
+    )
+    far.ref_indices = np.array([0, 1])
+    assert cloud.same_multimer_geom(g, far) is False
 
 
 def test_are_equivalent_routes_mono_reference_to_integer(monkeypatch):
@@ -94,7 +116,7 @@ def test_are_equivalent_routes_mono_reference_to_integer(monkeypatch):
     g = SymOpList([SymOp.identity(), _tr([12, 0, 0])], 1)   # ref_indices default [0,0]
     h = SymOpList([SymOp.identity(), _tr([-12, 0, 0])], 1)
     called = {"geom": 0}
-    monkeypatch.setattr(matchers, "same_multimer_geom",
+    monkeypatch.setattr(cloud, "same_multimer_geom",
                         lambda a, b, **k: called.__setitem__("geom", called["geom"] + 1) or False)
     monkeypatch.setattr(equivalence, "fingerprints_match", lambda a, b, **k: True)
     equivalence.are_equivalent(g, h)
@@ -105,11 +127,15 @@ def _tr(dx12):
     return SymOp.identity().translate(np.array(dx12, dtype=np.int16))
 
 
-# captured: conda run -n cle python -c "..." (see task-5-report.md), under the
-# anchor-relative use_origin convention (Fix 1 of the final-review pass:
-# use_origin is measured from the ANCHOR monomer's centroid, not the global
-# origin, which only coincided with the reference centroid for Z'=1 crystals
-# like benzene).
+#: Ammonia's CIF is written in P1 with four NH3 in the cell, so it is Z' = 4
+#: before symmetry detection: the reference's true nearest neighbours are the
+#: other three ASU molecules at 3.94 A, which single-reference enumeration never
+#: formed at all -- it saw only the reference's own lattice translates at 5.13 A.
+#:
+#: Counted under the anchor-relative `use_origin` convention, where the distance
+#: is measured from the ANCHOR monomer's centroid rather than the global origin.
+#: The two coincide only at Z' = 1, which is why this crystal pins the
+#: distinction and benzene cannot.
 AMMONIA_DIMERS = 3
 # Same physical ammonia dimers, but under the DEFAULT closest-contact
 # convention (no use_origin/use_com) — captured independently so a future
@@ -127,7 +153,7 @@ def test_ammonia_physical_dimers():
     crystal, _ = load("ammonia")
     mers = generate.generate(crystal, 2, 5.0, **GENERATE_KW)
     # now includes the real ~3.94 A hetero-molecular contacts, not just self-translates
-    assert len(mers) == AMMONIA_DIMERS   # captured from the run in Step 4
+    assert len(mers) == AMMONIA_DIMERS
     assert AMMONIA_DIMERS > 2
     # every returned dimer has 2 monomers
     assert all(len(m.monomers) == 2 for m in mers)
