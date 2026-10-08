@@ -39,6 +39,23 @@ frac_to_cart: NDArray | None = None      # fractional -> Cartesian matrix (cart 
 cart_to_frac: NDArray | None = None  # Cartesian -> fractional matrix
 
 
+def _is_sohncke(crystal: Crystal) -> bool:
+    """Return True iff the space group contains no improper operation.
+
+    In such a group every crystallographic linear part has ``det = +1``, so by
+    ``docs/dedup_correctness.tex`` Thm ``thm:sohncke`` an enantiomeric merge
+    forces an IMPROPER dressing, which the site symmetry cannot supply. Only the
+    Cartesian branch, dressed by the full molecular point group, can certify it.
+
+    :param crystal: The crystal whose space group is tested
+    :returns: True iff every symmetry operation is proper
+    """
+    return all(
+        np.linalg.det(np.asarray(op.rot, dtype=float)) > 0
+        for op in crystal.space_group.sym_ops
+    )
+
+
 def bind(
     crystal: Crystal, monomers: list[Monomer], site_atol: float = SITE_ATOL
 ) -> None:
@@ -67,6 +84,7 @@ def bind(
     Z_by_ref, mass_by_ref, self_iso_by_ref = [], [], []
     W_lin_by_ref, check_congruence_by_ref = [], []
     self_iso_tr_by_ref, W_tr_by_ref = [], []
+    sohncke = _is_sohncke(crystal)
     for mon in references:
         Z_by_ref.append(
             np.array([qcel.periodictable.to_Z(s) for s in mon.symbols], dtype=np.int64)
