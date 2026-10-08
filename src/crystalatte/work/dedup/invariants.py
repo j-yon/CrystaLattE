@@ -109,7 +109,7 @@ def cluster_atoms_cart(g_N: SymOpList) -> NDArray:
     return context.active_crystal.to_cartesian(np.vstack(parts))
 
 
-@cache(maxsize=None)
+@cache
 def _triu_indices(n: int) -> tuple[NDArray, NDArray]:
     """Cache np.triu_indices for efficiency
 
