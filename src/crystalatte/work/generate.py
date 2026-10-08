@@ -76,6 +76,20 @@ def generate(crystal: Crystal, N: int, R: float, *, detect_symmetry=True, sympre
     if detect_symmetry:
         crystal = crystal.detect_symmetry(symprec)
     monomers = crystal.get_references()
+
+    # check for linear monomers and warn
+    for i, m in enumerate(monomers):
+        pos = np.asarray(m.cart_coords, dtype=float)
+        if np.linalg.matrix_rank(pos - pos.mean(axis=0), tol=1e-6) <= 1:
+            warnings.warn(
+                f"reference {i} is a linear molecule; multimer deduplication is "
+                "known to be incomplete for linear monomers and the result will "
+                "contain duplicates (see crystalatte.work.dedup)",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+
+    # effective radius for bounding box, needed for monoclinic/triclinic cells
     d = np.linalg.norm(crystal.lattice_vectors, axis=0)
     R_eff = R + max(pdist(m.cart_coords).max() for m in monomers)
 
