@@ -1,22 +1,53 @@
 import re
-from typing import Generator
+import warnings
+from collections.abc import Generator
 
 import numpy as np
 from CifFile import ReadCif
 
 from ..core.crystal import Crystal
-from ..core.multimer import Monomer, ASU
+from ..core.multimer import ASU, Monomer
 from ..core.space_group import SpaceGroup
+from ..core.sym_ops import SymOp
 
+# accepted spellings for each item
+_NUMBER_FIELDS = ("_symmetry_int_tables_number", "_space_group_it_number")
+_HALL_FIELDS = ("_symmetry_space_group_name_hall", "_space_group_name_hall")
+_HM_FIELDS = (
+    "_symmetry_space_group_name_h-m",
+    "_space_group_name_h-m_alt",
+    "_space_group_name_h-m",
+    "_space_group_name_h-m_full",
+)
+_SYMOP_FIELDS = ("_symmetry_equiv_pos_as_xyz", "_space_group_symop_operation_xyz")
+_CELL_LENGTH_FIELDS = ("_cell_length_a", "_cell_length_b", "_cell_length_c")
+_CELL_ANGLE_FIELDS = ("_cell_angle_alpha", "_cell_angle_beta", "_cell_angle_gamma")
+
+# lazily built map from a normalised Hermann-Mauguin symbol to its Hall symbol
+_HM_INDEX: dict[str, str] = {}
+
+# occupancy at or above this counts as fully occupied
+_FULL_OCCUPANCY = 0.999
+
+# what `from_cif` may be told to do about partially occupied sites
+DISORDER_POLICIES = ("error", "ignore", "drop")
 
 def _clean_block(block):
-    """Clean the data block by removing parentheses and converting to floats. NEEDS TO BE CLEANED, IM TOO TIRED RN"""
+    """Strip standard-uncertainty parentheses and convert numeric fields to floats
+
+    :param block: raw pycifrw data block
+    :returns: plain dict with numbers converted and uncertainties removed
+    """
     cleaned_block = {}
+    # pycifrw partitions CIF into a dict of lists/strings/floats
     for key, value in block.items():
+
+        # found a list, corresponds to a looped field
         if isinstance(value, list):
             cleaned_block[key] = []
             for item in value:
                 if isinstance(item, str):
+                    # clean uncertainties and convert to float if possible
                     cleaned_item = re.sub(r"\([^)]*\)", "", item)
                     try:
                         cleaned_block[key].append(float(cleaned_item))
@@ -24,75 +55,322 @@ def _clean_block(block):
                         cleaned_block[key].append(cleaned_item)
                 else:
                     cleaned_block[key].append(item)
+
+        # found a string, corresponds to a single-valued field
         elif isinstance(value, str):
+            # clean uncertainties and convert to float if possible
             cleaned_value = re.sub(r"\([^)]*\)", "", value)
             try:
                 cleaned_block[key] = float(cleaned_value)
             except ValueError:
                 cleaned_block[key] = cleaned_value
+        
+        # if not a string or list, leave it as is (most likely float)
         else:
             cleaned_block[key] = value
 
     return cleaned_block
 
 
-def from_cif(cif_file: str) -> Generator[tuple[Crystal, Monomer], None, None]:
-    """Parse a CIF file and extract the unit cell parameters, space group information, and atomic positions to create Crystal and Monomer objects.
+def _first(block: dict, fields: tuple[str, ...]):
+    """Return the first of ``fields`` present in ``block``, or None
 
-    :param cif_file: The name of the CIF input file.  Should be in the same directory as the script, or include the path to the file.
-    :returns: A generator that yields tuples of (Crystal, Monomer) for each data block in the CIF file. The Crystal object contains the unit cell parameters and space group information, while the Monomer object contains the atomic symbols and fractional coordinates of the atoms in the asymmetric unit. The generator allows for processing multiple data blocks in a CIF file, if present
+    :param block: cleaned data block
+    :param fields: accepted spellings, most-preferred first
+    :returns: value of the first field present, else None
     """
+    for name in fields:
+        if name in block and block[name] not in (None, "", "?", "."):
+            return block[name]
+    return None
 
-    # will check if file exists
+
+def _normalise_symbol(symbol) -> str:
+    """Reduce a space-group symbol to a comparable form
+
+    :param symbol: symbol as written in the file
+    :returns: normalised symbol
+    """
+    return re.sub(r"[\s_]", "", str(symbol)).lower()
+
+
+def _hall_from_hm(symbol: str) -> str | None:
+    """Map a Hermann-Mauguin symbol to the Hall symbol naming the same setting
+
+    :param symbol: Hermann-Mauguin symbol as written in the file
+    :returns: Hall symbol, or None if unknown or ambiguous
+    """
+    if not _HM_INDEX:
+        if SpaceGroup._data == {}:
+            SpaceGroup.load_data()
+
+        collisions: set[str] = set()
+        for key, entry in SpaceGroup._data.items():
+            if key.isdigit():  # number-keyed duplicate of a Hall-keyed entry
+                continue
+            for field in ("short", "Hermann-Mauguin"):
+                value = entry["symbol"].get(field)
+                if not value:
+                    continue
+                norm = _normalise_symbol(value)
+                if norm in _HM_INDEX and _HM_INDEX[norm] != key:
+                    collisions.add(norm)
+                _HM_INDEX.setdefault(norm, key)
+
+        for norm in collisions:
+            del _HM_INDEX[norm]
+
+    return _HM_INDEX.get(_normalise_symbol(symbol))
+
+
+def _listed_sym_ops(block: dict) -> list[SymOp] | None:
+    """Return the operations the file lists explicitly, if it lists any
+
+    :param block: cleaned data block
+    :returns: operations as :class:`SymOp`, or None if the file lists none
+    """
+    raw = _first(block, _SYMOP_FIELDS)
+    if raw is None:
+        return None # no operations listed
+
+    entries = raw if isinstance(raw, list) else [raw]
+    ops = []
+    for entry in entries:
+        text = str(entry).strip().strip("'\"")
+
+        # some writers prefix each operation with its loop index ("1 x,y,z").
+        text = re.sub(r"^\d+\s+", "", text)
+        if text:
+            ops.append(SymOp(text))
+    return ops or None
+
+
+def _op_signature(ops) -> set[tuple[bytes, bytes]]:
+    """Return a comparable signature for a set of operations, e.g. different coset representatives of the same setting
+
+    :param ops: operations to summarise
+    :returns: set of ``(rotation, translation mod 1)`` byte pairs
+    """
+    return {
+        (
+            np.asarray(op.rot, dtype=np.int64).tobytes(),
+            (np.asarray(op.tr, dtype=np.int64) % 12).tobytes(),
+        )
+        for op in ops
+    }
+
+
+def _verify_against_listed_ops(space_group, listed, source: str):
+    """Check a resolved space group against the file's own operation list
+
+    :param space_group: space group resolved from symbol or number
+    :param listed: operations the file lists, or None
+    :param source: how the space group was resolved, for the warning text
+    :returns: ``space_group``, or one rebuilt from ``listed`` on disagreement
+    """
+    if not listed or _op_signature(space_group.sym_ops) == _op_signature(listed):
+        return space_group
+
+    warnings.warn(
+        f"CIF declares a space group ({source}) whose {len(space_group.sym_ops)} "
+        f"operations do not match the {len(listed)} operations the file itself "
+        "lists. Using the listed operations...",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+    return SpaceGroup.from_sym_ops(
+        listed, number=space_group.number, symbol=space_group.symbol
+    )
+
+
+def _resolve_space_group(block: dict) -> SpaceGroup:
+    """Determine the space group of one data block
+
+    :param block: cleaned data block
+    :returns: resolved :class:`SpaceGroup`
+    :raises ValueError: if the block carries no usable symmetry information
+    """
+    if SpaceGroup._data == {}:
+        SpaceGroup.load_data()
+
+    # resolve Hall and Hermann-Mauguin symbols, and the international number, if present
+    hall = _first(block, _HALL_FIELDS)
+    hall = hall.strip() if isinstance(hall, str) else None
+    hm = _first(block, _HM_FIELDS)
+    hm = hm.strip() if isinstance(hm, str) else None
+    raw_number = _first(block, _NUMBER_FIELDS)
+
+    # grab the operations the file lists, if any
+    listed = _listed_sym_ops(block)
+
+    # source: Hall -> Hermann-Mauguin -> number, in that order 
+    source = "Hall symbol" if hall else None
+    if hall is None and hm is not None:
+        hall = _hall_from_hm(hm)
+        if hall is not None:
+            source = f"Hermann-Mauguin symbol {hm!r}"
+
+    number = int(raw_number) if raw_number is not None else None
+    if number is None and hall is not None:
+        entry = SpaceGroup._data.get(hall)
+        number = entry["number"] if entry else None
+
+    if number is not None:
+        if source is None:
+            source = "International number (standard setting)"
+        return _verify_against_listed_ops(SpaceGroup(number, hall=hall), listed, source)
+
+    # last resort, match based on the listed operations
+    if listed:
+        return SpaceGroup.from_sym_ops(
+            listed, symbol={"Hermann-Mauguin": hm} if hm else None
+        )
+
+    # we've tried all we can
+    raise ValueError(
+        "CIF block carries no usable symmetry information: no space group number "
+        f"({' / '.join(_NUMBER_FIELDS)}), no Hall symbol "
+        f"({' / '.join(_HALL_FIELDS)}), no recognised Hermann-Mauguin symbol "
+        f"(found {hm!r})" + (", " if hm else " ") + "and no explicit operation "
+        f"list ({' / '.join(_SYMOP_FIELDS)})."
+    )
+
+
+def _site_occupancies(block: dict, n_sites: int) -> np.ndarray:
+    """Return per-site occupancies
+
+    :param block: cleaned data block
+    :param n_sites: how many atom sites the block describes
+    :returns: an ``(n_sites,)`` float array
+    """
+    raw = _first(block, ("_atom_site_occupancy",))
+    if raw is None:
+        return np.ones(n_sites) # default to fully occupied if the field is absent
+
+    values = raw if isinstance(raw, list) else [raw]
+    occupancies = np.array(
+        [float(v) if not isinstance(v, str) else 1.0 for v in values], dtype=float
+    )
+    if len(occupancies) != n_sites:
+        return np.ones(n_sites) # default to fully occupied if the field is present but has the wrong length
+
+    return occupancies
+
+
+def _apply_disorder_policy(block: dict, coords: np.ndarray, policy: str):
+    """Resolve partially occupied sites according to ``policy``
+
+    :param block: cleaned data block
+    :param coords: fractional coordinates, shape ``(n, 3)``
+    :param policy: one of :data:`DISORDER_POLICIES`
+    :returns: boolean mask selecting the sites to keep
+    :raises ValueError: if ``policy`` is unknown or is ``"error"`` and the block contains partial occupation
+    """
+    if policy not in DISORDER_POLICIES:
+        raise ValueError(
+            f"unknown disorder policy {policy!r}; expected one of {DISORDER_POLICIES}"
+        )
+
+    occupancies = _site_occupancies(block, len(coords))
+    partial = occupancies < _FULL_OCCUPANCY
+    if not partial.any():
+        return np.ones(len(coords), dtype=bool) # found no partial occupancy
+
+    labels = _first(block, ("_atom_site_label",)) or []
+    labels = labels if isinstance(labels, list) else [labels]
+    named = ", ".join(
+        f"{labels[i] if i < len(labels) else f'site {i}'}={occupancies[i]:g}"
+        for i in np.flatnonzero(partial)
+    )
+
+    # the user has asked us to error on partial occupancy, so do that
+    if policy == "error":
+        raise ValueError(
+            f"CIF contains {int(partial.sum())} partially occupied site(s) "
+            f"({named}), but the disorder policy is set to 'error'."
+        )
+
+    # the user has asked us to ignore partial occupancy, so warn and keep all sites
+    if policy == "ignore":
+        warnings.warn(
+            f"CIF contains partially occupied site(s) ({named}); reading them as "
+            "ordinary atoms, which can produce molecules that do not exist.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+        return np.ones(len(coords), dtype=bool)
+
+    # the user has asked us to drop partial occupancy, so warn and keep only the fully occupied sites
+    warnings.warn(
+        f"CIF contains partially occupied site(s) ({named}); dropping them and "
+        "keeping only the fully occupied substructure.",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+    return ~partial
+
+
+def _resolve_asu(block: dict, coords: np.ndarray, keep: np.ndarray) -> ASU:
+    """Build the asymmetric unit, deriving element symbols however the file allows
+
+    :param block: cleaned data block
+    :param coords: fractional coordinates, shape ``(n, 3)``
+    :param keep: boolean mask of the sites to retain, from the disorder policy
+    :returns: assembled :class:`ASU`
+    :raises ValueError: if neither field is present
+    """
+    symbols = None
+    if "_atom_site_type_symbol" in block:
+        symbols = [
+            re.match(r"[A-Za-z]+", s).group() for s in block["_atom_site_type_symbol"]
+        ]
+    elif "_atom_site_label" in block:
+        symbols = [
+            re.sub(r"[\d\(\)]", "", label) for label in block["_atom_site_label"]
+        ]
+
+    if symbols is not None:
+        return ASU([s for s, k in zip(symbols, keep) if k], coords[keep])
+
+    raise ValueError(
+        "CIF file must contain either _atom_site_type_symbol or _atom_site_label "
+        "to determine atomic symbols."
+    )
+
+
+def from_cif(
+    cif_file: str, disorder: str = "error"
+) -> Generator[tuple[Crystal, Monomer]]:
+    """Parse a CIF file into :class:`Crystal` / :class:`Monomer` pairs.
+
+    :param cif_file: path to the CIF file
+    :param disorder: policy for partially occupied sites ("error", "ignore", or "drop")
+    :returns: generator of ``(Crystal, Monomer)``, one per data block
+    :raises ValueError: if block information is generally inconsistent or uninterpretable
+    """
+    # grab the raw CIF data using pycifrw
     cif = ReadCif(cif_file)
     blocks = [item[-1] for item in cif.items()]
+
+    # for each block, clean it up and extract the crystal information
     for block in blocks:
-        # Clean block data
         block = _clean_block(block)
 
-        # Extract lengths (Angstroms) and angles from the CIF file.
-        a = float(block["_cell_length_a"])
-        b = float(block["_cell_length_b"])
-        c = float(block["_cell_length_c"])
-        alpha = float(block["_cell_angle_alpha"])
-        beta = float(block["_cell_angle_beta"])
-        gamma = float(block["_cell_angle_gamma"])
+        missing = [
+            f
+            for f in (*_CELL_LENGTH_FIELDS, *_CELL_ANGLE_FIELDS)
+            if _first(block, (f,)) is None
+        ]
+        if missing:
+            raise ValueError(f"CIF block is missing cell parameters: {missing}")
 
-        # Extract Hall symbol to select the exact setting used in this CIF file.
-        # Multiple settings of the same space group number have different sym_ops
-        # (e.g. P2₁/c, P2₁/a, P2₁/n are all SG 14).  Fall back to number-only
-        # lookup (standard setting) when no Hall symbol is present.
-        # pycifrw lowercases all keys, so we check lowercase variants.
-        hall = block.get("_symmetry_space_group_name_hall") or block.get(
-            "_space_group_name_hall"
-        )
-        hall = hall.strip() if isinstance(hall, str) else None
+        a, b, c = (float(_first(block, (f,))) for f in _CELL_LENGTH_FIELDS) # lattice lengths
+        alpha, beta, gamma = (float(_first(block, (f,))) for f in _CELL_ANGLE_FIELDS) # lattice angles
 
-        # Resolve space group number: try both CIF1 and CIF2 field names, then
-        # fall back to deriving the number from the Hall symbol via the JSON data.
-        raw_number = block.get("_symmetry_int_tables_number") or block.get(
-            "_space_group_it_number"
-        )
-        if raw_number is not None:
-            sg_number = int(raw_number)
-        elif hall is not None:
-            if SpaceGroup._data == {}:
-                SpaceGroup._load_data()
-            entry = SpaceGroup._data.get(hall)
-            if entry is None:
-                raise ValueError(
-                    f"CIF file has no space group number field and Hall symbol {hall!r} "
-                    "was not found in the space group database."
-                )
-            sg_number = entry["number"]
-        else:
-            raise ValueError(
-                "CIF file contains neither a space group number "
-                "(_symmetry_int_tables_number / _space_group_it_number) "
-                "nor a Hall symbol — cannot determine the space group."
-            )
+        # attempt to resolve the space group
+        space_group = _resolve_space_group(block)
 
-        space_group = SpaceGroup(sg_number, hall=hall)
+        # grab the fractional coordinates and apply the disorder policy
         coords = np.array(
             [
                 block["_atom_site_fract_x"],
@@ -100,24 +378,23 @@ def from_cif(cif_file: str) -> Generator[tuple[Crystal, Monomer], None, None]:
                 block["_atom_site_fract_z"],
             ]
         ).T
-        if "_atom_site_type_symbol" in block:
-            symbols = [re.match(r"[A-Za-z]+", s).group() for s in block["_atom_site_type_symbol"]]
-            asu = ASU(symbols, coords)
-        elif "_atom_site_label" in block:
-            labels = block["_atom_site_label"]
-            symbols = [re.sub(r"[\d\(\)]", "", label) for label in labels]
-            asu = ASU(symbols, coords)
-        else:
-            raise ValueError(
-                "CIF file must contain either _atom_site_type_symbol or _atom_site_label to determine atomic symbols."
-            )
-        crystal = Crystal((a, b, c), (alpha, beta, gamma), space_group, asu)
+        keep = _apply_disorder_policy(block, coords, disorder)
 
-        # as a precaution, check that the volume of the unit cell is consistent
-        volume = float(block["_cell_volume"])
-        if abs(crystal.volume - volume) > 0.1:
+        # finally, assemble the crystal and its asymmetric unit
+        crystal = Crystal(
+            (a, b, c),
+            (alpha, beta, gamma),
+            space_group,
+            _resolve_asu(block, coords, keep),
+        )
+
+        # cross-check the declared volume against the one the cell implies
+        declared = _first(block, ("_cell_volume",))
+        if declared is not None and abs(crystal.volume - float(declared)) > 0.1:
             raise ValueError(
-                f"Discordant unit cell volumes:\nDeclared in CIF: {volume:.2f} A^3\nCalculated from primitive vectors: {crystal.volume:.2f} A^3"
+                f"Discordant unit cell volumes:\nDeclared in CIF: {float(declared):.2f} A^3\n"
+                f"Calculated from primitive vectors: {crystal.volume:.2f} A^3"
             )
 
+        # since the CIF format allows multiple data blocks, yield each crystal and its reference monomer
         yield crystal, crystal.get_reference()
