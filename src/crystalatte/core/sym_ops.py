@@ -1,7 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from fractions import Fraction
-from typing import overload
 
 import numpy as np
 from numpy.typing import NDArray
@@ -79,36 +78,20 @@ class SymOp:
         """Return the original symmetry operation string."""
         return self._op
 
-    @op.setter
-    def op(self, value: str):
-        self._op = value
-
     @property
     def rot(self) -> NDArray[np.int16]:
         """Return the rotational component of the symmetry operation."""
         return self._rot
-
-    @rot.setter
-    def rot(self, value: NDArray[np.int16]):
-        self._rot = value
 
     @property
     def tr(self) -> NDArray[np.int16]:
         """Return the translational component of the symmetry operation."""
         return self._tr
 
-    @tr.setter
-    def tr(self, value: NDArray[np.int16]):
-        self._tr = value
-
     @property
     def augment(self) -> NDArray[np.int16]:
         """Return the augmented matrix representation of the symmetry operation."""
         return self._augment
-
-    @augment.setter
-    def augment(self, value: NDArray[np.int16]):
-        self._augment = value
 
     @classmethod
     def identity(cls) -> SymOp:
@@ -146,27 +129,6 @@ class SymOp:
         """
         new_tr = self._tr + translation
         return SymOp.from_components(self._rot, new_tr, self._op)
-
-    def compose(self, other: SymOp) -> SymOp:
-        """Return the composition of this symmetry operation with another: self * other
-
-        :param other: Another symmetry operation to compose with
-        :returns: The affine composition of this symmetry operation with the other
-        """
-        new_rot = self._rot @ other._rot
-        new_tr = self._rot @ other._tr + self._tr
-        return SymOp.from_components(new_rot, new_tr)
-
-    def compose_augment(self, other: SymOp) -> SymOp:
-        """Return the composition of this symmetry operation with another using augmented matrices: self * other
-
-        :param other: Another symmetry operation to compose with
-        :returns: The composition of this symmetry operation with the other, calculated using matrix multiplication of their augmented matrix representations
-        """
-        new_augment = self._augment @ other._augment
-        new_rot = new_augment[:3, :3]
-        new_tr = new_augment[:3, 3]
-        return SymOp.from_components(new_rot, new_tr)
 
     def apply(self, frac_coords: NDArray[np.float64]) -> NDArray[np.float64]:
         """Apply this SymOp to the given fractional coordinates
@@ -211,14 +173,11 @@ class SymOpList:
 
     _sym_ops: list[SymOp] | None
     _multiplicity: int
-    _centroid_frac: NDArray | None = None
-    _centroid_cart: NDArray | None = None
-    _ops: list[str] | None = field(default=None, repr=False)
     _ref_indices: NDArray | None = field(default=None, repr=False)
     _rot_cache: NDArray = field(init=False, repr=False)
     _tr_cache: NDArray = field(init=False, repr=False)
-    _aug_cache: NDArray = field(init=False, repr=False)
-    # Lazily populated geometry caches used by the multimer deduper.
+
+    # lazily populated geometry caches used by the multimer deduper
     _rel_cache: tuple[NDArray, NDArray] | None = field(
         default=None, init=False, repr=False, compare=False
     )
@@ -242,7 +201,6 @@ class SymOpList:
         # compute matrices for all sym_ops and store in cache
         self._rot_cache = np.stack([op._rot for op in self._sym_ops])
         self._tr_cache = np.stack([op._tr for op in self._sym_ops])
-        self._aug_cache = np.stack([op._augment for op in self._sym_ops])
 
         if self._ref_indices is None:
             self._ref_indices = np.zeros(len(self._sym_ops), dtype=np.int64)
@@ -252,19 +210,10 @@ class SymOpList:
         """Return the list of symmetry operations."""
         if self._sym_ops is None:
             self._sym_ops = [
-                SymOp.from_components(
-                    self._rot_cache[i],
-                    self._tr_cache[i],
-                    self._ops[i] if self._ops else None,
-                )
+                SymOp.from_components(self._rot_cache[i], self._tr_cache[i])
                 for i in range(len(self._rot_cache))
             ]
         return self._sym_ops
-
-    @sym_ops.setter
-    def sym_ops(self, value: list[SymOp], ops: list[str] | None = None):
-        self._sym_ops = value
-        self._ops = ops
 
     @property
     def multiplicity(self) -> int:
@@ -276,37 +225,9 @@ class SymOpList:
         self._multiplicity = value
 
     @property
-    def centroid_frac(self) -> NDArray | None:
-        """Return the centroid of the monomer in fractional coordinates, if set."""
-        return self._centroid_frac
-
-    @centroid_frac.setter
-    def centroid_frac(self, value: NDArray):
-        self._centroid_frac = value
-
-    @property
-    def centroid_cart(self) -> NDArray | None:
-        """Return the centroid of the monomer in Cartesian coordinates, if set."""
-        return self._centroid_cart
-
-    @centroid_cart.setter
-    def centroid_cart(self, value: NDArray):
-        self._centroid_cart = value
-
-    @property
-    def rotations(self) -> list[NDArray[np.int16]]:
-        """Return a list of the rotational components of the symmetry operations."""
-        return [sym_op.rot for sym_op in self.sym_ops]
-
-    @property
     def translations(self) -> list[NDArray]:
         """Return a list of the translational components of the symmetry operations."""
         return [sym_op.tr for sym_op in self.sym_ops]
-
-    @property
-    def augments(self) -> list[NDArray]:
-        """Return a list of the augmented matrix representations of the symmetry operations."""
-        return [sym_op.augment for sym_op in self.sym_ops]
 
     @property
     def rot_cache(self) -> NDArray:
@@ -319,11 +240,6 @@ class SymOpList:
         return self._tr_cache
 
     @property
-    def aug_cache(self) -> NDArray:
-        """Return the cached array of augmented matrix representations of the symmetry operations."""
-        return self._aug_cache
-
-    @property
     def ref_indices(self) -> NDArray:
         """Per-member base-reference index (which ASU molecule each member is a
         placement of). Defaults to all-zeros for single-reference clusters."""
@@ -332,26 +248,6 @@ class SymOpList:
     @ref_indices.setter
     def ref_indices(self, value: NDArray):
         self._ref_indices = np.asarray(value, dtype=np.int64)
-
-    @property
-    def rotation_fp(self) -> int:
-        """Return a fingerprint of the symmetry operations based on their rotational components."""
-        rots = self._rot_cache[:].reshape(len(self._rot_cache), -1)
-        fp = np.sort(rots.flatten()).tobytes()
-        return hash(fp)
-
-    @property
-    def augment_fp(self) -> int:
-        """Return a fingerprint of the symmetry operations based on their augmented matrix representations."""
-        augments = self._aug_cache[:].reshape(len(self._aug_cache), -1)
-        fp = np.sort(augments.flatten()).tobytes()
-        return hash(fp)
-
-    # return a symoplist of N identity symops
-    @classmethod
-    def identities(cls, N: int) -> SymOpList:
-        """Return a SymOpList containing N identity symmetry operations."""
-        return cls([SymOp.identity()] * N, 1)
 
     @classmethod
     def from_components(
@@ -362,16 +258,12 @@ class SymOpList:
         :param rot: An Nx3x3 array of the rotational components of the symmetry operations in fractional coordinates
         :param tr: An Nx3 array of the translational components of the symmetry operations in fractional coordinates (integers representing multiples of 1/12 for efficiency)
         :param multiplicity: The number of equivalent multimers that can be generated by this list of symmetry operations
-        :param ops: An optional list of symmetry operation strings corresponding to the SymOp objects for reference
         :param ref_indices: An optional array of per-member base-reference indices (defaults to all-zeros)
         :returns: A SymOpList object with the specified rotation and translation components, multiplicity, and an optional list of symmetry operation strings for reference
         """
         instance = cls.__new__(cls)
         instance._sym_ops = None
         instance._multiplicity = multiplicity
-        instance._centroid_frac = None
-        instance._centroid_cart = None
-        instance._ops = ops
         instance._ref_indices = (
             np.zeros(len(rot), dtype=np.int64) if ref_indices is None
             else np.asarray(ref_indices, dtype=np.int64)
@@ -380,10 +272,6 @@ class SymOpList:
         # set caches
         instance._rot_cache = rot
         instance._tr_cache = tr
-        aug_cache = np.eye(4, dtype=np.int16).reshape(1, 4, 4).repeat(len(rot), axis=0)
-        aug_cache[:, :3, :3] = rot
-        aug_cache[:, :3, 3] = tr
-        instance._aug_cache = aug_cache
 
         # `__new__` bypasses the dataclass __init__, so the lazily-populated
         # geometry caches must be initialized explicitly here.
@@ -393,69 +281,15 @@ class SymOpList:
 
         return instance
 
-    def rotate_list(
-        self, rotation: NDArray, exclude_reference: bool = False
-    ) -> SymOpList:
-        """Return a new SymOpList with all symmetry operations rotated by the given matrix in fractional coordinates.
-
-        :param rotation: A 3x3 matrix in fractional coordinates to rotate all symmetry operations by
-        :param exclude_reference: If True, the first symmetry operation in the list will be treated as a reference and not rotated.
-        :returns: A new SymOpList with all symmetry operations rotated by the given matrix.
-        """
-        new_rot = self._rot_cache.copy()
-        new_rot[:] = rotation @ new_rot.transpose(0, 2, 1)
-        new_rot = new_rot.transpose(0, 2, 1)
-        return SymOpList.from_components(new_rot, self._tr_cache, self._multiplicity)
-
-    def translate_list(
-        self, translation: NDArray, exclude_reference: bool = False
-    ) -> SymOpList:
-        """Return a new SymOpList with all symmetry operations translated by the given vector in fractional coordinates. The vector must be given as a multiple of 1/12 in fractional coordinates, since translations are stored as integers multiplied by 12.
-
-        :param translation: A 3D matrix of translations in fractional coordinates to translate all symmetry operations by
-        :param exclude_reference: If True, the first symmetry operation in the list will be treated as a reference and not translated
-        :returns: A new SymOpList with all symmetry operations translated by the given vector
-        :raises ValueError: If the translation matrix does not have the same number of rows as the number of symmetry operations, or if it does not have one row for all operations when exclude_reference is True
-        """
-        n = len(self._tr_cache)
-
-        if exclude_reference and translation.shape[0] == n:
-            translation[0] = 0
-        elif exclude_reference and translation.shape[0] == n - 1:
-            translation = np.vstack((np.zeros(3, dtype=np.int32), translation))
-        elif translation.shape[0] != n:
-            raise ValueError(
-                "Translation matrix must have the same number of rows as the "
-                "number of symmetry operations, or one row for all operations."
-            )
-
-        new_tr = self._tr_cache.copy()
-        new_tr[:] += translation
-        return SymOpList.from_components(self._rot_cache, new_tr, self._multiplicity)
-
-    def invert_list(self) -> SymOpList:
-        """Return a new SymOpList with all symmetry operations inverted."""
-        inv_rot = np.transpose(self._rot_cache, axes=(0, 2, 1))
-        inv_tr = -np.einsum("nij,nj->ni", inv_rot, self._tr_cache)
-        return SymOpList.from_components(inv_rot, inv_tr, self._multiplicity)
-
     def __iter__(self):
         return iter(self.sym_ops)
 
     def __len__(self):
         return len(self.sym_ops)
 
-    @overload
-    def __getitem__(self, index: int) -> SymOp: ...
-    @overload
-    def __getitem__(self, index: slice) -> SymOpList: ...
-
-    def __getitem__(self, index: int | slice) -> SymOp | SymOpList:
+    def __getitem__(self, index: int) -> SymOp:
         """Return the symmetry operation at the specified index."""
-        result = self.sym_ops[index]
-        if isinstance(result, list):
-            return SymOpList(result, self._multiplicity)
-        return result
+        return self.sym_ops[index]
 
     def __eq__(self, value: object, /) -> bool:
         if not isinstance(value, SymOpList):
@@ -469,7 +303,3 @@ class SymOpList:
 
     def __repr__(self) -> str:
         return f"SymOpList(sym_ops={self._sym_ops}, multiplicity={self._multiplicity})"
-
-
-if __name__ == "__main__":
-    pass

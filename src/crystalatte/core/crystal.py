@@ -23,7 +23,6 @@ class Crystal:
     :param _space_group: The crystal's space group
     :param _asu: The asymmetric unit of the crystal, containing the unique atoms and their positions
     :ivar _frac_to_cart: A 3x3 matrix for converting fractional coordinates to Cartesian coordinates
-    :ivar _cart_to_frac: A 3x3 matrix for converting Cartesian coordinates to fractional coordinates
     """
 
     _vectors: tuple[float, float, float]
@@ -33,7 +32,6 @@ class Crystal:
 
     # Computed matrices for coordinate transformations
     _frac_to_cart: NDArray[np.float64] = field(init=False, repr=False)
-    _cart_to_frac: NDArray[np.float64] = field(init=False, repr=False)
 
     def __post_init__(self):
         """Validate crystal attributes and initialize transformation matrices."""
@@ -70,9 +68,6 @@ class Crystal:
                 [0.0, 0.0, c * omega / sin_gamma],
             ]
         )
-
-        # Cartesian to fractional matrix
-        self._cart_to_frac = np.linalg.inv(self._frac_to_cart)  # type: ignore
 
     def _validate_crystal(self):
         """Validate the provided crystal attributes.
@@ -113,22 +108,6 @@ class Crystal:
     def volume(self) -> float:
         """Calculate unit cell volume in cubic Angstroms."""
         return abs(np.linalg.det(self._frac_to_cart))
-
-    def to_cartesian(self, frac_coords: NDArray[np.float64]) -> NDArray[np.float64]:
-        """Convert fractional coordinates to Cartesian coordinates.
-
-        :param frac_coords: Fractional coordinates, shape (N, 3)
-        :returns: Cartesian coordinates in Angstroms, shape (N, 3)
-        """
-        return (self._frac_to_cart @ frac_coords.T).T
-
-    def to_fractional(self, cart_coords: NDArray[np.float64]) -> NDArray[np.float64]:
-        """Convert Cartesian coordinates to fractional coordinates.
-
-        :param cart_coords: Cartesian coordinates in Angstroms, shape (N, 3)
-        :returns: Fractional coordinates, shape (N, 3)
-        """
-        return (self._cart_to_frac @ cart_coords.T).T
 
     def _get_covalent_radius(self, symbol: str) -> float:
         """Get covalent radius for an element in Angstroms.

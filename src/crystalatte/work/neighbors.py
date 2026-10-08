@@ -87,10 +87,7 @@ def generate_neighbors(
     mode = _distance_mode(kwargs)
     site_atol = kwargs.get("site_atol", SITE_ATOL)
 
-    if kwargs.get("debug", False):
-        translations = list(product([-1, 0, 1], repeat=3))
-    else:
-        translations = list(product(*[range(cm, cp + 1) for cm, cp in cutoff]))
+    translations = list(product(*[range(cm, cp + 1) for cm, cp in cutoff]))
 
     # Bind per-reference state (workers below get the same via init_worker).
     context.bind(crystal, monomers, site_atol)
