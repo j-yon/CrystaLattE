@@ -117,7 +117,8 @@ def generate(crystal: Crystal, N: int, R: float, *, detect_symmetry=True, sympre
         "site_atol", max(SITE_ATOL, float(symprec) / float(d.min()))
     )
 
-    unique_neighbors, _ = generate_neighbors(crystal, monomers, bounds, R, N, **kwargs)
+    # generate and deduplicate all unique N-mers in the supercell defined by ``bounds``
+    unique_neighbors = generate_neighbors(crystal, monomers, bounds, R, N, **kwargs)
 
     multimers: list[Multimer] = []
     for g_N in tqdm(
