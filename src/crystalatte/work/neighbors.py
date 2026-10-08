@@ -69,10 +69,8 @@ def generate_neighbors(
     R: float,
     N: int,
     **kwargs,
-) -> tuple[list[SymOpList], list[SymOpList]]:
-    """Generate all unique N-mers in the supercell defined by ``cutoff`` by
-    anchoring each reference monomer in turn, then deduplicate via a
-    centroid-distance bucketing and :func:`are_equivalent`.
+) -> list[SymOpList]:
+    """Generate and deduplicate all unique N-mers in the supercell defined by ``cutoff`` 
 
     :param crystal: The crystal containing the monomers
     :param monomers: The reference monomers (one per crystal asymmetric unit);
@@ -220,4 +218,4 @@ def generate_neighbors(
             f"Found {len(duplicate)} equivalent multimers from neighboring unit cell search."
         )
 
-    return unique, duplicate
+    return unique
