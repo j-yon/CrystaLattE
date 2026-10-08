@@ -57,7 +57,10 @@ def _is_sohncke(crystal: Crystal) -> bool:
 
 
 def bind(
-    crystal: Crystal, monomers: list[Monomer], site_atol: float = SITE_ATOL
+    crystal: Crystal,
+    monomers: list[Monomer],
+    site_atol: float = SITE_ATOL,
+    full_congruence_check: bool = False,
 ) -> None:
     """Bind the deduper's per-run inputs at module scope.
 
@@ -71,6 +74,12 @@ def bind(
     :param site_atol: Fractional tolerance for the site-symmetry test; must
         match the one :func:`generate_neighbors` passes to
         ``get_unique_sym_ops`` or stabilizer and orbit disagree
+    :param full_congruence_check: Run the Cartesian congruence branch
+        unconditionally, instead of only in the Sohncke-enantiomer case where it
+        is provably needed (see ``check_congruence_by_ref``). Slower but
+        maximally conservative; the escape hatch for an exotic crystal, and the
+        only way to get the old linear-monomer behaviour back. It cannot recover
+        a dressing that was never detected in the first place.
     :returns: ``None``
     """
     global active_crystal, references, Z_by_ref, mass_by_ref, self_iso_by_ref
@@ -92,12 +101,6 @@ def bind(
         mass_by_ref.append(
             np.array([qcel.periodictable.to_mass(s) for s in mon.symbols])
         )
-        S = mon.self_isometries
-        self_iso_by_ref.append(S)
-        # Cartesian dressing translations: d = c - s @ c (zero iff s fixes c).
-        c_cart = np.asarray(mon.centroid_cart, dtype=float)
-        self_iso_tr_by_ref.append([c_cart - s @ c_cart for s in S])
-
         site_ops = crystal.space_group.get_site_symmetry(
             mon.centroid_frac, atol=site_atol
         )
@@ -182,13 +185,18 @@ def bind(
 
 
 def init_worker(
-    crystal: Crystal, monomers: list[Monomer], site_atol: float = SITE_ATOL
+    crystal: Crystal,
+    monomers: list[Monomer],
+    site_atol: float = SITE_ATOL,
+    full_congruence_check: bool = False,
 ) -> None:
     """Process-pool initializer: bind the deduper globals in a worker process.
 
     :param crystal: The crystal passed to :func:`bind`
     :param monomers: The reference monomers passed to :func:`bind`
     :param site_atol: The tolerance passed to :func:`bind`
+    :param full_congruence_check: The congruence gate passed to :func:`bind`;
+        must match the main process or workers disagree with it
     :returns: ``None``
     """
-    bind(crystal, monomers, site_atol)
+    bind(crystal, monomers, site_atol, full_congruence_check)

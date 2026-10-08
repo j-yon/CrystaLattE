@@ -86,11 +86,12 @@ def generate_neighbors(
     verbose = kwargs.get("verbose", 1)
     mode = _distance_mode(kwargs)
     site_atol = kwargs.get("site_atol", SITE_ATOL)
+    full_congruence = kwargs.get("full_congruence_check", False)
 
     translations = list(product(*[range(cm, cp + 1) for cm, cp in cutoff]))
 
-    # Bind per-reference state (workers below get the same via init_worker).
-    context.bind(crystal, monomers, site_atol)
+    # bind per-reference state
+    context.bind(crystal, monomers, site_atol, full_congruence)
 
     # Full partner pool across ALL references: (base_index j, SymOp placing monomers[j]).
     pool = []
