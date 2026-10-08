@@ -114,6 +114,8 @@ data/test
 *.out
 *.toc
 *.pdf
+*.fdb_latexmk
+*.synctex.gz
 
 # claude
 .claude/worktrees
