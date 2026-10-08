@@ -66,7 +66,7 @@ def trimer(h2, h2b, h2c):
 @pytest.fixture
 def psi4_dimer_text(tmp_path, h2, h2b):
     """Write a Psi4 dimer input and return the file contents."""
-    path = tmp_path / "dimer.inp"
+    path = tmp_path / "dimer.in"
     Psi4Writer().write(path, [h2, h2b], {"method": "mp2", "basis": "cc-pVDZ"})
     return path.read_text()
 
@@ -94,7 +94,7 @@ def test_get_writer_unknown_raises_value_error():
 # ---------------------------------------------------------------------------
 
 def test_psi4_writer_creates_file(tmp_path, h2, h2b):
-    path = tmp_path / "out.inp"
+    path = tmp_path / "out.in"
     Psi4Writer().write(path, [h2, h2b], {"method": "hf", "basis": "sto-3g"})
     assert path.exists()
 
@@ -123,7 +123,7 @@ def test_psi4_atom_coords_appear_in_output(psi4_dimer_text):
 
 
 def test_psi4_custom_charge_and_mult(tmp_path, h2, h2b):
-    path = tmp_path / "out.inp"
+    path = tmp_path / "out.in"
     Psi4Writer().write(path, [h2, h2b], {"method": "hf", "basis": "sto-3g", "charge": 1, "multiplicity": 2})
     text = path.read_text()
     assert text.count("1 2") == 2
@@ -158,19 +158,19 @@ def test_psi4_energy_call_contains_bsse_type(psi4_dimer_text):
 
 
 def test_psi4_default_bsse_type_is_cp(tmp_path, h2, h2b):
-    path = tmp_path / "out.inp"
+    path = tmp_path / "out.in"
     Psi4Writer().write(path, [h2, h2b], {"method": "hf", "basis": "sto-3g"})
     assert "bsse_type='cp'" in path.read_text()
 
 
 def test_psi4_memory_uses_set_memory(tmp_path, h2, h2b):
-    path = tmp_path / "out.inp"
+    path = tmp_path / "out.in"
     Psi4Writer().write(path, [h2, h2b], {"method": "hf", "basis": "sto-3g", "memory": "8 GB"})
     assert "psi4.set_memory('8 GB')" in path.read_text()
 
 
 def test_psi4_extra_config_key_goes_in_set_options(tmp_path, h2, h2b):
-    path = tmp_path / "out.inp"
+    path = tmp_path / "out.in"
     Psi4Writer().write(path, [h2, h2b], {"method": "hf", "basis": "sto-3g", "freeze_core": True})
     assert "'freeze_core': True" in path.read_text()
 
@@ -186,18 +186,18 @@ def test_write_inputs_creates_dimers_directory(tmp_path, dimer):
 
 def test_write_inputs_creates_one_file_per_multimer(tmp_path, dimer):
     write_inputs([dimer, dimer], tmp_path, "psi4", {"method": "hf", "basis": "sto-3g"})
-    files = list((tmp_path / "dimers").glob("*.inp"))
+    files = list((tmp_path / "dimers").glob("*.in"))
     assert len(files) == 2
 
 
 def test_write_inputs_dimer_file_name(tmp_path, dimer):
     write_inputs([dimer], tmp_path, "psi4", {"method": "hf", "basis": "sto-3g"})
-    assert (tmp_path / "dimers" / "dimer_001.inp").exists()
+    assert (tmp_path / "dimers" / "dimer_001.in").exists()
 
 
 def test_write_inputs_trimer_uses_trimers_directory(tmp_path, trimer):
     write_inputs([trimer], tmp_path, "psi4", {"method": "hf", "basis": "sto-3g"})
-    assert (tmp_path / "trimers" / "trimer_001.inp").exists()
+    assert (tmp_path / "trimers" / "trimer_001.in").exists()
 
 
 def test_write_inputs_mixed_orders_create_separate_dirs(tmp_path, dimer, trimer):
@@ -208,7 +208,7 @@ def test_write_inputs_mixed_orders_create_separate_dirs(tmp_path, dimer, trimer)
 
 def test_write_inputs_str_path_accepted(tmp_path, dimer):
     write_inputs([dimer], str(tmp_path), "psi4", {"method": "hf", "basis": "sto-3g"})
-    assert (tmp_path / "dimers" / "dimer_001.inp").exists()
+    assert (tmp_path / "dimers" / "dimer_001.in").exists()
 
 
 # ---------------------------------------------------------------------------

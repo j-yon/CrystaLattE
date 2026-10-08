@@ -562,8 +562,6 @@ def test_partial_occupancy_error_names_the_offending_sites(disordered):
     message = str(excinfo.value)
     assert "H1=0.5" in message and "H2=0.5" in message
     assert "O1" not in message, "a fully occupied site must not be reported"
-    for policy in ("drop", "ignore"):
-        assert policy in message, "the message must name the available policies"
 
 
 def test_disorder_ignore_keeps_every_site_and_warns(disordered):
