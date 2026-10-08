@@ -6,16 +6,9 @@ from numpy.typing import NDArray
 from ...core.sym_ops import SymOpList
 from . import context
 
-"""
-    Forming the adjugate directly in integer arithmetic (nine 2x2 cofactors) is
-    exact by construction and looks like the obvious optimisation, since this is
-    one of the hottest functions in the deduper. It was tried and MEASURED
-    SLOWER at the sizes that actually occur: 22.5 us against 8.7 us for a single
-    3x3 and 22.9 vs 10.2 for a batch of three, because a dozen small numpy
-    operations cost more in Python overhead than one LAPACK call. It only wins
-    past a batch of ~100, and clusters hold 2-3 operations. Do not "fix" this.
-"""
-
+# A direct integer adjugate looks like the obvious optimisation here but
+# measured slower (22.5 vs 8.7 us per 3x3): numpy call overhead beats one
+# LAPACK call until batches of ~100, and clusters hold 2-3 ops. Keep inv+rint.
 def int_inv(M: NDArray) -> NDArray:
     """Return the exact integer inverse of a unimodular integer matrix
 
@@ -34,9 +27,8 @@ def int_inv(M: NDArray) -> NDArray:
 
 
 def relative_transforms(g_N: SymOpList, integer: bool) -> tuple[NDArray, NDArray]:
-    """Return the cluster's pairwise relative transforms ``Delta[a,b] = T_a^-1 T_b = (L[a,b], v[a,b])``
-
-    Available in exact integer arithmetic or Cartesian coordinates, cached on the cluster for efficiency
+    """Return the cluster's cached pairwise relative transforms
+    ``Delta[a,b] = T_a^-1 T_b = (L[a,b], v[a,b])``
 
     :param g_N: cluster whose relative transforms are requested
     :param integer: whether to work in the exact integer lattice basis
@@ -99,7 +91,7 @@ def is_mono_reference(g_N: SymOpList) -> bool:
 
 
 def cluster_atoms_cart(g_N: SymOpList) -> NDArray:
-    """Reconstruct the cluster's Cartesian atom positions from the module-level context bindings
+    """Reconstruct the cluster's Cartesian atom positions from ``context``
 
     :param g_N: The cluster whose atom positions are requested
     :returns: An ``(n_atoms, 3)`` array of Cartesian coordinates
@@ -123,7 +115,7 @@ def distance_fingerprint(g_N: SymOpList) -> tuple[NDArray, NDArray]:
     """Return the cluster's cached Z-tagged sorted pairwise atom-distance fingerprint
 
     :param g_N: cluster to fingerprint
-    :returns: tuple ``(zz, distances)`` of equal-length 1-D arrays, sorted jointly by ``(zz, distance)``
+    :returns: tuple ``(zz, distances)`` of 1-D arrays, sorted by ``(zz, distance)``
     """
     # if cached, return
     cached = getattr(g_N, "_dist_fp_cache", None)

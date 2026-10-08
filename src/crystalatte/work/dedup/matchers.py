@@ -95,10 +95,8 @@ def anchored_match(
 
     # The descent only tests the anchor row (0, b). Relative transforms compose
     # (Delta_ab Delta_bc = Delta_ac), so every other pair follows from that row
-    # (lem:row) and this sweep cannot reject in exact arithmetic (rem:verify;
-    # 0 rejections in 3981 leaves over six crystals). Under a tolerant ``eq``
-    # the composition holds only up to accumulated error, which is what this
-    # re-check guards against.
+    # (lem:row), so this sweep cannot reject in exact arithmetic (rem:verify).
+    # Under a tolerant ``eq`` it guards against accumulated error.
     def verify(pi: list[int], ks: list[int]) -> bool:
         for a in range(n):
             ra = refG[a]
@@ -142,13 +140,10 @@ def anchored_match(
                     kb = index_in_S(rb, LH[h, h0] @ S[r0][k0] @ LG[0, b])
                     if kb is None:
                         continue
-                    # Solving s_b first is what makes this check possible: it
-                    # fixes d_b. The dressing is affine, d = c - s @ c, because
-                    # a self-isometry fixes the monomer's centroid, not the
-                    # frame origin. Dropping d compares origin offsets that are
-                    # not the same geometric quantity, and since s preserves
-                    # norms the check then fails at ANY tolerance whenever the
-                    # two v norms differ (urea; rem:centering).
+                    # Solving s_b first fixes d_b for this check. d can't be
+                    # dropped: s fixes the centroid, not the origin, so without
+                    # d the check fails whenever the two v norms differ
+                    # (urea; rem:centering).
                     if not eq(
                         vG[0, b],
                         s_inv(r0, k0)
@@ -173,23 +168,18 @@ def same_multimer_int(
     W_tr: list[list[NDArray]] | list[NDArray] | None = None,
 ) -> bool:
     """Return True iff ``g_N`` and ``h_N`` are the same multimer under a
-    crystallographic isometry, working entirely in the exact integer lattice
-    basis and modding out the site-symmetry dressing ``(W, W_tr)``.
+    crystallographic isometry, modding out the site-symmetry dressing
+    ``(W, W_tr)``.
 
-    Exact-integer form of :func:`anchored_match`: roundoff-free and complete
-    for every same-orbit merge, including centrosymmetric site-inversion cases.
-    Congruences whose dressing lies outside ``W`` (non-crystallographic) are not
-    found here; :func:`are_equivalent` leaves them to the float fallback.
+    Exact-integer form of :func:`anchored_match`. Non-crystallographic
+    congruences (dressing outside ``W``) are left to the float fallback.
 
     :param g_N: The first cluster
     :param h_N: The second cluster
-    :param W: Site-symmetry linear parts indexed by base reference, i.e.
-        ``context.W_lin_by_ref``. A single group is also accepted and applies to
-        every member, which is only right for a mono-reference cluster (see
-        :func:`as_per_reference`). Required: defaulting to reference 0 would
-        silently mod out the wrong site symmetry for every other reference.
-    :param W_tr: The matching dressing translations ``context.W_tr_by_ref``, in
-        twelfths, index-aligned with ``W``. Defaults to zeros.
+    :param W: Site-symmetry linear parts per base reference
+        (``context.W_lin_by_ref``), or one group for a mono-reference cluster
+    :param W_tr: Matching dressing translations in twelfths
+        (``context.W_tr_by_ref``); defaults to zeros
     :returns: True iff the clusters are the same multimer via a crystallographic
         isometry
     """
@@ -204,6 +194,8 @@ def same_multimer_int(
     LG, vG = relative_transforms(g_N, integer=True)
     LH, vH = relative_transforms(h_N, integer=True)
     n_refs = max(max(refG), max(refH)) + 1
+    # W has no default: assuming reference 0 would mod out the wrong site
+    # symmetry for every other reference
     S = as_per_reference(W, n_refs)
     # Zero translations are correct only when every centroid is a fixed point
     # of every element of its W; otherwise pass W_tr (see rem:centering).
@@ -218,20 +210,14 @@ def same_multimer(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-3) -> bool:
     """Return True iff ``g_N`` and ``h_N`` are the same multimer up to a global
     isometry (rotation, translation, or reflection).
 
-    Cartesian form of :func:`anchored_match`, dressed with the FULL molecular
-    self-isometry group (:attr:`~crystalatte.core.multimer.Monomer.point_group`)
-    rather than just the site symmetry, so it also merges non-crystallographic
-    congruences and, being blind to ``det``, mirror-image enantiomers.
-
-    Expensive relative to :func:`fingerprints_match`; :func:`are_equivalent`
-    only calls this on clusters that already share a distance fingerprint.
+    Cartesian form of :func:`anchored_match`, dressed with the full molecular
+    point group rather than the site symmetry, so it also merges
+    non-crystallographic congruences and mirror-image enantiomers.
 
     :param g_N: The first cluster
     :param h_N: The second cluster
-    :param atol: Absolute tolerance in Angstroms. Can be tight when the
-        relevant self-isometries are exact (identity / crystallographic); must
-        be looser when a merge relies on an approximate molecular operation
-        recovered from distorted CIF coordinates.
+    :param atol: Absolute tolerance in Angstroms; loosen it when a merge relies
+        on a molecular operation recovered from distorted CIF coordinates
     :returns: True iff the two clusters are the same multimer
     """
     if len(g_N) != len(h_N):
