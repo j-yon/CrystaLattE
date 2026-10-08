@@ -3,20 +3,19 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from itertools import product
 
-import qcelemental as qcel
 import numpy as np
+import qcelemental as qcel
 from numpy.typing import NDArray
 from scipy.spatial import cKDTree
 
+from .multimer import ASU, Monomer
 from .space_group import SpaceGroup
 from .sym_ops import SymOp
-from .multimer import ASU, Monomer
 
 
 @dataclass
 class Crystal:
-    """
-    Represents a crystal unit cell with lattice parameters and space group symmetry.
+    """Represents a crystal unit cell with lattice parameters and space group symmetry
 
     :param _vectors: Lattice vectors (a, b, c) in Angstroms
     :param _angles: Lattice angles (alpha, beta, gamma) in degrees
@@ -30,16 +29,16 @@ class Crystal:
     _space_group: SpaceGroup
     _asu: ASU
 
-    # Computed matrices for coordinate transformations
+    # computed matrices for coordinate transformations
     _frac_to_cart: NDArray[np.float64] = field(init=False, repr=False)
 
     def __post_init__(self):
-        """Validate crystal attributes and initialize transformation matrices."""
+        """Validate crystal attributes and initialize transformation matrices"""
         self._validate_crystal()
         self._update_matrices()
 
     def _update_matrices(self):
-        """Compute fractional <-> Cartesian transformation matrices."""
+        """Compute the fractional -> Cartesian transformation matrix"""
         a, b, c = self._vectors
         alpha, beta, gamma = np.radians(self._angles)
 
@@ -48,7 +47,7 @@ class Crystal:
         cos_gamma = np.cos(gamma)
         sin_gamma = np.sin(gamma)
 
-        # Volume factor
+        # volume factor
         omega = np.sqrt(
             1
             - cos_alpha**2
@@ -57,8 +56,7 @@ class Crystal:
             + 2 * cos_alpha * cos_beta * cos_gamma
         )
 
-        # Fractional to Cartesian matrix (column vectors are lattice vectors)
-        # Using the standard crystallographic convention:
+        # standard crystallographic convention:
         # a along x, b in xy plane, c general
         c_y = c * (cos_alpha - cos_beta * cos_gamma) / sin_gamma
         self._frac_to_cart = np.array(
@@ -70,7 +68,7 @@ class Crystal:
         )
 
     def _validate_crystal(self):
-        """Validate the provided crystal attributes.
+        """Validate the provided crystal attributes
 
         :raises ValueError: If lattice parameters are non-positive or if angles are not between 0 and 180 degrees
         """
@@ -87,26 +85,26 @@ class Crystal:
 
         # TODO: check lattice parameters and other stuff
 
+    def __repr__(self) -> str:
+        return (
+            f"Crystal(vectors={self._vectors}, angles={self._angles}, "
+            f"space_group={self._space_group})"
+        )
+
     @property
     def space_group(self) -> SpaceGroup:
-        """Return the space group of the crystal."""
         return self._space_group
 
     @property
-    def lattice_parameters(
-        self,
-    ) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
-        """Return lattice parameters (a, b, c), (alpha, beta, gamma)."""
+    def lattice_parameters(self) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
         return self._vectors, self._angles
 
     @property
     def lattice_vectors(self) -> NDArray[np.float64]:
-        """Return lattice vectors as a 3x3 array (columns are a, b, c)."""
         return self._frac_to_cart
 
     @property
     def volume(self) -> float:
-        """Calculate unit cell volume in cubic Angstroms."""
         return abs(np.linalg.det(self._frac_to_cart))
 
     def _get_covalent_radius(self, symbol: str) -> float:
@@ -117,22 +115,22 @@ class Crystal:
         """
         # TODO: dont use qcel
         radius_bohr = qcel.covalentradii.get(symbol)
-        return radius_bohr * qcel.constants.bohr2angstroms  # type: ignore
+        return radius_bohr * qcel.constants.bohr2angstroms
 
     def _bfs(self, coords: NDArray, elements: NDArray, tol=1.2) -> list[list[int]]:
-        """Perform a breadth-first search to find connected components of atoms based on covalent bonding.
+        """Perform BFS to find connected components of atoms based on covalent bonding
 
         :param coords: Cartesian coordinates of atoms, shape (N, 3)
-        :param elements: Atomic symbols corresponding to the coordinates, shape (N,)
-        :param tol: Tolerance factor for determining bonding (default 1.2)
-        :returns: A list of lists, where each inner list contains the indices of atoms in a connected component (monomer)
+        :param elements: atomic symbols corresponding to the coordinates, shape (N,)
+        :param tol: tolerance factor for determining bonding
+        :returns: list of indices of atoms in a connected component (monomer)
         """
         coords = np.asarray(coords)
 
         N = len(coords)
         radii = np.array([self._get_covalent_radius(elem) for elem in elements])
 
-        # --- KD-tree ---
+        # KD-tree 
         tree = cKDTree(coords)
         max_radius = np.max(radii)
         global_cutoff = tol * (2 * max_radius)
@@ -141,22 +139,20 @@ class Crystal:
 
         adjacency = [[] for _ in range(N)]
 
-        # --- Build graph ---
+        # build adjacency matrix 
         for i, j in pairs:
             cutoff = tol * (radii[i] + radii[j])
             if np.linalg.norm(coords[i] - coords[j]) <= cutoff:
                 adjacency[i].append(j)
                 adjacency[j].append(i)
 
-        # --- BFS with shift propagation ---
+        # BFS with shift propagation 
         fragments = []
         visited = np.zeros(N, dtype=bool)
-
         for start in range(N):
             if visited[start]:
                 continue
 
-            # BFS
             stack = [start]
             visited[start] = True
             fragment = [start]
@@ -174,24 +170,29 @@ class Crystal:
         return fragments
 
     def _find_molecules(self, tol: float = 1.2):
-        """Expand the ASU by all sym-ops x lattice translations, dedup positions,
-        BFS into complete molecules, and return
-        ``(unique_frac, unique_cart, unique_symbols, full_components)`` where
-        ``full_components`` are the index lists of max-size (complete) molecules.
+        """Expand the ASU and BFS into complete molecules
+
+        :param tol: tolerance factor for determining bonding 
+        :returns: unique fractional/Cartesian coordinates, symbols, and list of complete molecule indices
         """
         all_symbols, all_frac = [], []
+
+        # build 3x3x3 supercell of ASU images to ensure complete molecules are captured
         for d in product(range(-1, 2), repeat=3):
             translation = np.array(d)
             for symop in self._space_group.sym_ops:
                 for atom, pos in zip(self._asu.atoms, self._asu.positions):
                     all_symbols.append(atom)
                     all_frac.append(symop.apply(pos) + translation)
+
         all_frac = np.array(all_frac)
         all_symbols = np.array(all_symbols)
 
+        # filter out any atoms that are more than 2 fractional units away from the origin
         mask = ~np.any(np.abs(all_frac) > 2.0, axis=1)
         all_frac, all_symbols = all_frac[mask], all_symbols[mask]
 
+        # determine superimposed atoms
         unique_indices = []
         for i in range(len(all_frac)):
             if not unique_indices:
@@ -201,15 +202,25 @@ class Crystal:
             if np.all(dists >= 1e-3):
                 unique_indices.append(i)
 
+        # deduplicate the arrays based on the unique indices
         unique_frac = all_frac[unique_indices]
         unique_symbols = all_symbols[unique_indices]
         unique_cart = self.to_cartesian(unique_frac)
+
+        # determine connected components using BFS
         components = self._bfs(unique_cart, unique_symbols, tol)
         mol_len = max(len(c) for c in components)
         full = [c for c in components if len(c) == mol_len]
         return unique_frac, unique_cart, unique_symbols, full
 
     def _build_monomer(self, comp, unique_frac, unique_cart, unique_symbols) -> Monomer:
+        """Construct a Monomer object from a component of unique atoms
+
+        :param comp: indices of the atoms in the component
+        :param unique_frac: array of unique fractional coordinates
+        :param unique_cart: array of unique Cartesian coordinates
+        :param unique_symbols: array of unique atomic symbols
+        :returns: Monomer object representing the component"""
         syms = [str(unique_symbols[j]) for j in comp]
         masses = np.array([qcel.periodictable.to_mass(s) for s in syms])
         return Monomer(
@@ -220,32 +231,47 @@ class Crystal:
             np.average(unique_cart[comp], axis=0, weights=masses),
         )
 
-    def get_references(self, tol: float = 1.2) -> list[Monomer]:
-        """Return one Monomer per molecular symmetry-orbit in the ASU (all
-        symmetry-independent molecules, i.e. Z'), ordered nearest-origin first.
+    def to_cartesian(self, frac_coords: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Convert fractional coordinates to Cartesian coordinates
 
-        Two complete molecules are the same reference iff a space-group
-        operation maps one onto the other; this is decided on the mass-weighted
-        centroid orbit (the smallest sym-op image reduced into the unit cell).
+        :param frac_coords: Fractional coordinates, shape (N, 3)
+        :returns: Cartesian coordinates in Angstroms, shape (N, 3)
+        """
+        return (self._frac_to_cart @ frac_coords.T).T
+
+    def get_references(self, tol: float = 1.2) -> list[Monomer]:
+        """Return one Monomer per molecular symmetry-orbit in the ASU (total Z')
+
+        Two complete molecules are the same reference iff a SymOp maps one onto the other
+
+        :param tol: tolerance factor for determining bonding 
+        :returns: Monomer list representing the reference monomers
         """
         unique_frac, unique_cart, unique_symbols, full = self._find_molecules(tol)
         ops = self._space_group.sym_ops
 
         reps: dict[tuple, tuple[float, list]] = {}
+
+        # iterate over all complete molecules and find the representative of each symmetry orbit
         for comp in full:
             syms = [str(unique_symbols[j]) for j in comp]
             masses = np.array([qcel.periodictable.to_mass(s) for s in syms])
             cen = np.average(unique_frac[comp], axis=0, weights=masses)
             imgs = []
+
+            # apply all symmetry operations to the centroid and find images
             for op in ops:
                 r = op.apply(cen) % 1.0
-                r[r > 1.0 - 1e-3] -= 1.0          # wrap 0.999... -> ~0
+                r[r > 1.0 - 1e-3] -= 1.0  # wrap 0.999... -> ~0
                 imgs.append(tuple(np.round(r, 3)))
+
+            # assign minimum image as representative key
             key = min(imgs)
             d = float(np.linalg.norm(cen))
             if key not in reps or d < reps[key][0]:
                 reps[key] = (d, comp)
 
+        # only keep the closest representative of each symmetry orbit
         ordered = [comp for _, comp in sorted(reps.values(), key=lambda t: t[0])]
         return [
             self._build_monomer(c, unique_frac, unique_cart, unique_symbols)
@@ -253,23 +279,19 @@ class Crystal:
         ]
 
     def get_reference(self, tol: float = 1.2) -> Monomer:
-        """Return the single reference molecule closest to the origin.
+        """Return the single reference molecule closest to the origin
 
-        :param tol: Tolerance factor for determining bonding (default 1.2)
-        :returns: A Monomer object representing the reference monomer
+        :param tol: tolerance factor for determining bonding 
+        :returns: Monomer object representing the reference monomer
         """
         return self.get_references(tol)[0]
 
-    def detect_symmetry(self, symprec: float = 1e-3) -> "Crystal":
-        """Attempt to detect a higher true space group with spglib and return a
-        new Crystal using it (input-basis operations, no coordinate transform).
+    def detect_symmetry(self, symprec: float = 1e-3) -> Crystal:
+        """Attempt to detect a higher true space group with spglib and return a new Crystal using it
 
-        Returns ``self`` unchanged if spglib is unavailable, errors, or does not
-        find strictly higher symmetry (more operations whose rotations contain
-        the declared group's rotations).
+        Returns ``self`` unchanged if spglib errors or does not find strictly higher symmetry
 
-        :param symprec: spglib symmetry tolerance (tight default recovers only
-            genuine symmetry, not pseudo-symmetry)
+        :param symprec: spglib symmetry tolerance 
         :returns: A higher-symmetry Crystal, or ``self``
         """
         try:

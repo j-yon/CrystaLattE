@@ -1,11 +1,6 @@
-"""
-Crys2LattE: Automated crystal structure generation and analysis for many-body applications.
-TODO: fill this out
-"""
-
 from .io.cif import from_cif
 from .work.generate import generate
-from .work.validate import count_chemistry_classes
 from .work.setup import write_inputs
+from .work.validate import count_chemistry_classes
 
-__all__ = ["from_cif", "generate", "count_chemistry_classes", "write_inputs"]
+__all__ = ["count_chemistry_classes", "from_cif", "generate", "write_inputs"]

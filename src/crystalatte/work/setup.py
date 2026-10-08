@@ -8,6 +8,7 @@ _NAMES = {1: "monomer", 2: "dimer", 3: "trimer", 4: "tetramer", 5: "pentamer"}
 
 
 def _order_name(N: int) -> str:
+    """Get explicit multimer name for a given order N"""
     return _NAMES.get(N, f"{N}mer")
 
 
@@ -17,6 +18,7 @@ def write_inputs(
     software: str,
     config: dict,
 ) -> None:
+    """Write input files for a list of multimers"""
     output_dir = Path(output_dir)
     writer = get_writer(software)
 

@@ -1,20 +1,4 @@
-"""Generate unique N-mers from a crystal.
-
-This module is the public entry point and the orchestration layer; the work is
-split across three siblings, each with one job:
-
-- :mod:`crystalatte.work.neighbors` — enumerate candidate N-mers by anchoring
-  each reference monomer and combining the partners within the cutoff.
-- :mod:`crystalatte.work.dedup` — decide which candidates are the same
-  multimer. Internally: ``invariants`` (isometry invariants of a cluster),
-  ``matchers`` (the equivalence tests), ``equivalence`` (routing + bucket dedup),
-  and ``context`` (the per-run state they share).
-- this module — supercell bounds, tolerance plumbing, and turning each
-  surviving cluster into a :class:`~crystalatte.core.multimer.Multimer`.
-
-The correctness argument for the deduplication lives in
-``docs/dedup_correctness.tex``.
-"""
+import warnings
 
 import numpy as np
 from scipy.spatial.distance import pdist
@@ -29,22 +13,19 @@ from .neighbors import generate_neighbors
 
 
 def _process_multimer(g_N: SymOpList) -> Multimer | None:
-    """Construct a :class:`~crystalatte.core.multimer.Multimer` from a deduped
-    candidate cluster.
+    """Construct a Multimer from a deduped candidate cluster
 
-    :param g_N: The deduplicated cluster to materialize
-    :returns: The constructed :class:`~crystalatte.core.multimer.Multimer`, or
-        ``None`` if ``g_N`` contains two members that are the same
-        ``(base reference, SymOp)`` pair (which can happen when multiple
-        translations land on a degenerate Wyckoff orbit and would produce
-        overlapping monomers)
+    :param g_N: deduplicated cluster to materialize
+    :returns: constructed :class:`~crystalatte.core.multimer.Multimer`, or ``None`` if ``g_N`` contains identical members 
     """
     refs = g_N.ref_indices
     ops = list(g_N)
+
     # degeneracy: reject only if two members are the SAME (ref, op) pair
     seen = set(zip(refs.tolist(), ops))
     if len(seen) != len(ops):
         return None
+
     mons: list[Monomer] = []
     for k, g in enumerate(ops):
         base = context.references[refs[k]]
@@ -57,21 +38,29 @@ def _process_multimer(g_N: SymOpList) -> Multimer | None:
     return Multimer(mons, g_N, g_N.multiplicity)
 
 
-def generate(crystal: Crystal, N: int, R: float, *, detect_symmetry=True, symprec=1e-3, **kwargs) -> list[Multimer]:
-    """Generate unique multimers of every reference molecule in the crystal.
+def generate(
+    crystal: Crystal, N: int, R: float, *, detect_symmetry=True, symprec=1e-3, **kwargs
+) -> list[Multimer]:
+    """Generate unique multimers of every reference molecule in the crystal
 
-    :param crystal: The crystal structure to generate multimers from; all
-        symmetry-independent reference molecules (:meth:`Crystal.get_references`)
-        are enumerated
-    :param N: The number of monomers in the multimer (e.g. ``N=2`` for dimers)
-    :param R: The maximum center-to-center distance in Angstroms for monomers to
-        be considered part of the same multimer
-    :param detect_symmetry: If True, automatically detect and apply symmetry via
-        :meth:`Crystal.detect_symmetry` before enumeration (default: True)
-    :param symprec: Symmetry detection tolerance in Angstroms (default: 1e-3)
-    :param kwargs: Additional options forwarded to :func:`generate_neighbors`
-    :returns: A list of unique :class:`~crystalatte.core.multimer.Multimer`
-        objects representing the multimers found in the crystal
+    :param crystal: crystal structure to generate multimers from
+    :param N: number of monomers in the multimer 
+    :param R: maximum center-to-center monomer distance in Angstroms 
+    :param detect_symmetry: if True, automatically detect and apply symmetry before enumeration
+    :param symprec: symmetry detection tolerance in Angstroms 
+    :param kwargs: additional options forwarded to :func:`generate_neighbors`.
+    :returns: list of unique multimers found in the crystal
+    :raises ValueError: if ``N`` is not an integer ``>= 2``
+
+    .. warning::
+       **LINEAR MONOMERS ARE NOT SUPPORTED.** A linear molecule (CO2, N2,
+       acetylene) has only two rotational degrees of freedom, but a placement is
+       stored as a full 3x3 rotation. The extra parameter — the twist about the
+       molecular axis — is physically meaningless yet is still compared, so two
+       placements of the identical molecule can disagree and their multimers fail
+       to merge. Deduplication is therefore INCOMPLETE for such crystals and the
+       returned list will contain duplicates. A ``RuntimeWarning`` is emitted when this is
+       detected. See the note in :mod:`crystalatte.work.dedup`.
     """
     # check N validity
     if not isinstance(N, (int, np.integer)) or isinstance(N, bool) or N < 2:
@@ -101,6 +90,7 @@ def generate(crystal: Crystal, N: int, R: float, *, detect_symmetry=True, sympre
     d = np.linalg.norm(crystal.lattice_vectors, axis=0)
     R_eff = R + max(pdist(m.cart_coords).max() for m in monomers)
 
+    # create oversized bounding box 
     lows, highs = [], []
     for m in monomers:
         t = m.centroid_frac
@@ -108,18 +98,13 @@ def generate(crystal: Crystal, N: int, R: float, *, detect_symmetry=True, sympre
         highs.append(np.ceil((R_eff - (1 - t) * d) / d))
     bounds = np.vstack((np.min(lows, axis=0), np.max(highs, axis=0))).T.astype(int)
 
-    # Site-symmetry tests compare FRACTIONAL vectors, but symprec is in
-    # Angstroms, so convert. Using the shortest cell edge keeps the fractional
-    # tolerance conservative along every axis. Floored at the module default so
-    # a tight symprec cannot reintroduce the CIF-rounding failure (a special
-    # position written as 0.3333 instead of 1/3 sits ~1e-4 off the element).
-    kwargs.setdefault(
-        "site_atol", max(SITE_ATOL, float(symprec) / float(d.min()))
-    )
+    # convert symprec to fractional tolerance for site-symmetry tests
+    kwargs.setdefault("site_atol", max(SITE_ATOL, float(symprec) / float(d.min())))
 
     # generate and deduplicate all unique N-mers in the supercell defined by ``bounds``
     unique_neighbors = generate_neighbors(crystal, monomers, bounds, R, N, **kwargs)
 
+    # process each unique multimer into a Multimer object, parallelized if requested
     multimers: list[Multimer] = []
     for g_N in tqdm(
         unique_neighbors,
@@ -131,4 +116,5 @@ def generate(crystal: Crystal, N: int, R: float, *, detect_symmetry=True, sympre
         m = _process_multimer(g_N)
         if m is not None:
             multimers.append(m)
+
     return multimers

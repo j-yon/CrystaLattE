@@ -14,9 +14,9 @@ Currently implemented space groups: P1, P-1, P4
 Extend by adding entries to SPACE_GROUPS and NORMALIZER_EXTRA_GENERATORS.
 """
 
-import numpy as np
 from itertools import product as iterproduct
 
+import numpy as np
 
 # ------------------------------------------------------------------------------
 # Tolerance for floating point comparisons
