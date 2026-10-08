@@ -1,10 +1,8 @@
 """The monomer self-isometry set must be an actual group.
 
-``docs/dedup_correctness.tex`` Thm 1/2 assume ``S`` is the monomer's isometry
-group. The detector filters a fixed candidate library, and that library is not
-closed under composition — it contains no rotoreflections beyond ``i`` and
-``sigma`` — so a raw filter cannot return a group. These tests pin the group
-properties the deduper relies on.
+The dedup theorems assume ``S`` is a group, but the detector's candidate
+library isn't closed under composition (no rotoreflections beyond ``i`` and
+``sigma``). These tests pin the group properties the deduper relies on.
 """
 
 

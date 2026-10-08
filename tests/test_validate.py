@@ -1,26 +1,10 @@
 """Tests for the chemistry-equivalence oracle in `crystalatte.work.validate`.
 
-WHY THIS FILE EXISTS
---------------------
-`count_chemistry_classes` is not a feature; it is the REFEREE. The assertion
-`count_chemistry_classes(mers)[0] == len(mers)` appears throughout the dedup
-suite, and every locked multimer count in `test_generate.py` rests on the claim
-that the oracle agreed with the deduper when those counts were captured.
-
-An untested referee is worth nothing. Replacing the body of
-`count_chemistry_classes` with the trivial answer -- every multimer is its own
-class -- used to leave the entire suite green apart from a single xfail, which
-means none of those `n_classes == len(mers)` assertions was testing anything.
-The tests below pin the oracle down from both sides: it must MERGE things that
-are genuinely the same (identity, rigid motion, reflection) and SEPARATE things
-that are not (different clusters, a perturbed atom).
-
-The two directions matter for different reasons. If the oracle wrongly
-separates, the dedup suite reports duplicates that do not exist and the locked
-counts become unreachable -- noisy, but visible. If the oracle wrongly merges,
-every "no duplicates remain" assertion in the suite passes vacuously and a real
-over-merge in the deduper goes unreported. That is the direction these tests
-exist to close.
+`count_chemistry_classes` referees the dedup suite and the locked counts in
+`test_generate.py`, so it is pinned from both sides: it must merge genuinely
+identical clusters (identity, rigid motion, reflection) and separate distinct
+ones (different clusters, a perturbed atom). A wrongly merging oracle would
+let every "no duplicates remain" assertion pass vacuously.
 """
 
 import numpy as np

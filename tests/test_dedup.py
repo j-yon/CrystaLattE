@@ -659,31 +659,12 @@ def test_kabsch_full_correspondence_beats_a_thin_anchor_triple():
 
 
 def _cluster_referee(g_N):
-    """``(NRE, CHSEV)`` for a cluster, computed from its reconstructed atoms.
-
-    Both are isometry invariants that no part of the dedup path consults, so
-    they can referee it. They are NOT equally strong, and the difference is the
-    whole reason CHSEV is here:
-
-    - NRE is ``sum_{i<j} Z_i Z_j / r_ij`` -- a pure function of the multiset of
-      Z-tagged interatomic distances. That multiset is exactly what
-      :func:`fingerprints_match` already gates on, so NRE agrees to machine
-      precision on ANY pair that clears the gate. As a referee it can only catch
-      a merge that bypassed the gate, and is blind to every over-merge committed
-      downstream of it -- which is where the integer matcher, the Cartesian
-      fallback and the cloud matcher all live.
-    - CHSEV is the sorted eigenvalue spectrum of the Coulomb matrix. The same
-      distances appear in it, but the eigenvalues depend on how they are
-      ARRANGED in the matrix, not merely on their multiset, so CHSEV sees inside
-      the gate. See
-      :func:`test_chsev_separates_a_homometric_pair_that_nre_cannot`, which
-      exhibits two clouds with identical fingerprints and identical NRE whose
-      CHSEV differs by 4.7.
-
-    NRE is kept alongside it as a cheap first discriminator; CHSEV is the one
-    that closes the gap.
-    """
-
+    """``(NRE, CHSEV)`` for a cluster, computed from its reconstructed atoms."""
+    # Both are isometry invariants the dedup path never consults. NRE depends
+    # only on the Z-tagged distance multiset that fingerprints_match already
+    # gates on, so it's a cheap first check; CHSEV also sees how distances are
+    # arranged and catches over-merges past the gate (see
+    # test_chsev_separates_a_homometric_pair_that_nre_cannot).
     atoms = cluster_atoms_cart(g_N)
     symbols = np.concatenate(
         [context.references[g_N.ref_indices[k]].symbols for k in range(len(g_N))]
