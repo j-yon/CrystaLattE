@@ -20,8 +20,8 @@ class Crystal:
     :param _vectors: Lattice vectors (a, b, c) in Angstroms
     :param _angles: Lattice angles (alpha, beta, gamma) in degrees
     :param _space_group: The crystal's space group
-    :param _asu: The asymmetric unit of the crystal, containing the unique atoms and their positions
-    :ivar _frac_to_cart: A 3x3 matrix for converting fractional coordinates to Cartesian coordinates
+    :param _asu: The asymmetric unit (unique atoms and their positions)
+    :ivar _frac_to_cart: 3x3 fractional-to-Cartesian matrix
     """
 
     _vectors: tuple[float, float, float]
@@ -244,7 +244,7 @@ class Crystal:
 
         Two complete molecules are the same reference iff a SymOp maps one onto the other
 
-        :param tol: tolerance factor for determining bonding 
+        :param tol: tolerance factor for determining bonding
         :returns: Monomer list representing the reference monomers
         """
         unique_frac, unique_cart, unique_symbols, full = self._find_molecules(tol)
@@ -287,11 +287,11 @@ class Crystal:
         return self.get_references(tol)[0]
 
     def detect_symmetry(self, symprec: float = 1e-3) -> Crystal:
-        """Attempt to detect a higher true space group with spglib and return a new Crystal using it
+        """Return a new Crystal in the higher space group spglib detects, if any
 
-        Returns ``self`` unchanged if spglib errors or does not find strictly higher symmetry
+        Returns ``self`` if spglib errors or finds no strictly higher symmetry.
 
-        :param symprec: spglib symmetry tolerance 
+        :param symprec: spglib symmetry tolerance
         :returns: A higher-symmetry Crystal, or ``self``
         """
         import warnings

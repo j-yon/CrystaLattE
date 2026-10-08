@@ -42,12 +42,11 @@ class LatticeSystem(Enum):
 
 @dataclass
 class SpaceGroup:
-    """Represents a space group and contains information about the space group number, symbol,
-    point group, crystal system, lattice system, symmetry operations, lattice constraints, 
-    and special Wyckoff positions
+    """A space group setting: number, symbols, point group, crystal and lattice
+    system, symmetry operations, lattice constraints and special Wyckoff positions
 
     :param _number: space group number (1-230)
-    :param _hall: Hall symbol identifying the specific setting 
+    :param _hall: Hall symbol identifying the specific setting
     :param _symbol: dictionary of symbols for different conventions
     :param _point_group: point group symbol
     :param _crystal_system: crystal system enum
@@ -55,8 +54,8 @@ class SpaceGroup:
     :param _sym_ops: list of SymOp objects representing the symmetry operations
     :param _lattice_constraints: dictionary of lattice constraints
     :param _special_positions: dictionary of special Wyckoff positions
-    :ivar _registry: stores instances of SpaceGroup keyed by their lookup key to ensure one instance per setting
-    :ivar _data: stores the space group data loaded from a JSON
+    :ivar _registry: one cached instance per setting, keyed by lookup key
+    :ivar _data: space group data loaded from JSON
     """
 
     _number: int
@@ -169,13 +168,14 @@ class SpaceGroup:
 
     @classmethod
     def from_sym_ops(cls, sym_ops, number=None, symbol=None) -> Self:
-        """Build a SpaceGroup from an explicit operation list and bypass the DB/registry
+        """Build an uncached SpaceGroup from an explicit operation list
 
-        Has no special-position table, ``get_unique_sym_ops`` dedups by centroid image
+        Has no special-position table, so ``get_unique_sym_ops`` dedups by
+        centroid image alone.
 
-        :param sym_ops: symmetry operations 
-        :param number: optional international number 
-        :param symbol: optional symbol dict 
+        :param sym_ops: symmetry operations
+        :param number: optional international number
+        :param symbol: optional symbol dict
         :returns: fresh, uncached SpaceGroup carrying exactly these ops
         """
         instance = object.__new__(cls)
@@ -198,7 +198,8 @@ class SpaceGroup:
         :param coords: fractional coordinates of the monomer centroid
         :param atol: fractional tolerance for deciding two images coincide
         :returns: one SymOp per distinct centroid image
-        :raises ValueError: if an unambiguously matched special position's multiplicity disagrees with the computed orbit size
+        :raises ValueError: if an unambiguously matched special position's
+            multiplicity disagrees with the computed orbit size
         """
         coords = np.asarray(coords, dtype=float)
 

@@ -123,8 +123,8 @@ class Multimer:
 
     :param _monomers: monomers making up this multimer
     :param _sym_ops: operations that generate those monomers
-    :param _multiplicity: how many times this multimer occurs in the crystal by symmetry, which is what weights it in the lattice sum
-    :ivar _geometric_mean: geometric mean of the inter-monomer centroid distances -- a single measure of the cluster's size, usable as a cutoff
+    :param _multiplicity: symmetry-equivalent copies in the crystal; its lattice-sum weight
+    :ivar _geometric_mean: geometric mean of inter-monomer centroid distances, a size cutoff
     """
 
     _monomers: list[Monomer]
