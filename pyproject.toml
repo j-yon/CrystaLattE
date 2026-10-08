@@ -7,9 +7,12 @@ name = "crystalatte"
 dynamic = ["version"]
 dependencies = [
     "numpy",
-    "pandas",
-    "pycifrw",
-    "spglib",
+    "pycifrw",              # CIF parsing (io/cif.py)
+    "pymatgen",             # point group symmetry detection
+    "qcelemental",          # element data and Molecule export
+    "scipy",                # spatial.distance, spatial.cKDTree
+    "spglib",               # crystal symmetry detection and point-group naming
+    "tqdm",                 # progress bars in generate/neighbors
 ]
 requires-python = ">=3.13"
 authors = [
@@ -41,6 +44,7 @@ find = {where = ["src"]}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--strict-markers"
 
 [tool.coverage.run]
 omit = ["*/tests/*"]
