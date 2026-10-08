@@ -73,6 +73,14 @@ def generate(crystal: Crystal, N: int, R: float, *, detect_symmetry=True, sympre
     :returns: A list of unique :class:`~crystalatte.core.multimer.Multimer`
         objects representing the multimers found in the crystal
     """
+    # check N validity
+    if not isinstance(N, (int, np.integer)) or isinstance(N, bool) or N < 2:
+        raise ValueError(
+            f"N must be an integer >= 2 (a multimer needs at least two "
+            f"monomers); got {N!r}. For the individual reference molecules, "
+            f"use Crystal.get_references() directly."
+        )
+
     if detect_symmetry:
         crystal = crystal.detect_symmetry(symprec)
     monomers = crystal.get_references()
