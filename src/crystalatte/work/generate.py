@@ -86,16 +86,20 @@ def generate(
                 stacklevel=2,
             )
 
-    # effective radius for bounding box, needed for monoclinic/triclinic cells
+    # effective radius for bounding box
     d = np.linalg.norm(crystal.lattice_vectors, axis=0)
     R_eff = R + max(pdist(m.cart_coords).max() for m in monomers)
 
-    # create oversized bounding box 
+    # a sphere of radius R_eff spans R_eff / spacing cells along each axis, where spacing is the
+    # interplanar distance 1/|a*_i|; it is shorter than |a_i| in monoclinic and triclinic cells
+    spacing = 1.0 / np.linalg.norm(np.linalg.inv(crystal.lattice_vectors), axis=1)
+
+    # create oversized bounding box
     lows, highs = [], []
     for m in monomers:
         t = m.centroid_frac
-        lows.append(-np.ceil((R_eff - t * d) / d))
-        highs.append(np.ceil((R_eff - (1 - t) * d) / d))
+        lows.append(-np.ceil(R_eff / spacing - t))
+        highs.append(np.ceil(R_eff / spacing - (1 - t)))
     bounds = np.vstack((np.min(lows, axis=0), np.max(highs, axis=0))).T.astype(int)
 
     # convert symprec to fractional tolerance for site-symmetry tests
