@@ -41,23 +41,6 @@ frac_to_cart: NDArray | None = None      # fractional -> Cartesian matrix (cart 
 cart_to_frac: NDArray | None = None  # Cartesian -> fractional matrix
 
 
-def _is_sohncke(crystal: Crystal) -> bool:
-    """Return True iff the space group contains no improper operation.
-
-    In such a group every crystallographic linear part has ``det = +1``, so by
-    ``docs/dedup_correctness.tex`` Thm ``thm:sohncke`` an enantiomeric merge
-    forces an IMPROPER dressing, which the site symmetry cannot supply. Only the
-    Cartesian branch, dressed by the full molecular point group, can certify it.
-
-    :param crystal: The crystal whose space group is tested
-    :returns: True iff every symmetry operation is proper
-    """
-    return all(
-        np.linalg.det(np.asarray(op.rot, dtype=float)) > 0
-        for op in crystal.space_group.sym_ops
-    )
-
-
 def bind(
     crystal: Crystal,
     monomers: list[Monomer],
@@ -77,11 +60,10 @@ def bind(
         match the one :func:`generate_neighbors` passes to
         ``get_unique_sym_ops`` or stabilizer and orbit disagree
     :param full_congruence_check: Run the Cartesian congruence branch
-        unconditionally, instead of only in the Sohncke-enantiomer case where it
-        is provably needed (see ``check_congruence_by_ref``). Slower but
-        maximally conservative; the escape hatch for an exotic crystal, and the
-        only way to get the old linear-monomer behaviour back. It cannot recover
-        a dressing that was never detected in the first place.
+        unconditionally, instead of only when the detected molecular point group
+        is richer than the site symmetry (see ``check_congruence_by_ref``). The
+        escape hatch for under-detected point groups; it cannot recover a
+        dressing that was never detected in the first place.
     :returns: ``None``
     """
     global active_crystal, references, Z_by_ref, mass_by_ref, self_iso_by_ref
@@ -95,7 +77,6 @@ def bind(
     Z_by_ref, mass_by_ref, self_iso_by_ref = [], [], []
     W_lin_by_ref, check_congruence_by_ref = [], []
     self_iso_tr_by_ref, W_tr_by_ref, W_stacked_by_ref = [], [], []
-    sohncke = _is_sohncke(crystal)
     for mon in references:
         Z_by_ref.append(
             np.array([qcel.periodictable.to_Z(s) for s in mon.symbols], dtype=np.int64)
@@ -148,46 +129,16 @@ def bind(
         c_cart = np.asarray(mon.centroid_cart, dtype=float)
         self_iso_tr_by_ref.append([c_cart - s @ c_cart for s in S])
 
-        # Gate for the tolerant Cartesian branch. The branch can only ever help
-        # when the molecular point group is richer than the site symmetry, so
-        # `len(S) > len(W)` is a necessary condition -- but it is a very weak
-        # one: it holds for benzene, ammonia and most other crystals, where the
-        # branch then costs 32-44% of trimer runtime and yields ZERO merges.
+        # Gate for the tolerant Cartesian branch: it can only help when the molecular
+        # point group is richer than the site symmetry. Molecular operations outside W
+        # can coincide with lattice symmetry the space group lacks (triazine in R-3c:
+        # sigma_h and sigma_v pair up dimers beyond ~17 A), in any space group, so the
+        # gate is no longer restricted to Sohncke groups. The branch runs only on the
+        # orbit-key representatives, which keeps it cheap.
         #
-        # It is retained for exactly ONE situation, and that one is a theorem:
-        # a SOHNCKE group with an ACHIRAL monomer, where an enantiomeric merge
-        # forces det(s_0) = -1 while W_lin is entirely proper (Thm thm:sohncke's
-        # determinant identity), so the site symmetry cannot supply the dressing.
-        # No X23 crystal actually exercises it -- ammonia opens the gate and
-        # yields 0 merges -- but the requirement is real.
-        #
-        # LINEAR MONOMERS USED TO OPEN THIS GATE AND DELIBERATELY NO LONGER DO.
-        # A linear molecule's continuous point group is only ever finitely
-        # sampled, and the dressings it needed were cancelling a phantom degree
-        # of freedom (the twist about the molecular axis) rather than doing any
-        # physical work -- one of them displaced no atom by more than 0.000 A.
-        # Linear monomers are now out of scope; see the note in `dedup/__init__`.
-        #
-        # The gate is NOT proven exhaustive: a proper, finite dressing in
-        # S \ W_lin in a non-Sohncke group would also need the branch, and no
-        # X23 crystal exhibits one. `full_congruence_check` is the escape hatch
-        # for anything exotic, and it must run the branch UNCONDITIONALLY.
-        #
-        # `len(S) > len(W)` therefore sits INSIDE the narrow arm, not outside it.
-        # Factoring it out looks equivalent and is not: S is detected numerically
-        # and under-detects (adamantane finds 2 of 24 operations, ice 2 of 6), so
-        # `len(S) > len(W)` can be false even though the true molecular group is
-        # strictly richer than the site symmetry. Guarding the hatch with it made
-        # the hatch silently inoperative for exactly the crystals whose detected
-        # S is deficient -- the ones most likely to need it.
-        #
-        # Note the hatch still cannot recover a dressing that was never detected;
-        # that is the separate under-detection defect (Caveat C2 in the .tex).
-        # What it now guarantees is that the branch actually runs when asked.
-        improper_S = any(float(np.linalg.det(s)) < 0 for s in S)
-        check_congruence_by_ref.append(
-            full_congruence_check or (len(S) > len(W) and sohncke and improper_S)
-        )
+        # S is detected numerically and can under-detect (adamantane finds 2 of 24
+        # operations), so `full_congruence_check` must stay unconditional.
+        check_congruence_by_ref.append(full_congruence_check or len(S) > len(W))
 
 
 def init_worker(
