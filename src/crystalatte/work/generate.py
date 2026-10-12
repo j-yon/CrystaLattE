@@ -1,7 +1,6 @@
 import warnings
 
 import numpy as np
-from scipy.spatial.distance import pdist
 from tqdm import tqdm
 
 from ..core.crystal import Crystal
@@ -86,21 +85,20 @@ def generate(
                 stacklevel=2,
             )
 
-    # effective radius for bounding box
     d = np.linalg.norm(crystal.lattice_vectors, axis=0)
-    R_eff = R + max(pdist(m.cart_coords).max() for m in monomers)
 
-    # a sphere of radius R_eff spans R_eff / spacing cells along each axis, where spacing is the
-    # interplanar distance 1/|a*_i|; it is shorter than |a_i| in monoclinic and triclinic cells
+    # bounding box of lattice translations n for partners g(c) + n. Under any cutoff mode a partner
+    # centroid lies within R + 2 * (largest centroid-atom distance) of an anchor centroid, and a
+    # Cartesian separation r spans at most r / spacing_i along axis i, where spacing_i = 1/|a*_i|
+    # is the interplanar distance (shorter than |a_i| in monoclinic and triclinic cells)
+    radius = max(np.linalg.norm(m.cart_coords - m.centroid_cart, axis=1).max() for m in monomers)
     spacing = 1.0 / np.linalg.norm(np.linalg.inv(crystal.lattice_vectors), axis=1)
-
-    # create oversized bounding box
-    lows, highs = [], []
-    for m in monomers:
-        t = m.centroid_frac
-        lows.append(-np.ceil(R_eff / spacing - t))
-        highs.append(np.ceil(R_eff / spacing - (1 - t)))
-    bounds = np.vstack((np.min(lows, axis=0), np.max(highs, axis=0))).T.astype(int)
+    reach = (R + 2 * radius) / spacing
+    anchors = np.array([m.centroid_frac for m in monomers])
+    images = np.array([op.apply(m.centroid_frac) for m in monomers for op in crystal.space_group.sym_ops])
+    lows = np.floor(anchors.min(axis=0) - images.max(axis=0) - reach)
+    highs = np.ceil(anchors.max(axis=0) - images.min(axis=0) + reach)
+    bounds = np.vstack((lows, highs)).T.astype(int)
 
     # convert symprec to fractional tolerance for site-symmetry tests
     kwargs.setdefault("site_atol", max(SITE_ATOL, float(symprec) / float(d.min())))
