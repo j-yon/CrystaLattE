@@ -1,7 +1,7 @@
 import numpy as np
 
 from ...core.sym_ops import SymOpList
-from . import cloud
+from .fallback import cloud, congruence
 from . import context
 from . import matchers
 from .invariants import base_reference, fingerprints_match, is_mono_reference
@@ -14,7 +14,7 @@ def are_equivalent(g_N: SymOpList, h_N: SymOpList) -> bool:
     1. Exact-integer matcher (:func:`~crystalatte.work.dedup.matchers.same_multimer_int`),
        the complete, roundoff-free decision for every crystallographic (same-orbit) merge
     2. Mono-reference only: falls back to the float congruence matcher
-       (:func:`~crystalatte.work.dedup.matchers.same_multimer`) when the integer
+       (:func:`~crystalatte.work.dedup.fallback.congruence.same_multimer`) when the integer
        matcher fails and that reference's molecular symmetry is richer than its
        site symmetry (``context.check_congruence_by_ref[i]``) 
     3. Cross-reference last resort: reflection-allowed Kabsch matching on the reconstructed,
@@ -37,7 +37,7 @@ def are_equivalent(g_N: SymOpList, h_N: SymOpList) -> bool:
     # mono-reference congruence matcher
     if is_mono_reference(g_N) and is_mono_reference(h_N) and base_reference(g_N) == base_reference(h_N):
         i = base_reference(g_N)
-        return context.check_congruence_by_ref[i] and matchers.same_multimer(g_N, h_N)
+        return context.check_congruence_by_ref[i] and congruence.same_multimer(g_N, h_N)
 
     # cross-reference fallback: labeled point-cloud congruence
     return cloud.same_multimer_geom(g_N, h_N)

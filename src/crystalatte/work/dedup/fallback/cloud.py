@@ -2,9 +2,9 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.distance import cdist
 
-from ...core.sym_ops import SymOpList
-from . import context
-from .invariants import cluster_atoms_cart
+from ....core.sym_ops import SymOpList
+from .. import context
+from ..invariants import cluster_atoms_cart
 
 
 def kabsch(P: NDArray, Q: NDArray) -> NDArray | None:

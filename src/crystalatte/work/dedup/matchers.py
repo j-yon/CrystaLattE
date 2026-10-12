@@ -4,7 +4,6 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ...core.sym_ops import SymOpList
-from . import context
 from .invariants import int_inv, relative_transforms
 
 def as_per_reference(
@@ -179,7 +178,7 @@ def same_multimer_int(
     Exact-integer form of :func:`anchored_match`: roundoff-free and complete
     for every same-orbit merge, including centrosymmetric site-inversion cases.
     Congruences whose dressing lies outside ``W`` (non-crystallographic) are not
-    found here; :func:`are_equivalent` leaves them to the float fallback.
+    found here; they are left to :mod:`~crystalatte.work.dedup.fallback`.
 
     :param g_N: The first cluster
     :param h_N: The second cluster
@@ -213,43 +212,3 @@ def same_multimer_int(
     # cost ~10% of runtime, so skip it.
     return anchored_match(LG, vG, LH, vH, S, D, refG, refH, np.array_equal, int_inv, verify_all=False)
 
-
-def same_multimer(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-3) -> bool:
-    """Return True iff ``g_N`` and ``h_N`` are the same multimer up to a global
-    isometry (rotation, translation, or reflection).
-
-    Cartesian form of :func:`anchored_match`, dressed with the FULL molecular
-    self-isometry group (:attr:`~crystalatte.core.multimer.Monomer.point_group`)
-    rather than just the site symmetry, so it also merges non-crystallographic
-    congruences and, being blind to ``det``, mirror-image enantiomers.
-
-    Expensive relative to :func:`fingerprints_match`; :func:`are_equivalent`
-    only calls this on clusters that already share a distance fingerprint.
-
-    :param g_N: The first cluster
-    :param h_N: The second cluster
-    :param atol: Absolute tolerance in Angstroms. Can be tight when the
-        relevant self-isometries are exact (identity / crystallographic); must
-        be looser when a merge relies on an approximate molecular operation
-        recovered from distorted CIF coordinates.
-    :returns: True iff the two clusters are the same multimer
-    """
-    if len(g_N) != len(h_N):
-        return False
-    refG = g_N.ref_indices.tolist()
-    refH = h_N.ref_indices.tolist()
-    if sorted(refG) != sorted(refH):
-        return False
-    LG, vG = relative_transforms(g_N, integer=False)
-    LH, vH = relative_transforms(h_N, integer=False)
-    # Pass groups for every reference, not one read off the cluster's
-    # ``base_reference``: each member must be dressed by its OWN reference's
-    # point group, or Z' > 1 clusters get the first member's group throughout.
-    return anchored_match(
-        LG, vG, LH, vH,
-        context.self_iso_by_ref,
-        context.self_iso_tr_by_ref,
-        refG, refH,
-        lambda a, b: np.allclose(a, b, atol=atol),
-        lambda s: s.T,  # orthogonal -> inverse is transpose
-    )
