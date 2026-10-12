@@ -1,4 +1,5 @@
 from functools import cache
+from itertools import chain
 
 import numpy as np
 from numpy.typing import NDArray
@@ -78,6 +79,74 @@ def relative_transforms_int(g_N: SymOpList) -> tuple[NDArray, NDArray]:
     :returns: tuple ``(L, v)`` of shapes ``(n, n, 3, 3)`` and ``(n, n, 3)``
     """
     return relative_transforms(g_N, integer=True)
+
+
+def _lex_order(x: NDArray) -> NDArray:
+    """Return per-group lexicographic sort orders for the rows of ``x``
+
+    :param x: a ``(G, K, m)`` integer array of ``G`` groups of ``K`` rows each
+    :returns: a ``(G, K)`` array of row indices sorting each group
+    """
+    G, K, m = x.shape
+    flat = x.reshape(G * K, m)
+    order = np.lexsort((*flat.T[::-1], np.repeat(np.arange(G), K)))
+    return order.reshape(G, K) - (np.arange(G) * K)[:, None]
+
+
+def orbit_key(g_N: SymOpList) -> tuple:
+    """Return an exact, hashable key that two clusters share iff
+    :func:`~crystalatte.work.dedup.matchers.same_multimer_int` matches them
+
+    Each member ``b`` is seen from an anchor ``a`` as the coset ``Delta[a,b] W_b``
+    (the site symmetry relabels the same molecule), reduced to its lexicographic minimum.
+    The key is the minimum, over every anchor ``a`` and anchor dressing ``s`` in ``W_a``,
+    of the sorted cosets ``s^-1 Delta[a,b] W_b``, prefixed with base-reference indices.
+
+    :param g_N: cluster to key
+    :returns: a tuple of integers, cached on the cluster
+    """
+    cached = getattr(g_N, "_orbit_key_cache", None)
+    if cached is not None:
+        return cached
+
+    L, v = relative_transforms(g_N, integer=True)
+    refs = g_N.ref_indices.tolist()
+    n = len(refs)
+
+    # trivial site symmetry (general positions): no cosets to reduce, skip the numpy overhead
+    if all(len(context.W_stacked_by_ref[r][0]) == 1 for r in refs):
+        rows = np.concatenate((L.reshape(n, n, 9), v), axis=2).tolist()
+        best = min(
+            (refs[a], *chain.from_iterable(sorted((refs[b], *rows[a][b]) for b in range(n) if b != a)))
+            for a in range(n)
+        )
+        g_N._orbit_key_cache = best
+        return best
+
+    best = None
+    for a in range(n):
+        _, Wa_inv, da = context.W_stacked_by_ref[refs[a]]
+        S = len(Wa_inv)
+        cosets = []
+        for b in range(n):
+            if b == a:
+                continue
+            Wb, _, db = context.W_stacked_by_ref[refs[b]]
+            K = len(Wb)
+            Lb = L[a, b] @ Wb  # (K, 3, 3)
+            vb = db @ L[a, b].T + v[a, b]  # (K, 3)
+            Lx = np.einsum("sij,kjl->skil", Wa_inv, Lb).reshape(S, K, 9)
+            vx = np.einsum("sij,skj->ski", Wa_inv, vb[None] - da[:, None])
+            rows = np.concatenate((np.full((S, K, 1), refs[b]), Lx, vx), axis=2)
+            cosets.append(rows[np.arange(S), _lex_order(rows)[:, 0]])  # (S, 13)
+        rows = np.stack(cosets, axis=1)  # (S, n - 1, 13)
+        rows = rows[np.arange(S)[:, None], _lex_order(rows)].reshape(S, -1)
+        cand = (refs[a], *rows[np.lexsort(rows.T[::-1])[0]].tolist())
+        if best is None or cand < best:
+            best = cand
+
+    g_N._orbit_key_cache = best
+    return best
 
 
 def base_reference(g_N: SymOpList) -> int:

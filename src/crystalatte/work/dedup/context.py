@@ -35,6 +35,8 @@ check_congruence_by_ref: list[bool] = [False]
 # Dropping ``d`` (using ``s`` alone) is only valid when ``s @ c == c``.
 self_iso_tr_by_ref: list[list[NDArray]] = [[np.zeros(3)]]        # Cartesian, Angstroms
 W_tr_by_ref: list[list[NDArray]] = [[np.zeros(3, dtype=np.int64)]]  # lattice basis, twelfths
+# The same site-symmetry dressings stacked as ``(W, W^-1, W_tr)`` arrays for the vectorized orbit key.
+W_stacked_by_ref: list[tuple[NDArray, NDArray, NDArray]] = []
 frac_to_cart: NDArray | None = None      # fractional -> Cartesian matrix (cart = frac_to_cart @ frac)
 cart_to_frac: NDArray | None = None  # Cartesian -> fractional matrix
 
@@ -84,7 +86,7 @@ def bind(
     """
     global active_crystal, references, Z_by_ref, mass_by_ref, self_iso_by_ref
     global W_lin_by_ref, check_congruence_by_ref, frac_to_cart, cart_to_frac
-    global self_iso_tr_by_ref, W_tr_by_ref
+    global self_iso_tr_by_ref, W_tr_by_ref, W_stacked_by_ref
     active_crystal = crystal
     references = list(monomers)
     frac_to_cart = np.asarray(crystal.lattice_vectors, dtype=float)
@@ -92,7 +94,7 @@ def bind(
 
     Z_by_ref, mass_by_ref, self_iso_by_ref = [], [], []
     W_lin_by_ref, check_congruence_by_ref = [], []
-    self_iso_tr_by_ref, W_tr_by_ref = [], []
+    self_iso_tr_by_ref, W_tr_by_ref, W_stacked_by_ref = [], [], []
     sohncke = _is_sohncke(crystal)
     for mon in references:
         Z_by_ref.append(
@@ -122,6 +124,10 @@ def bind(
             W_tr = [np.zeros(3, dtype=np.int64)]
         W_lin_by_ref.append(W)
         W_tr_by_ref.append(W_tr)
+        W_stack = np.stack(W)
+        W_stacked_by_ref.append(
+            (W_stack, np.rint(np.linalg.inv(W_stack)).astype(np.int64), np.stack(W_tr))
+        )
 
         # W must be built BEFORE S, because S is seeded with it. `W_lin <= S` is
         # a theorem, but the detector cannot realise it on its own: the missing
