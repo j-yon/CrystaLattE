@@ -8,6 +8,7 @@ them through the module (``context.Z_by_ref``) and never via
 ``from .context import Z_by_ref`` — the latter captures the object present at
 import time and silently keeps reading stale state.
 """
+
 import numpy as np
 import qcelemental as qcel
 from numpy.typing import NDArray
@@ -30,11 +31,15 @@ check_congruence_by_ref: list[bool] = [False]
 # about the coordinate origin, so as a map on the reference monomer's raw
 # coordinates it is the affine map ``x -> s @ x + d`` with ``d = c - s @ c``.
 # Dropping ``d`` (using ``s`` alone) is only valid when ``s @ c == c``.
-self_iso_tr_by_ref: list[list[NDArray]] = [[np.zeros(3)]]        # Cartesian, Angstroms
-W_tr_by_ref: list[list[NDArray]] = [[np.zeros(3, dtype=np.int64)]]  # lattice basis, twelfths
+self_iso_tr_by_ref: list[list[NDArray]] = [[np.zeros(3)]]  # Cartesian, Angstroms
+W_tr_by_ref: list[list[NDArray]] = [
+    [np.zeros(3, dtype=np.int64)]
+]  # lattice basis, twelfths
 # The same site-symmetry dressings stacked as ``(W, W^-1, W_tr)`` arrays for the vectorized orbit key.
 W_stacked_by_ref: list[tuple[NDArray, NDArray, NDArray]] = []
-frac_to_cart: NDArray | None = None      # fractional -> Cartesian matrix (cart = frac_to_cart @ frac)
+frac_to_cart: NDArray | None = (
+    None  # fractional -> Cartesian matrix (cart = frac_to_cart @ frac)
+)
 cart_to_frac: NDArray | None = None  # Cartesian -> fractional matrix
 
 
@@ -130,4 +135,3 @@ def bind(
         # When |S| == |W| the gate stays shut: S is seeded with W, so S == W, and a
         # W-dressed match is exactly what the orbit key already decides.
         check_congruence_by_ref.append(len(S) > len(W))
-

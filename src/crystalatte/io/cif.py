@@ -32,6 +32,7 @@ _FULL_OCCUPANCY = 0.999
 # what `from_cif` may be told to do about partially occupied sites
 DISORDER_POLICIES = ("error", "ignore", "drop")
 
+
 def _clean_block(block):
     """Strip standard-uncertainty parentheses and convert numeric fields to floats
 
@@ -41,7 +42,6 @@ def _clean_block(block):
     cleaned_block = {}
     # pycifrw partitions CIF into a dict of lists/strings/floats
     for key, value in block.items():
-
         # found a list, corresponds to a looped field
         if isinstance(value, list):
             cleaned_block[key] = []
@@ -64,7 +64,7 @@ def _clean_block(block):
                 cleaned_block[key] = float(cleaned_value)
             except ValueError:
                 cleaned_block[key] = cleaned_value
-        
+
         # if not a string or list, leave it as is (most likely float)
         else:
             cleaned_block[key] = value
@@ -131,7 +131,7 @@ def _listed_sym_ops(block: dict) -> list[SymOp] | None:
     """
     raw = _first(block, _SYMOP_FIELDS)
     if raw is None:
-        return None # no operations listed
+        return None  # no operations listed
 
     entries = raw if isinstance(raw, list) else [raw]
     ops = []
@@ -203,7 +203,7 @@ def _resolve_space_group(block: dict) -> SpaceGroup:
     # grab the operations the file lists, if any
     listed = _listed_sym_ops(block)
 
-    # source: Hall -> Hermann-Mauguin -> number, in that order 
+    # source: Hall -> Hermann-Mauguin -> number, in that order
     source = "Hall symbol" if hall else None
     if hall is None and hm is not None:
         hall = _hall_from_hm(hm)
@@ -245,14 +245,16 @@ def _site_occupancies(block: dict, n_sites: int) -> np.ndarray:
     """
     raw = _first(block, ("_atom_site_occupancy",))
     if raw is None:
-        return np.ones(n_sites) # default to fully occupied if the field is absent
+        return np.ones(n_sites)  # default to fully occupied if the field is absent
 
     values = raw if isinstance(raw, list) else [raw]
     occupancies = np.array(
         [float(v) if not isinstance(v, str) else 1.0 for v in values], dtype=float
     )
     if len(occupancies) != n_sites:
-        return np.ones(n_sites) # default to fully occupied if the field is present but has the wrong length
+        return np.ones(
+            n_sites
+        )  # default to fully occupied if the field is present but has the wrong length
 
     return occupancies
 
@@ -274,7 +276,7 @@ def _apply_disorder_policy(block: dict, coords: np.ndarray, policy: str):
     occupancies = _site_occupancies(block, len(coords))
     partial = occupancies < _FULL_OCCUPANCY
     if not partial.any():
-        return np.ones(len(coords), dtype=bool) # found no partial occupancy
+        return np.ones(len(coords), dtype=bool)  # found no partial occupancy
 
     labels = _first(block, ("_atom_site_label",)) or []
     labels = labels if isinstance(labels, list) else [labels]
@@ -364,8 +366,12 @@ def from_cif(
         if missing:
             raise ValueError(f"CIF block is missing cell parameters: {missing}")
 
-        a, b, c = (float(_first(block, (f,))) for f in _CELL_LENGTH_FIELDS) # lattice lengths
-        alpha, beta, gamma = (float(_first(block, (f,))) for f in _CELL_ANGLE_FIELDS) # lattice angles
+        a, b, c = (
+            float(_first(block, (f,))) for f in _CELL_LENGTH_FIELDS
+        )  # lattice lengths
+        alpha, beta, gamma = (
+            float(_first(block, (f,))) for f in _CELL_ANGLE_FIELDS
+        )  # lattice angles
 
         # attempt to resolve the space group
         space_group = _resolve_space_group(block)

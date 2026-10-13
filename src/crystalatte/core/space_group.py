@@ -43,11 +43,11 @@ class LatticeSystem(Enum):
 @dataclass
 class SpaceGroup:
     """Represents a space group and contains information about the space group number, symbol,
-    point group, crystal system, lattice system, symmetry operations, lattice constraints, 
+    point group, crystal system, lattice system, symmetry operations, lattice constraints,
     and special Wyckoff positions
 
     :param _number: space group number (1-230)
-    :param _hall: Hall symbol identifying the specific setting 
+    :param _hall: Hall symbol identifying the specific setting
     :param _symbol: dictionary of symbols for different conventions
     :param _point_group: point group symbol
     :param _crystal_system: crystal system enum
@@ -100,12 +100,14 @@ class SpaceGroup:
         if key not in SpaceGroup._data:
             key = str(number)
         if key not in SpaceGroup._data:
-            raise ValueError(f"Space group number {number} (hall={hall!r}) not found in data.")
+            raise ValueError(
+                f"Space group number {number} (hall={hall!r}) not found in data."
+            )
 
         # grab data from determined key
         data = SpaceGroup._data[key]
 
-        self._number = data["number"] 
+        self._number = data["number"]
         self._hall = hall.strip() if hall else data["symbol"].get("Hall")
         self._symbol = data["symbol"]
         self._point_group = data["point_group"]
@@ -114,7 +116,7 @@ class SpaceGroup:
         self._sym_ops = [SymOp(op) for op in data["sym_ops"]]
         self._lattice_constraints = data["lattice_constraints"]
         self._special_positions = data["special_wyckoff_positions"]
-        self._initialized = True 
+        self._initialized = True
 
     def __repr__(self) -> str:
         return f"SpaceGroup(number={self._number}, symbol='{self._symbol}')"
@@ -124,7 +126,10 @@ class SpaceGroup:
 
     def __reduce__(self):
         if getattr(self, "_detected", False):
-            return (SpaceGroup._reconstruct_detected, (self._sym_ops, self._number, self._symbol))
+            return (
+                SpaceGroup._reconstruct_detected,
+                (self._sym_ops, self._number, self._symbol),
+            )
         return (self.__class__, (self._number, self._hall))
 
     @property
@@ -173,9 +178,9 @@ class SpaceGroup:
 
         Has no special-position table, ``get_unique_sym_ops`` dedups by centroid image
 
-        :param sym_ops: symmetry operations 
-        :param number: optional international number 
-        :param symbol: optional symbol dict 
+        :param sym_ops: symmetry operations
+        :param number: optional international number
+        :param symbol: optional symbol dict
         :returns: fresh, uncached SpaceGroup carrying exactly these ops
         """
         instance = object.__new__(cls)
@@ -192,7 +197,9 @@ class SpaceGroup:
         instance._initialized = True  # guard against __init__ re-running
         return instance
 
-    def get_unique_sym_ops(self, coords: NDArray, atol: float = SITE_ATOL) -> list[SymOp]:
+    def get_unique_sym_ops(
+        self, coords: NDArray, atol: float = SITE_ATOL
+    ) -> list[SymOp]:
         """Return one representative operation per distinct image of ``coords`` (modulo the lattice)
 
         :param coords: fractional coordinates of the monomer centroid
@@ -209,7 +216,10 @@ class SpaceGroup:
             image = np.asarray(op.apply(coords), dtype=float) % 1.0
 
             # use loose-ish tolerance since special positions (1/3) are written as floats
-            if any(np.allclose(((image - seen + 0.5) % 1.0) - 0.5, 0.0, atol=atol) for seen in images):
+            if any(
+                np.allclose(((image - seen + 0.5) % 1.0) - 0.5, 0.0, atol=atol)
+                for seen in images
+            ):
                 continue
 
             images.append(image)

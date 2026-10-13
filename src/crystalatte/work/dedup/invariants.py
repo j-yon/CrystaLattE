@@ -8,15 +8,6 @@ from numpy.typing import NDArray
 from ...core.sym_ops import SymOpList
 from . import context
 
-"""
-    Forming the adjugate directly in integer arithmetic (nine 2x2 cofactors) is
-    exact by construction and looks like the obvious optimisation, since this is
-    one of the hottest functions in the deduper. It was tried and MEASURED
-    SLOWER at the sizes that actually occur: 22.5 us against 8.7 us for a single
-    3x3 and 22.9 vs 10.2 for a batch of three, because a dozen small numpy
-    operations cost more in Python overhead than one LAPACK call. It only wins
-    past a batch of ~100, and clusters hold 2-3 operations. Do not "fix" this.
-"""
 
 def int_inv(M: NDArray) -> NDArray:
     """Return the exact integer inverse of a unimodular integer matrix
@@ -52,20 +43,22 @@ def relative_transforms(g_N: SymOpList, integer: bool) -> tuple[NDArray, NDArray
         return cached
 
     if integer:
-        R = g_N.rot_cache.astype(np.int64) # (n, 3, 3)
-        t = g_N.tr_cache.astype(np.int64) # (n, 3), twelfths
+        R = g_N.rot_cache.astype(np.int64)  # (n, 3, 3)
+        t = g_N.tr_cache.astype(np.int64)  # (n, 3), twelfths
         R_inv = int_inv(R)
     else:
-        R = context.frac_to_cart @ g_N.rot_cache.astype(float) @ context.cart_to_frac       # (n, 3, 3)
-        t = (context.frac_to_cart @ (g_N.tr_cache.astype(float) / 12.0).T).T # (n, 3)
+        R = (
+            context.frac_to_cart @ g_N.rot_cache.astype(float) @ context.cart_to_frac
+        )  # (n, 3, 3)
+        t = (context.frac_to_cart @ (g_N.tr_cache.astype(float) / 12.0).T).T  # (n, 3)
         R_inv = np.linalg.inv(R)
 
     # contract rotations
-    L = np.einsum("aij,bjk->abik", R_inv, R) # (n, n, 3, 3)
+    L = np.einsum("aij,bjk->abik", R_inv, R)  # (n, n, 3, 3)
 
     # contract translations
-    dt = t[None, :, :] - t[:, None, :] # (n, n, 3): t_b - t_a
-    v = np.einsum("aij,abj->abi", R_inv, dt) # (n, n, 3)
+    dt = t[None, :, :] - t[:, None, :]  # (n, n, 3): t_b - t_a
+    v = np.einsum("aij,abj->abi", R_inv, dt)  # (n, n, 3)
 
     # cache and return transform
     setattr(g_N, slot, (L, v))
@@ -129,14 +122,20 @@ def _dressed_minima(D: NDArray, ref_a: int, ref_b: int) -> NDArray:
     out = np.empty((len(D), S, 12), dtype=np.int64)
     step = max(1, DRESS_CHUNK_ROWS // (S * K))
     for i in range(0, len(D), step):
-        L = D[i:i + step, :9].reshape(-1, 1, 1, 3, 3)
-        v = D[i:i + step, 9:].reshape(-1, 1, 1, 3, 1)
+        L = D[i : i + step, :9].reshape(-1, 1, 1, 3, 3)
+        v = D[i : i + step, 9:].reshape(-1, 1, 1, 3, 1)
         # s^-1 (Delta w): linear part s^-1 L W, translation s^-1 (L d_w + v - d_s); axes (u, s, w)
         Lx = Wa_inv[None, :, None] @ L @ Wb[None, None]
-        vx = Wa_inv[None, :, None] @ (L @ db[None, None, :, :, None] + v - da[None, :, None, :, None])
-        rows = np.concatenate((Lx.reshape(*Lx.shape[:3], 9), vx[..., 0]), axis=3)  # (u, S, K, 12)
+        vx = Wa_inv[None, :, None] @ (
+            L @ db[None, None, :, :, None] + v - da[None, :, None, :, None]
+        )
+        rows = np.concatenate(
+            (Lx.reshape(*Lx.shape[:3], 9), vx[..., 0]), axis=3
+        )  # (u, S, K, 12)
         k = lex_codes(rows).argmin(axis=2)
-        out[i:i + step] = np.take_along_axis(rows, k[..., None, None], axis=2)[:, :, 0]
+        out[i : i + step] = np.take_along_axis(rows, k[..., None, None], axis=2)[
+            :, :, 0
+        ]
     return out
 
 
@@ -153,33 +152,52 @@ def _group_keys(cands: list[SymOpList], refs: tuple[int, ...]) -> NDArray:
 
     # sort members by base reference so every cluster's members line up; the key ignores member order
     order = np.argsort(np.stack([g.ref_indices for g in cands]), axis=1, kind="stable")
-    R = np.take_along_axis(np.stack([g.rot_cache for g in cands]).astype(np.int64), order[..., None, None], axis=1)
-    t = np.take_along_axis(np.stack([g.tr_cache for g in cands]).astype(np.int64), order[..., None], axis=1)
+    R = np.take_along_axis(
+        np.stack([g.rot_cache for g in cands]).astype(np.int64),
+        order[..., None, None],
+        axis=1,
+    )
+    t = np.take_along_axis(
+        np.stack([g.tr_cache for g in cands]).astype(np.int64), order[..., None], axis=1
+    )
 
     # relative transforms Delta[a,b] = T_a^-1 T_b of every cluster at once
     R_inv = int_inv(R)
-    L = R_inv[:, :, None] @ R[:, None]                                            # (N, n, n, 3, 3)
-    v = (R_inv[:, :, None] @ (t[:, None] - t[:, :, None])[..., None])[..., 0]     # (N, n, n, 3)
+    L = R_inv[:, :, None] @ R[:, None]  # (N, n, n, 3, 3)
+    v = (R_inv[:, :, None] @ (t[:, None] - t[:, :, None])[..., None])[
+        ..., 0
+    ]  # (N, n, n, 3)
 
     # an anchor's base reference leads its key, so only anchors of the smallest reference can win.
     # After sorting they are the first c members, and each sees its partners' references as refs[1:]
     c = refs.count(refs[0])
     partner_refs = refs[1:]
     S = len(context.W_stacked_by_ref[refs[0]][0])
-    M = np.empty((N, c, S, n - 1), dtype=np.int64)  # (cluster, anchor, anchor dressing, partner slot)
+    M = np.empty(
+        (N, c, S, n - 1), dtype=np.int64
+    )  # (cluster, anchor, anchor dressing, partner slot)
     for ref_b in sorted(set(partner_refs)):
         cols = [j for j, r in enumerate(partner_refs) if r == ref_b]
-        pairs = [(a, j, j + (j >= a)) for a in range(c) for j in cols]  # (anchor, slot, member)
-        D = np.concatenate([np.concatenate((L[:, a, b].reshape(N, 9), v[:, a, b]), axis=1) for a, _, b in pairs])
+        pairs = [
+            (a, j, j + (j >= a)) for a in range(c) for j in cols
+        ]  # (anchor, slot, member)
+        D = np.concatenate(
+            [
+                np.concatenate((L[:, a, b].reshape(N, 9), v[:, a, b]), axis=1)
+                for a, _, b in pairs
+            ]
+        )
 
         # many clusters share a relative transform: dress each distinct one once
         U, inverse = np.unique(D, axis=0, return_inverse=True)
-        codes = lex_codes(_dressed_minima(U, refs[0], ref_b))[inverse.ravel()].reshape(len(pairs), N, S)
+        codes = lex_codes(_dressed_minima(U, refs[0], ref_b))[inverse.ravel()].reshape(
+            len(pairs), N, S
+        )
         for p, (a, j, _) in enumerate(pairs):
             M[:, a, :, j] = codes[p]
 
         # partners of one reference are unordered; their slots are contiguous
-        M[..., cols[0]:cols[-1] + 1].sort(axis=3)
+        M[..., cols[0] : cols[-1] + 1].sort(axis=3)
 
     # lexicographic minimum over (anchor, anchor dressing) for each cluster
     flat = M.reshape(N * c * S, n - 1)
@@ -209,7 +227,9 @@ def orbit_labels(candidates: list[SymOpList]) -> NDArray:
 
     n_labels = 0
     for refs, idx in groups.items():
-        _, inverse = np.unique(_group_keys([candidates[i] for i in idx], refs), axis=0, return_inverse=True)
+        _, inverse = np.unique(
+            _group_keys([candidates[i] for i in idx], refs), axis=0, return_inverse=True
+        )
         labels[idx] = inverse.ravel() + n_labels
         n_labels += int(inverse.max()) + 1
     return labels
@@ -240,7 +260,9 @@ def cluster_atoms_cart(g_N: SymOpList) -> NDArray:
     :returns: An ``(n_atoms, 3)`` array of Cartesian coordinates
     """
     ref = g_N.ref_indices
-    parts = [op.apply(context.references[ref[k]].frac_coords) for k, op in enumerate(g_N)]
+    parts = [
+        op.apply(context.references[ref[k]].frac_coords) for k, op in enumerate(g_N)
+    ]
     return context.active_crystal.to_cartesian(np.vstack(parts))
 
 
@@ -266,13 +288,15 @@ def distance_fingerprint(g_N: SymOpList) -> tuple[NDArray, NDArray]:
         return cached
 
     # not cached, compute here
-    atoms = cluster_atoms_cart(g_N) # (n_atoms, 3)
-    ref = g_N.ref_indices # (n_ops,)
-    Z = np.concatenate([context.Z_by_ref[ref[k]] for k in range(len(g_N))]) # (n_atoms,)
-    i_idx, j_idx = _triu_indices(len(atoms)) # (n_atom_pairs,)
-    dists = np.linalg.norm(atoms[i_idx] - atoms[j_idx], axis=1) 
+    atoms = cluster_atoms_cart(g_N)  # (n_atoms, 3)
+    ref = g_N.ref_indices  # (n_ops,)
+    Z = np.concatenate(
+        [context.Z_by_ref[ref[k]] for k in range(len(g_N))]
+    )  # (n_atoms,)
+    i_idx, j_idx = _triu_indices(len(atoms))  # (n_atom_pairs,)
+    dists = np.linalg.norm(atoms[i_idx] - atoms[j_idx], axis=1)
     zz = Z[i_idx] * Z[j_idx]
-    order = np.lexsort((dists, zz)) # lexsort by (zz, dists)
+    order = np.lexsort((dists, zz))  # lexsort by (zz, dists)
     fp = (zz[order], dists[order])
 
     # cache and return
@@ -288,19 +312,21 @@ def fingerprints_match(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-6) -> bo
     :param atol: absolute tolerance in Angstroms for the distance comparison
     :returns: True iff both fingerprints match
     """
-    if len(g_N) != len(h_N): 
-        return False # different number of operations (should be impossible but cheap to check)
+    if len(g_N) != len(h_N):
+        return False  # different number of operations (should be impossible but cheap to check)
 
     zz_g, d_g = distance_fingerprint(g_N)
     zz_h, d_h = distance_fingerprint(h_N)
-    if zz_g.shape != zz_h.shape or not np.array_equal(zz_g, zz_h): 
-        return False # different number of atom pairs or different Z products
+    if zz_g.shape != zz_h.shape or not np.array_equal(zz_g, zz_h):
+        return False  # different number of atom pairs or different Z products
 
     # compare distances with tolerance (np.allclose costs ~10x more per call on these short arrays)
     return bool(np.abs(d_g - d_h).max(initial=0.0) <= atol)
 
 
-def fingerprints_match_many(g_N: SymOpList, zz: NDArray, d: NDArray, atol: float = 1e-6) -> NDArray:
+def fingerprints_match_many(
+    g_N: SymOpList, zz: NDArray, d: NDArray, atol: float = 1e-6
+) -> NDArray:
     """Row-wise :func:`fingerprints_match` of ``g_N`` against a stack of fingerprints
 
     :param g_N: cluster to compare

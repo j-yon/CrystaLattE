@@ -17,11 +17,11 @@ from .sym_ops import SymOp
 class Crystal:
     """Represents a crystal unit cell with lattice parameters and space group symmetry
 
-    :param _vectors: Lattice vectors (a, b, c) in Angstroms
-    :param _angles: Lattice angles (alpha, beta, gamma) in degrees
-    :param _space_group: The crystal's space group
-    :param _asu: The asymmetric unit of the crystal, containing the unique atoms and their positions
-    :ivar _frac_to_cart: A 3x3 matrix for converting fractional coordinates to Cartesian coordinates
+    :param _vectors: lattice vectors (a, b, c)
+    :param _angles: lattice angles (alpha, beta, gamma)
+    :param _space_group: SpaceGroup object representing this crystal's symmetry
+    :param _asu: asymmetric unit of this crystal
+    :ivar _frac_to_cart: 3x3 matrix to convert fractional to Cartesian
     """
 
     _vectors: tuple[float, float, float]
@@ -70,7 +70,7 @@ class Crystal:
     def _validate_crystal(self):
         """Validate the provided crystal attributes
 
-        :raises ValueError: If lattice parameters are non-positive or if angles are not between 0 and 180 degrees
+        :raises ValueError: if lattice parameters are non-positive or if angles are not between 0 and 180 degrees
         """
         a, b, c = self._vectors
         alpha, beta, gamma = self._angles
@@ -96,7 +96,9 @@ class Crystal:
         return self._space_group
 
     @property
-    def lattice_parameters(self) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    def lattice_parameters(
+        self,
+    ) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
         return self._vectors, self._angles
 
     @property
@@ -108,10 +110,10 @@ class Crystal:
         return abs(np.linalg.det(self._frac_to_cart))
 
     def _get_covalent_radius(self, symbol: str) -> float:
-        """Get covalent radius for an element in Angstroms.
+        """Get covalent radius for an element in Angstroms
 
-        :param symbol: The atomic symbol of the element (e.g., 'C', 'O', 'N').
-        :returns: The covalent radius of the element in Angstroms.
+        :param symbol: atomic symbol of the element
+        :returns: covalent radius of the element in Angstroms
         """
         # TODO: dont use qcel
         radius_bohr = qcel.covalentradii.get(symbol)
@@ -130,7 +132,7 @@ class Crystal:
         N = len(coords)
         radii = np.array([self._get_covalent_radius(elem) for elem in elements])
 
-        # KD-tree 
+        # KD-tree
         tree = cKDTree(coords)
         max_radius = np.max(radii)
         global_cutoff = tol * (2 * max_radius)
@@ -139,14 +141,14 @@ class Crystal:
 
         adjacency = [[] for _ in range(N)]
 
-        # build adjacency matrix 
+        # build adjacency matrix
         for i, j in pairs:
             cutoff = tol * (radii[i] + radii[j])
             if np.linalg.norm(coords[i] - coords[j]) <= cutoff:
                 adjacency[i].append(j)
                 adjacency[j].append(i)
 
-        # BFS with shift propagation 
+        # BFS with shift propagation
         fragments = []
         visited = np.zeros(N, dtype=bool)
         for start in range(N):
@@ -172,7 +174,7 @@ class Crystal:
     def _find_molecules(self, tol: float = 1.2):
         """Expand the ASU and BFS into complete molecules
 
-        :param tol: tolerance factor for determining bonding 
+        :param tol: tolerance factor for determining bonding
         :returns: unique fractional/Cartesian coordinates, symbols, and list of complete molecule indices
         """
         all_symbols, all_frac = [], []
@@ -220,7 +222,8 @@ class Crystal:
         :param unique_frac: array of unique fractional coordinates
         :param unique_cart: array of unique Cartesian coordinates
         :param unique_symbols: array of unique atomic symbols
-        :returns: Monomer object representing the component"""
+        :returns: Monomer object representing the component
+        """
         syms = [str(unique_symbols[j]) for j in comp]
         masses = np.array([qcel.periodictable.to_mass(s) for s in syms])
         return Monomer(
@@ -234,7 +237,7 @@ class Crystal:
     def to_cartesian(self, frac_coords: NDArray[np.float64]) -> NDArray[np.float64]:
         """Convert fractional coordinates to Cartesian coordinates
 
-        :param frac_coords: Fractional coordinates, shape (N, 3)
+        :param frac_coords: fractional coordinates, shape (N, 3)
         :returns: Cartesian coordinates in Angstroms, shape (N, 3)
         """
         return (self._frac_to_cart @ frac_coords.T).T
@@ -244,7 +247,7 @@ class Crystal:
 
         Two complete molecules are the same reference iff a SymOp maps one onto the other
 
-        :param tol: tolerance factor for determining bonding 
+        :param tol: tolerance factor for determining bonding
         :returns: Monomer list representing the reference monomers
         """
         unique_frac, unique_cart, unique_symbols, full = self._find_molecules(tol)
@@ -281,18 +284,16 @@ class Crystal:
     def get_reference(self, tol: float = 1.2) -> Monomer:
         """Return the single reference molecule closest to the origin
 
-        :param tol: tolerance factor for determining bonding 
+        :param tol: tolerance factor for determining bonding
         :returns: Monomer object representing the reference monomer
         """
         return self.get_references(tol)[0]
 
     def detect_symmetry(self, symprec: float = 1e-3) -> Crystal:
-        """Attempt to detect a higher true space group with spglib and return a new Crystal using it
+        """Attempt to detect a higher true space group with spglib
 
-        Returns ``self`` unchanged if spglib errors or does not find strictly higher symmetry
-
-        :param symprec: spglib symmetry tolerance 
-        :returns: A higher-symmetry Crystal, or ``self``
+        :param symprec: spglib symmetry tolerance
+        :returns: higher-symmetry Crystal, or ``self``
         """
         import warnings
 
@@ -300,7 +301,7 @@ class Crystal:
 
         lattice = self._frac_to_cart.T
 
-        # Expand ASU to full cell using declared symmetry ops
+        # expand ASU to full cell using declared symmetry ops
         frac, nums = [], []
         for op in self._space_group.sym_ops:
             for pos, sym in zip(self._asu.positions, self._asu.atoms):
@@ -309,7 +310,7 @@ class Crystal:
         frac = np.array(frac)
         nums = np.array(nums)
 
-        # Dedup coincident atoms (mod 1)
+        # dedup coincident atoms (mod 1)
         keep = []
         for i in range(len(frac)):
             if not keep:
@@ -321,12 +322,14 @@ class Crystal:
         positions = frac[keep]
         numbers = nums[keep].tolist()
 
-        # Call spglib to detect symmetry, ignoring warnings (spglib can be noisy)
+        # call spglib to detect symmetry, ignoring warnings (spglib can be noisy)
         # spglib signals failure either by raising or by returning None; both fall back
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                sym = spglib.get_symmetry((lattice, positions, numbers), symprec=symprec)
+                sym = spglib.get_symmetry(
+                    (lattice, positions, numbers), symprec=symprec
+                )
         except Exception as exc:
             warnings.warn(
                 f"symmetry detection failed, using declared symmetry: {exc}",
@@ -335,7 +338,7 @@ class Crystal:
             )
             return self
 
-        # If no symmetry is detected, or if the detected symmetry is not strictly higher than the declared symmetry, return with declared symmetry
+        # if no symmetry is detected, return with declared symmetry
         if sym is None:
             warnings.warn(
                 "symmetry detection failed, using declared symmetry",
@@ -344,6 +347,7 @@ class Crystal:
             )
             return self
 
+        # if detected symmetry is lower than declared, return with declared symmetry
         detected = [
             SymOp.from_components(
                 np.asarray(r, dtype=np.int16),
@@ -362,7 +366,7 @@ class Crystal:
                 )
             return self
 
-        # Check that each declared op appears in detected (full op match: rot + tr mod 12)
+        # check that each declared op appears in new detected symmetry
         def _same_op(a, b):
             return np.array_equal(a.rot, b.rot) and np.array_equal(
                 (a.tr - b.tr) % 12, np.zeros(3, dtype=a.tr.dtype)
@@ -371,8 +375,8 @@ class Crystal:
         if not all(any(_same_op(op, d) for d in detected) for op in declared):
             return self
 
-        # Isolate metadata and create new Crystal with detected symmetry; the number is
-        # reporting-only, so a failure here must not discard the detected operations
+        # isolate metadata and create new Crystal with detected symmetry
+        # number is not important if it can't be determined
         number = None
         try:
             with warnings.catch_warnings():

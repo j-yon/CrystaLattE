@@ -36,7 +36,7 @@ def _neighbor_distance(
     """Return the cutoff distance for a partner monomer
 
     :param cart_mon: partner monomer's Cartesian coordinates
-    :param partner_masses: partner's atomic masses, aligned with ``cart_mon``. 
+    :param partner_masses: partner's atomic masses, aligned with ``cart_mon``.
         (these must come from the partner's own base reference for ``Z' > 1``)
     :param monomer: anchor monomer
     :param mode: desired distance convention
@@ -50,7 +50,9 @@ def _neighbor_distance(
     return float(cdist(monomer.cart_coords, cart_mon).min())
 
 
-def _partner_adjacency(carts: list[NDArray], masses: list[NDArray], R: float, mode: str) -> NDArray:
+def _partner_adjacency(
+    carts: list[NDArray], masses: list[NDArray], R: float, mode: str
+) -> NDArray:
     """Return which pairs of partners lie within ``R`` of each other under the distance convention
 
     The origin convention is anchor-centred, so for a partner pair it takes the smaller of the two
@@ -68,11 +70,18 @@ def _partner_adjacency(carts: list[NDArray], masses: list[NDArray], R: float, mo
         return D <= R
 
     # any pair beyond R + both radii is out of range; only the rest need an exact distance
-    radii = np.array([np.linalg.norm(c - com, axis=1).max() for c, com in zip(carts, coms)])
+    radii = np.array(
+        [np.linalg.norm(c - com, axis=1).max() for c, com in zip(carts, coms)]
+    )
     adj = np.zeros_like(D, dtype=bool)
-    for p, q in zip(*np.nonzero(np.triu(D <= R + radii[:, None] + radii[None, :], k=1))):
+    for p, q in zip(
+        *np.nonzero(np.triu(D <= R + radii[:, None] + radii[None, :], k=1))
+    ):
         if mode == "origin":
-            d = min(np.linalg.norm(carts[q] - coms[p], axis=1).min(), np.linalg.norm(carts[p] - coms[q], axis=1).min())
+            d = min(
+                np.linalg.norm(carts[q] - coms[p], axis=1).min(),
+                np.linalg.norm(carts[p] - coms[q], axis=1).min(),
+            )
         else:
             d = cdist(carts[p], carts[q]).min()
         adj[p, q] = adj[q, p] = d <= R
@@ -87,13 +96,16 @@ def _cliques(adj: NDArray | None, n: int, size: int):
     :param size: number of partners per combination
     :returns: generator of index tuples
     """
+
     def extend(chosen: tuple, cands: NDArray):
         if len(chosen) == size:
             yield chosen
             return
         for x, k in enumerate(cands):
-            rest = cands[x + 1:]
-            yield from extend((*chosen, int(k)), rest[adj[k, rest]] if adj is not None else rest)
+            rest = cands[x + 1 :]
+            yield from extend(
+                (*chosen, int(k)), rest[adj[k, rest]] if adj is not None else rest
+            )
 
     yield from extend((), np.arange(n))
 
@@ -107,7 +119,7 @@ def generate_neighbors(
     N: int,
     **kwargs,
 ) -> list[SymOpList]:
-    """Generate and deduplicate all unique N-mers in the supercell defined by ``cutoff`` 
+    """Generate and deduplicate all unique N-mers in the supercell defined by ``cutoff``
 
     :param crystal: crystal containing the monomers
     :param monomers: reference monomer(s) used to anchor the N-mer search
@@ -143,11 +155,14 @@ def generate_neighbors(
         near, carts = [], []
         for j, op in pool:
             if j == i and op == SymOp.identity():
-                continue # skip self-identity
+                continue  # skip self-identity
 
             # filter partners by distance to anchor i
             partner_cart = crystal.to_cartesian(op.apply(monomers[j].frac_coords))
-            if (_neighbor_distance(partner_cart, context.mass_by_ref[j], anchor, mode) <= R):
+            if (
+                _neighbor_distance(partner_cart, context.mass_by_ref[j], anchor, mode)
+                <= R
+            ):
                 near.append((j, op))
                 carts.append(partner_cart)
 
@@ -157,7 +172,9 @@ def generate_neighbors(
         # every pair of members must lie within R, so partners must also be within R of each other
         adj = None
         if N > 2:
-            adj = _partner_adjacency(carts, [context.mass_by_ref[j] for j, _ in near], R, mode)
+            adj = _partner_adjacency(
+                carts, [context.mass_by_ref[j] for j, _ in near], R, mode
+            )
 
         for idx in _cliques(adj, len(near), N - 1):
             members = [(i, SymOp.identity()), *(near[k] for k in idx)]

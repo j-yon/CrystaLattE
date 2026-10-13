@@ -6,6 +6,7 @@ from numpy.typing import NDArray
 from ...core.sym_ops import SymOpList
 from .invariants import int_inv, relative_transforms
 
+
 def as_per_reference(
     groups: list[NDArray] | list[list[NDArray]],
     n_refs: int,
@@ -150,8 +151,7 @@ def anchored_match(
                     # two v norms differ (urea; rem:centering).
                     if not eq(
                         vG[0, b],
-                        s_inv(r0, k0)
-                        @ (LH[h0, h] @ D[rb][kb] + vH[h0, h] - D[r0][k0]),
+                        s_inv(r0, k0) @ (LH[h0, h] @ D[rb][kb] + vH[h0, h] - D[r0][k0]),
                     ):
                         continue
                     pi[b], ks[b], used[h] = h, kb, True
@@ -206,9 +206,13 @@ def same_multimer_int(
     S = as_per_reference(W, n_refs)
     # Zero translations are correct only when every centroid is a fixed point
     # of every element of its W; otherwise pass W_tr (see rem:centering).
-    D = ([[np.zeros(3, dtype=np.int64)] * len(grp) for grp in S]
-         if W_tr is None else as_per_reference(W_tr, n_refs))
+    D = (
+        [[np.zeros(3, dtype=np.int64)] * len(grp) for grp in S]
+        if W_tr is None
+        else as_per_reference(W_tr, n_refs)
+    )
     # Exact integers: the closing sweep provably cannot reject (lem:row) and
     # cost ~10% of runtime, so skip it.
-    return anchored_match(LG, vG, LH, vH, S, D, refG, refH, np.array_equal, int_inv, verify_all=False)
-
+    return anchored_match(
+        LG, vG, LH, vH, S, D, refG, refH, np.array_equal, int_inv, verify_all=False
+    )

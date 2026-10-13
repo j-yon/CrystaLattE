@@ -42,7 +42,9 @@ def _rotation(axis: NDArray, angle: float) -> NDArray:
     return np.eye(3) + np.sin(angle) * K + (1.0 - np.cos(angle)) * (K @ K)
 
 
-def _solver_analyzer(symbols: Sequence[str], cart_coords: NDArray, tolerance: float) -> PointGroupAnalyzer:
+def _solver_analyzer(
+    symbols: Sequence[str], cart_coords: NDArray, tolerance: float
+) -> PointGroupAnalyzer:
     """Return pymatgen's point-group analyzer for the centred molecule
 
     :param symbols: atomic symbols
@@ -51,7 +53,9 @@ def _solver_analyzer(symbols: Sequence[str], cart_coords: NDArray, tolerance: fl
     :returns: :class:`pymatgen.symmetry.analyzer.PointGroupAnalyzer`
     """
     pos = np.asarray(cart_coords, dtype=float)
-    return PointGroupAnalyzer(Molecule(list(symbols), pos - pos.mean(axis=0)), tolerance=tolerance)
+    return PointGroupAnalyzer(
+        Molecule(list(symbols), pos - pos.mean(axis=0)), tolerance=tolerance
+    )
 
 
 @dataclass(frozen=True)
@@ -126,13 +130,17 @@ class _Frame:
         matched = np.zeros(len(self._pos), dtype=bool)
         for i in range(len(transformed)):
             diff = self._pos - transformed[i]
-            d2 = np.einsum("ij,ij->i", diff, diff)  # compute squared distances to avoid square root
+            d2 = np.einsum(
+                "ij,ij->i", diff, diff
+            )  # compute squared distances to avoid square root
 
             # find unmatched atoms with the same atomic number and within the distance tolerance
-            candidates = np.where((self._Z == self._Z[i]) & ~matched & (d2 < atol * atol))[0]
+            candidates = np.where(
+                (self._Z == self._Z[i]) & ~matched & (d2 < atol * atol)
+            )[0]
             if len(candidates) == 0:
                 return False
-            
+
             # mark candidates as matched
             matched[candidates[0]] = True
         return True
@@ -164,7 +172,9 @@ class _Frame:
 
             # for all possible rotation orders, generate nontrivial rotations about the axis
             for order in (2, 3, 4, 6):
-                candidates.extend(_rotation(axis, 2.0 * np.pi * k / order) for k in range(1, order))
+                candidates.extend(
+                    _rotation(axis, 2.0 * np.pi * k / order) for k in range(1, order)
+                )
         return candidates
 
     def close(self, seed: Sequence[NDArray], atol: float) -> PointGroup | None:
@@ -200,7 +210,7 @@ class _Frame:
         # add operation products until closure, or return None if incoherent or too large
         frontier = list(group)
         while frontier:
-            # only products involving a newly added operation can be new, so each element pairs 
+            # only products involving a newly added operation can be new, so each element pairs
             # against the group once instead of every sweep
             fresh: list[NDArray] = []
             for a in frontier:
@@ -226,7 +236,9 @@ class PointGroup(Sequence[NDArray]):
     :param tolerance: tolerance the operations closed into a group at, or ``None`` if they never did
     """
 
-    def __init__(self, operations: Sequence[NDArray], tolerance: float | None = None) -> None:
+    def __init__(
+        self, operations: Sequence[NDArray], tolerance: float | None = None
+    ) -> None:
         self._operations = list(operations)
         self._tolerance = tolerance
 
@@ -342,6 +354,7 @@ class PointGroup(Sequence[NDArray]):
                 result.append(s)
         return cls(result)
 
+
 def point_group_report(
     symbols: Sequence[str],
     cart_coords: NDArray,
@@ -386,4 +399,3 @@ def point_group_report(
         "schoenflies": analyzer.sch_symbol,
         "complete": detected >= idealised,
     }
-

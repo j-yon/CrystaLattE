@@ -38,10 +38,10 @@ def generate(
     """Generate unique multimers of every reference molecule in the crystal
 
     :param crystal: crystal structure to generate multimers from
-    :param N: number of monomers in the multimer 
-    :param R: cutoff in Angstroms that every pair of monomers must satisfy (closest-contact distance by default) 
+    :param N: number of monomers in the multimer
+    :param R: cutoff in Angstroms that every pair of monomers must satisfy (closest-contact distance by default)
     :param detect_symmetry: if True, automatically detect and apply symmetry before enumeration
-    :param symprec: symmetry detection tolerance in Angstroms 
+    :param symprec: symmetry detection tolerance in Angstroms
     :param kwargs: additional options forwarded to :func:`generate_neighbors`.
     :returns: list of unique multimers found in the crystal
     :raises ValueError: if ``N`` is not an integer ``>= 2``
@@ -97,11 +97,19 @@ def generate(
     # centroid lies within R + 2 * (largest centroid-atom distance) of an anchor centroid, and a
     # Cartesian separation r spans at most r / spacing_i along axis i, where spacing_i = 1/|a*_i|
     # is the interplanar distance (shorter than |a_i| in monoclinic and triclinic cells)
-    radius = max(np.linalg.norm(m.cart_coords - m.centroid_cart, axis=1).max() for m in monomers)
+    radius = max(
+        np.linalg.norm(m.cart_coords - m.centroid_cart, axis=1).max() for m in monomers
+    )
     spacing = 1.0 / np.linalg.norm(np.linalg.inv(crystal.lattice_vectors), axis=1)
     reach = (R + 2 * radius) / spacing
     anchors = np.array([m.centroid_frac for m in monomers])
-    images = np.array([op.apply(m.centroid_frac) for m in monomers for op in crystal.space_group.sym_ops])
+    images = np.array(
+        [
+            op.apply(m.centroid_frac)
+            for m in monomers
+            for op in crystal.space_group.sym_ops
+        ]
+    )
     lows = np.floor(anchors.min(axis=0) - images.max(axis=0) - reach)
     highs = np.ceil(anchors.max(axis=0) - images.min(axis=0) + reach)
     bounds = np.vstack((lows, highs)).T.astype(int)

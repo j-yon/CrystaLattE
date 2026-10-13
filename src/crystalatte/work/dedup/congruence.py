@@ -5,6 +5,7 @@ outside the space group from molecular symmetry richer than the site symmetry, m
 base reference. Cross-reference congruences are not searched: they need two independent molecules
 identical to the fingerprint tolerance, which in practice signals missed crystal symmetry.
 """
+
 from collections import defaultdict, deque
 
 import numpy as np
@@ -65,10 +66,14 @@ def same_multimer(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-3) -> bool:
     # ``base_reference``: each member must be dressed by its OWN reference's
     # point group, or Z' > 1 clusters get the first member's group throughout.
     return anchored_match(
-        LG, vG, LH, vH,
+        LG,
+        vG,
+        LH,
+        vH,
         context.self_iso_by_ref,
         context.self_iso_tr_by_ref,
-        refG, refH,
+        refG,
+        refH,
         lambda a, b: np.abs(a - b).max() <= atol,
         lambda s: s.T,  # orthogonal -> inverse is transpose
     )
@@ -96,7 +101,9 @@ def _spread(g_N: SymOpList) -> float:
     :returns: summed centroid separations in Angstroms
     """
     cens = [
-        context.active_crystal.to_cartesian(op.apply(context.references[r].centroid_frac))
+        context.active_crystal.to_cartesian(
+            op.apply(context.references[r].centroid_frac)
+        )
         for r, op in zip(g_N.ref_indices, g_N)
     ]
     return float(pdist(np.array(cens)).sum())
@@ -117,7 +124,9 @@ def merge_congruent(
     spread = [_spread(g) for g in unique]
     groups: list[list[SymOpList]] = []
     # per base reference: (spread, group index, zz, distances) of each group's first member, ascending spread
-    windows: dict[int, deque[tuple[float, int, np.ndarray, np.ndarray]]] = defaultdict(deque)
+    windows: dict[int, deque[tuple[float, int, np.ndarray, np.ndarray]]] = defaultdict(
+        deque
+    )
     for i in sorted(range(len(unique)), key=spread.__getitem__):
         g = unique[i]
         ref = _congruence_ref(g)
