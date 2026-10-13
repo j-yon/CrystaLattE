@@ -69,7 +69,7 @@ def same_multimer(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-3) -> bool:
         context.self_iso_by_ref,
         context.self_iso_tr_by_ref,
         refG, refH,
-        lambda a, b: np.allclose(a, b, atol=atol),
+        lambda a, b: np.abs(a - b).max() <= atol,
         lambda s: s.T,  # orthogonal -> inverse is transpose
     )
 
