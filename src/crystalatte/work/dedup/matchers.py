@@ -1,34 +1,6 @@
 from collections.abc import Callable
 
-import numpy as np
 from numpy.typing import NDArray
-
-from ...core.sym_ops import SymOpList
-from .invariants import int_inv, relative_transforms
-
-
-def as_per_reference(
-    groups: list[NDArray] | list[list[NDArray]],
-    n_refs: int,
-) -> list[list[NDArray]]:
-    """Normalize a dressing-group argument to one group per base reference.
-
-    Accepts either a single group (a sequence of ``(3, 3)`` linear parts or
-    ``(3,)`` translations) shared by every reference -- correct for a
-    mono-reference cluster -- or a list of groups already indexed by reference.
-
-    :param groups: A single dressing group, or one per reference
-    :param n_refs: How many references the caller needs covered
-    :returns: A list of ``n_refs`` groups
-    """
-    first = groups[0]
-    # A lone group's first element is a bare array; a per-reference list's is
-    # itself a group. Dimensionality of ``groups`` alone can't tell them apart:
-    # a per-reference list of translation groups and a single group of linear
-    # parts are both two levels deep.
-    if isinstance(first, np.ndarray) and first.ndim <= 2:
-        return [groups] * n_refs
-    return groups
 
 
 def anchored_match(
@@ -44,7 +16,7 @@ def anchored_match(
     inv: Callable[[NDArray], NDArray],
     verify_all: bool = True,
 ) -> bool:
-    """Anchored relative-transform search: the shared core of both matchers.
+    """Anchored relative-transform search behind :func:`~crystalatte.work.dedup.congruence.same_multimer`.
 
     Decides the matching condition of ``docs/dedup_correctness.tex``
     (``thm:match``): is there a reference-compatible permutation ``pi`` and
@@ -64,7 +36,6 @@ def anchored_match(
     :param LH: Cluster H's relative linear parts
     :param vH: Cluster H's relative translations
     :param S: The dressing groups' linear parts, indexed by base reference
-        (:func:`as_per_reference` also accepts a single shared group)
     :param D: The dressing translations, index-aligned with ``S``
     :param refG: Cluster G's per-member base-reference indices
     :param refH: Cluster H's per-member base-reference indices
@@ -163,56 +134,3 @@ def anchored_match(
             if assign(1):
                 return True
     return False
-
-
-def same_multimer_int(
-    g_N: SymOpList,
-    h_N: SymOpList,
-    W: list[list[NDArray]] | list[NDArray],
-    W_tr: list[list[NDArray]] | list[NDArray] | None = None,
-) -> bool:
-    """Return True iff ``g_N`` and ``h_N`` are the same multimer under a
-    crystallographic isometry, working entirely in the exact integer lattice
-    basis and modding out the site-symmetry dressing ``(W, W_tr)``.
-
-    Exact-integer form of :func:`anchored_match`: roundoff-free and complete
-    for every same-orbit merge, including centrosymmetric site-inversion cases.
-    Congruences whose dressing lies outside ``W`` (non-crystallographic) are not
-    found here; they are left to :mod:`~crystalatte.work.dedup.congruence`.
-
-    :param g_N: The first cluster
-    :param h_N: The second cluster
-    :param W: Site-symmetry linear parts indexed by base reference, i.e.
-        ``context.W_lin_by_ref``. A single group is also accepted and applies to
-        every member, which is only right for a mono-reference cluster (see
-        :func:`as_per_reference`). Required: defaulting to reference 0 would
-        silently mod out the wrong site symmetry for every other reference.
-    :param W_tr: The matching dressing translations ``context.W_tr_by_ref``, in
-        twelfths, index-aligned with ``W``. Defaults to zeros.
-    :returns: True iff the clusters are the same multimer via a crystallographic
-        isometry
-    """
-    if len(g_N) != len(h_N):
-        return False
-    refG = g_N.ref_indices.tolist()
-    refH = h_N.ref_indices.tolist()
-    # A reference-compatible pi exists only if both clusters draw on each
-    # reference the same number of times; reject before building transforms.
-    if sorted(refG) != sorted(refH):
-        return False
-    LG, vG = relative_transforms(g_N, integer=True)
-    LH, vH = relative_transforms(h_N, integer=True)
-    n_refs = max(max(refG), max(refH)) + 1
-    S = as_per_reference(W, n_refs)
-    # Zero translations are correct only when every centroid is a fixed point
-    # of every element of its W; otherwise pass W_tr (see rem:centering).
-    D = (
-        [[np.zeros(3, dtype=np.int64)] * len(grp) for grp in S]
-        if W_tr is None
-        else as_per_reference(W_tr, n_refs)
-    )
-    # Exact integers: the closing sweep provably cannot reject (lem:row) and
-    # cost ~10% of runtime, so skip it.
-    return anchored_match(
-        LG, vG, LH, vH, S, D, refG, refH, np.array_equal, int_inv, verify_all=False
-    )

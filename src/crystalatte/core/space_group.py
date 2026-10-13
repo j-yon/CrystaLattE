@@ -28,18 +28,6 @@ class CrystalSystem(Enum):
     CUBIC = "cubic"
 
 
-class LatticeSystem(Enum):
-    """The 7 lattice systems in 3D"""
-
-    TRICLINIC = "triclinic"
-    MONOCLINIC = "monoclinic"
-    ORTHORHOMBIC = "orthorhombic"
-    TETRAGONAL = "tetragonal"
-    HEXAGONAL = "hexagonal"
-    RHOMBOHEDRAL = "rhombohedral"
-    CUBIC = "cubic"
-
-
 @dataclass
 class SpaceGroup:
     """Represents a space group and contains information about the space group number, symbol,

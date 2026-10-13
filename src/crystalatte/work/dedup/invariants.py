@@ -65,16 +65,6 @@ def relative_transforms(g_N: SymOpList, integer: bool) -> tuple[NDArray, NDArray
     return L, v
 
 
-# TODO: remove, just use relative_transforms(g_N, integer=True) directly
-def relative_transforms_int(g_N: SymOpList) -> tuple[NDArray, NDArray]:
-    """Exact integer-basis :func:`relative_transforms`
-
-    :param g_N: cluster whose integer relative transforms are requested
-    :returns: tuple ``(L, v)`` of shapes ``(n, n, 3, 3)`` and ``(n, n, 3)``
-    """
-    return relative_transforms(g_N, integer=True)
-
-
 #: dressed rows materialised per chunk in :func:`_dressed_minima`; bounds its intermediates to ~100 MB
 DRESS_CHUNK_ROWS: Final[int] = 1 << 19
 
@@ -206,8 +196,8 @@ def _group_keys(cands: list[SymOpList], refs: tuple[int, ...]) -> NDArray:
 
 
 def orbit_labels(candidates: list[SymOpList]) -> NDArray:
-    """Label clusters so that two share a label iff
-    :func:`~crystalatte.work.dedup.matchers.same_multimer_int` matches them
+    """Label clusters so that two share a label iff they are the same multimer under a crystallographic
+    isometry, modulo each member's site-symmetry dressing
 
     The label is the class of an exact orbit key. Seen from an anchor ``a``, each partner ``b`` is the coset
     ``Delta[a,b] W_b`` (the site symmetry relabels the same molecule), reduced to its lexicographic minimum.
@@ -304,30 +294,10 @@ def distance_fingerprint(g_N: SymOpList) -> tuple[NDArray, NDArray]:
     return fp
 
 
-def fingerprints_match(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-6) -> bool:
-    """Return True iff the two clusters' Z-tagged distance fingerprints coincide
-
-    :param g_N: first cluster
-    :param h_N: second cluster
-    :param atol: absolute tolerance in Angstroms for the distance comparison
-    :returns: True iff both fingerprints match
-    """
-    if len(g_N) != len(h_N):
-        return False  # different number of operations (should be impossible but cheap to check)
-
-    zz_g, d_g = distance_fingerprint(g_N)
-    zz_h, d_h = distance_fingerprint(h_N)
-    if zz_g.shape != zz_h.shape or not np.array_equal(zz_g, zz_h):
-        return False  # different number of atom pairs or different Z products
-
-    # compare distances with tolerance (np.allclose costs ~10x more per call on these short arrays)
-    return bool(np.abs(d_g - d_h).max(initial=0.0) <= atol)
-
-
 def fingerprints_match_many(
     g_N: SymOpList, zz: NDArray, d: NDArray, atol: float = 1e-6
 ) -> NDArray:
-    """Row-wise :func:`fingerprints_match` of ``g_N`` against a stack of fingerprints
+    """Return which of a stack of fingerprints coincide with ``g_N``'s Z-tagged distance fingerprint
 
     :param g_N: cluster to compare
     :param zz: ``(k, n_pairs)`` stacked Z products of the other clusters
