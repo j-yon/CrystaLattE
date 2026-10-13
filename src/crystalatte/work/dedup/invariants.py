@@ -298,3 +298,18 @@ def fingerprints_match(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-6) -> bo
 
     # compare distances with tolerance (np.allclose costs ~10x more per call on these short arrays)
     return bool(np.abs(d_g - d_h).max(initial=0.0) <= atol)
+
+
+def fingerprints_match_many(g_N: SymOpList, zz: NDArray, d: NDArray, atol: float = 1e-6) -> NDArray:
+    """Row-wise :func:`fingerprints_match` of ``g_N`` against a stack of fingerprints
+
+    :param g_N: cluster to compare
+    :param zz: ``(k, n_pairs)`` stacked Z products of the other clusters
+    :param d: ``(k, n_pairs)`` stacked distances of the other clusters
+    :param atol: absolute tolerance in Angstroms for the distance comparison
+    :returns: ``(k,)`` boolean array; entry ``j`` is True iff ``g_N`` matches row ``j``
+    """
+    zz_g, d_g = distance_fingerprint(g_N)
+    if zz.shape[1:] != zz_g.shape:
+        return np.zeros(len(zz), dtype=bool)  # different number of atom pairs
+    return (zz == zz_g).all(axis=1) & (np.abs(d - d_g).max(axis=1, initial=0.0) <= atol)
