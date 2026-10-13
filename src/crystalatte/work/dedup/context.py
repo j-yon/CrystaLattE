@@ -45,7 +45,6 @@ def bind(
     crystal: Crystal,
     monomers: list[Monomer],
     site_atol: float = SITE_ATOL,
-    full_congruence_check: bool = False,
 ) -> None:
     """Bind the deduper's per-run inputs at module scope.
 
@@ -59,11 +58,6 @@ def bind(
     :param site_atol: Fractional tolerance for the site-symmetry test; must
         match the one :func:`generate_neighbors` passes to
         ``get_unique_sym_ops`` or stabilizer and orbit disagree
-    :param full_congruence_check: Run the Cartesian congruence branch
-        unconditionally, instead of only when the detected molecular point group
-        is richer than the site symmetry (see ``check_congruence_by_ref``). The
-        escape hatch for under-detected point groups; it cannot recover a
-        dressing that was never detected in the first place.
     :returns: ``None``
     """
     global active_crystal, references, Z_by_ref, mass_by_ref, self_iso_by_ref
@@ -136,24 +130,21 @@ def bind(
         # gate is no longer restricted to Sohncke groups. The branch runs only on the
         # orbit-key representatives, which keeps it cheap.
         #
-        # S is detected numerically and can under-detect (adamantane finds 2 of 24
-        # operations), so `full_congruence_check` must stay unconditional.
-        check_congruence_by_ref.append(full_congruence_check or len(S) > len(W))
+        # When |S| == |W| the gate stays shut: S is seeded with W, so S == W, and a
+        # W-dressed match is exactly what the orbit key already decides.
+        check_congruence_by_ref.append(len(S) > len(W))
 
 
 def init_worker(
     crystal: Crystal,
     monomers: list[Monomer],
     site_atol: float = SITE_ATOL,
-    full_congruence_check: bool = False,
 ) -> None:
     """Process-pool initializer: bind the deduper globals in a worker process.
 
     :param crystal: The crystal passed to :func:`bind`
     :param monomers: The reference monomers passed to :func:`bind`
     :param site_atol: The tolerance passed to :func:`bind`
-    :param full_congruence_check: The congruence gate passed to :func:`bind`;
-        must match the main process or workers disagree with it
     :returns: ``None``
     """
-    bind(crystal, monomers, site_atol, full_congruence_check)
+    bind(crystal, monomers, site_atol)

@@ -72,13 +72,12 @@ def generate_neighbors(
     verbose = kwargs.get("verbose", 1)
     mode = _distance_mode(kwargs)
     site_atol = kwargs.get("site_atol", SITE_ATOL)
-    full_congruence = kwargs.get("full_congruence_check", False)
 
     # generate all integer translations within the cutoff box
     translations = list(product(*[range(cm, cp + 1) for cm, cp in cutoff]))
 
     # bind per-reference state
-    context.bind(crystal, monomers, site_atol, full_congruence)
+    context.bind(crystal, monomers, site_atol)
 
     # full partner pool across ALL references
     pool = []
