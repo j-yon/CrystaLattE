@@ -12,19 +12,14 @@ from .dedup import context
 from .neighbors import generate_neighbors
 
 
-def _process_multimer(g_N: SymOpList) -> Multimer | None:
+def _process_multimer(g_N: SymOpList) -> Multimer:
     """Construct a Multimer from a deduped candidate cluster
 
     :param g_N: deduplicated cluster to materialize
-    :returns: constructed :class:`~crystalatte.core.multimer.Multimer`, or ``None`` if ``g_N`` contains identical members 
+    :returns: constructed :class:`~crystalatte.core.multimer.Multimer`
     """
     refs = g_N.ref_indices
     ops = list(g_N)
-
-    # degeneracy: reject only if two members are the SAME (ref, op) pair
-    seen = set(zip(refs.tolist(), ops))
-    if len(seen) != len(ops):
-        return None
 
     mons: list[Monomer] = []
     for k, g in enumerate(ops):
@@ -115,17 +110,14 @@ def generate(
     # generate and deduplicate all unique N-mers in the supercell defined by ``bounds``
     unique_neighbors = generate_neighbors(crystal, monomers, bounds, R, N, **kwargs)
 
-    # process each unique multimer into a Multimer object, parallelized if requested
-    multimers: list[Multimer] = []
-    for g_N in tqdm(
-        unique_neighbors,
-        total=len(unique_neighbors),
-        desc="Processing unique multimers",
-        leave=False,
-        disable=not kwargs.get("verbose", 1),
-    ):
-        m = _process_multimer(g_N)
-        if m is not None:
-            multimers.append(m)
-
-    return multimers
+    # process each unique multimer into a Multimer object
+    return [
+        _process_multimer(g_N)
+        for g_N in tqdm(
+            unique_neighbors,
+            total=len(unique_neighbors),
+            desc="Processing unique multimers",
+            leave=False,
+            disable=not kwargs.get("verbose", 1),
+        )
+    ]
