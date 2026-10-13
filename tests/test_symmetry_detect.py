@@ -1,5 +1,6 @@
 import pickle
 import numpy as np
+import pytest
 from crystalatte.core.space_group import SpaceGroup
 from crystalatte.core.sym_ops import SymOp
 
@@ -88,13 +89,19 @@ def test_detect_symmetry_benzene_full_cell_expansion():
 from crystalatte.work import generate
 
 
-def test_generate_detection_invariant_ammonia():
-    # Detection changes HOW (fast integer path), not WHAT (the unique n-mer set).
+def test_generate_detection_preserves_multiplicity_ammonia():
+    # Without detection ammonia stays P1 with Z'=4, and dimers related by the missed symmetry are
+    # not merged. The duplicates split the multiplicity, so the multiplicity per reference (what
+    # the lattice sum weights) must not change.
     crystal, _ = load("ammonia")
+    z_on, z_off = len(crystal.detect_symmetry().get_references()), len(crystal.get_references())
     for kw in (dict(use_origin=True), dict()):  # use_origin and default conventions
-        n_on = len(generate.generate(crystal, 2, 5.0, n_jobs=1, detect_symmetry=True, **kw))
-        n_off = len(generate.generate(crystal, 2, 5.0, n_jobs=1, detect_symmetry=False, **kw))
-        assert n_on == n_off, f"detection changed the count for kwargs={kw}: {n_on} != {n_off}"
+        on = generate.generate(crystal, 2, 5.0, n_jobs=1, detect_symmetry=True, **kw)
+        with pytest.warns(RuntimeWarning, match="symmetry detection is off"):
+            off = generate.generate(crystal, 2, 5.0, n_jobs=1, detect_symmetry=False, **kw)
+        per_ref_on = sum(m.multiplicity for m in on) / z_on
+        per_ref_off = sum(m.multiplicity for m in off) / z_off
+        assert per_ref_on == per_ref_off, f"detection changed the multiplicity for kwargs={kw}"
 
 
 def test_generate_detection_uses_single_reference_path_ammonia():

@@ -86,6 +86,17 @@ def generate(
                 stacklevel=2,
             )
 
+    # without detection, independent references can be symmetry copies the declared space group misses
+    compositions = [tuple(sorted(m.symbols)) for m in monomers]
+    if not detect_symmetry and len(set(compositions)) < len(compositions):
+        warnings.warn(
+            "symmetry detection is off and two references share an atomic composition; multimers related "
+            "by symmetry the declared space group lacks are not merged, so the result can contain duplicates "
+            "(their multiplicities are split, so lattice-energy sums are unaffected)",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
     # effective radius for bounding box, needed for monoclinic/triclinic cells
     d = np.linalg.norm(crystal.lattice_vectors, axis=0)
     R_eff = R + max(pdist(m.cart_coords).max() for m in monomers)

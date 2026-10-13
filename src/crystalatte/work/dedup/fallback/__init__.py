@@ -1,8 +1,9 @@
 """Non-crystallographic congruence merges, run on the representatives left by the exact orbit-key pass.
 
 The orbit key already merges every pair related by a crystal symmetry. What remains are congruences
-outside the space group: molecular symmetry richer than the site symmetry (the Sohncke enantiomer
-case) and cross-reference matches under Z' > 1, which in practice signal missed crystal symmetry.
+outside the space group from molecular symmetry richer than the site symmetry, matched within one
+base reference. Cross-reference congruences are not searched: they need two independent molecules
+identical to the fingerprint tolerance, which in practice signals missed crystal symmetry.
 """
 from collections import deque
 
@@ -13,7 +14,6 @@ from ....core.sym_ops import SymOpList
 from .. import context
 from ..equivalence import merge
 from ..invariants import base_reference, fingerprints_match, is_mono_reference
-from .cloud import same_multimer_geom
 from .congruence import same_multimer
 
 #: sweep window (Angstroms) on summed member-centroid separations; congruent clusters agree to ~1e-3 per pair
@@ -27,6 +27,7 @@ def is_needed() -> bool:
     """
     if any(context.check_congruence_by_ref):
         return True
+    # TODO: inert since the cross-reference matcher was removed; drop once confirmed
     compositions = [tuple(sorted(z.tolist())) for z in context.Z_by_ref]
     return len(set(compositions)) < len(compositions)
 
@@ -38,12 +39,10 @@ def are_congruent(g_N: SymOpList, h_N: SymOpList) -> bool:
     :param h_N: second cluster
     :returns: True iff the clusters represent the same multimer
     """
-    if not fingerprints_match(g_N, h_N):
+    if not (is_mono_reference(g_N) and is_mono_reference(h_N) and base_reference(g_N) == base_reference(h_N)):
         return False
-    if is_mono_reference(g_N) and is_mono_reference(h_N) and base_reference(g_N) == base_reference(h_N):
-        i = base_reference(g_N)
-        return context.check_congruence_by_ref[i] and same_multimer(g_N, h_N)
-    return same_multimer_geom(g_N, h_N)
+    i = base_reference(g_N)
+    return context.check_congruence_by_ref[i] and fingerprints_match(g_N, h_N) and same_multimer(g_N, h_N)
 
 
 def _spread(g_N: SymOpList) -> float:
