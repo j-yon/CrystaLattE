@@ -1,5 +1,5 @@
 from collections import defaultdict
-from itertools import combinations, product
+from itertools import product
 
 import numpy as np
 from numpy.typing import NDArray
@@ -50,6 +50,54 @@ def _neighbor_distance(
     return float(cdist(monomer.cart_coords, cart_mon).min())
 
 
+def _partner_adjacency(carts: list[NDArray], masses: list[NDArray], R: float, mode: str) -> NDArray:
+    """Return which pairs of partners lie within ``R`` of each other under the distance convention
+
+    The origin convention is anchor-centred, so for a partner pair it takes the smaller of the two
+    closest-atom-to-centroid distances.
+
+    :param carts: partner Cartesian coordinates
+    :param masses: partner atomic masses, aligned with ``carts``
+    :param R: distance cutoff in Angstroms
+    :param mode: desired distance convention
+    :returns: a symmetric ``(k, k)`` boolean matrix
+    """
+    coms = np.array([np.average(c, axis=0, weights=m) for c, m in zip(carts, masses)])
+    D = cdist(coms, coms)
+    if mode == "com":
+        return D <= R
+
+    # any pair beyond R + both radii is out of range; only the rest need an exact distance
+    radii = np.array([np.linalg.norm(c - com, axis=1).max() for c, com in zip(carts, coms)])
+    adj = np.zeros_like(D, dtype=bool)
+    for p, q in zip(*np.nonzero(np.triu(D <= R + radii[:, None] + radii[None, :], k=1))):
+        if mode == "origin":
+            d = min(np.linalg.norm(carts[q] - coms[p], axis=1).min(), np.linalg.norm(carts[p] - coms[q], axis=1).min())
+        else:
+            d = cdist(carts[p], carts[q]).min()
+        adj[p, q] = adj[q, p] = d <= R
+    return adj
+
+
+def _cliques(adj: NDArray | None, n: int, size: int):
+    """Yield sorted index tuples of ``size`` partners that are pairwise adjacent
+
+    :param adj: partner adjacency matrix, or ``None`` when ``size == 1``
+    :param n: number of partners
+    :param size: number of partners per combination
+    :returns: generator of index tuples
+    """
+    def extend(chosen: tuple, cands: NDArray):
+        if len(chosen) == size:
+            yield chosen
+            return
+        for x, k in enumerate(cands):
+            rest = cands[x + 1:]
+            yield from extend((*chosen, int(k)), rest[adj[k, rest]] if adj is not None else rest)
+
+    yield from extend((), np.arange(n))
+
+
 # TODO: split this into two functions, one for generating candidates and one for deduplicating them
 def generate_neighbors(
     crystal: Crystal,
@@ -64,7 +112,7 @@ def generate_neighbors(
     :param crystal: crystal containing the monomers
     :param monomers: reference monomer(s) used to anchor the N-mer search
     :param cutoff: per-axis ``(low, high)`` integer lattice translation bounds
-    :param R: distance cutoff in Angstroms. The distance convention is selected by ``kwargs``
+    :param R: distance cutoff in Angstroms, applied to every pair of members. The distance convention is selected by ``kwargs``
     :param N: N-mer order
     :param kwargs: additional options (``verbose``, ``site_atol``, etc.)
     :returns: unique cluster lists
@@ -92,7 +140,7 @@ def generate_neighbors(
     # excludes anchor i's own zero-translation identity
     candidates: list[SymOpList] = []
     for i, anchor in enumerate(monomers):
-        near = []
+        near, carts = [], []
         for j, op in pool:
             if j == i and op == SymOp.identity():
                 continue # skip self-identity
@@ -101,13 +149,18 @@ def generate_neighbors(
             partner_cart = crystal.to_cartesian(op.apply(monomers[j].frac_coords))
             if (_neighbor_distance(partner_cart, context.mass_by_ref[j], anchor, mode) <= R):
                 near.append((j, op))
+                carts.append(partner_cart)
 
         if verbose:
             print(f"Reference {i}: {len(near)} monomers within {R} Angstroms.")
 
-        # generate all combinations of N-1 partners from the nearby pool
-        for partner_combo in combinations(near, N - 1):
-            members = [(i, SymOp.identity()), *partner_combo]
+        # every pair of members must lie within R, so partners must also be within R of each other
+        adj = None
+        if N > 2:
+            adj = _partner_adjacency(carts, [context.mass_by_ref[j] for j, _ in near], R, mode)
+
+        for idx in _cliques(adj, len(near), N - 1):
+            members = [(i, SymOp.identity()), *(near[k] for k in idx)]
             ops = [op for (_, op) in members]
             refs = np.array([b for (b, _) in members], dtype=np.int64)
             sop = SymOpList(ops, 1)
