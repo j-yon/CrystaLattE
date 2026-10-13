@@ -83,7 +83,7 @@ def run(name, N, R):
     real = neighbors.deduplicate_bucket
     neighbors.deduplicate_bucket = lambda bucket: (cands.extend(bucket), real(bucket))[1]
     try:
-        generate.generate(crystal, N, R, use_origin=True, n_jobs=1, verbose=0)
+        generate.generate(crystal, N, R, use_origin=True, verbose=0)
     finally:
         neighbors.deduplicate_bucket = real
 

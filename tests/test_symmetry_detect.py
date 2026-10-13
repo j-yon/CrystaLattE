@@ -17,7 +17,7 @@ def test_from_sym_ops_holds_explicit_ops():
 
 
 def test_from_sym_ops_pickles_with_its_ops():
-    # detected groups travel to ProcessPool workers via pickle; they must keep
+    # a pickled detected group (e.g. a Crystal sent to another process) must keep
     # their explicit input-basis ops, NOT reload the DB standard setting.
     ops = [SymOp.identity(), SymOp("-x,-y+1/2,-z")]
     sg = SpaceGroup.from_sym_ops(ops, number=14)
@@ -96,9 +96,9 @@ def test_generate_detection_preserves_multiplicity_ammonia():
     crystal, _ = load("ammonia")
     z_on, z_off = len(crystal.detect_symmetry().get_references()), len(crystal.get_references())
     for kw in (dict(use_origin=True), dict()):  # use_origin and default conventions
-        on = generate.generate(crystal, 2, 5.0, n_jobs=1, detect_symmetry=True, **kw)
+        on = generate.generate(crystal, 2, 5.0, detect_symmetry=True, **kw)
         with pytest.warns(RuntimeWarning, match="symmetry detection is off"):
-            off = generate.generate(crystal, 2, 5.0, n_jobs=1, detect_symmetry=False, **kw)
+            off = generate.generate(crystal, 2, 5.0, detect_symmetry=False, **kw)
         per_ref_on = sum(m.multiplicity for m in on) / z_on
         per_ref_off = sum(m.multiplicity for m in off) / z_off
         assert per_ref_on == per_ref_off, f"detection changed the multiplicity for kwargs={kw}"
@@ -114,4 +114,4 @@ def test_generate_detection_uses_single_reference_path_ammonia():
 
 def test_generate_benzene_regression_with_detection():
     crystal, _ = load("benzene")
-    assert len(generate.generate(crystal, 2, 5.0, use_origin=True, n_jobs=1)) == 3
+    assert len(generate.generate(crystal, 2, 5.0, use_origin=True)) == 3

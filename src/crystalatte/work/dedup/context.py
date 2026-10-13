@@ -1,9 +1,7 @@
 """Per-run state shared by the deduplication modules.
 
-These are module-level globals rather than parameters because the bucket
-deduplication runs under a :class:`~concurrent.futures.ProcessPoolExecutor`,
-whose ``initializer`` has to install the state in each worker process before
-any task runs.
+These are module-level globals rather than parameters so every deduplication
+module reads the same per-run binding without threading it through each call.
 
 IMPORTANT: :func:`bind` REBINDS these names, so consumers must reach
 them through the module (``context.Z_by_ref``) and never via
@@ -18,8 +16,7 @@ from ...core.crystal import Crystal
 from ...core.multimer import Monomer
 from ...core.space_group import SITE_ATOL
 
-# Module-level bindings set by `bind` (in main process) and by the
-# worker initializer (`init_worker`, in ProcessPoolExecutor children).
+# Module-level bindings set by `bind`.
 # Per-reference lists indexed by reference index (one entry per independent monomer).
 active_crystal: Crystal | None = None
 references: list[Monomer] = []
@@ -134,17 +131,3 @@ def bind(
         # W-dressed match is exactly what the orbit key already decides.
         check_congruence_by_ref.append(len(S) > len(W))
 
-
-def init_worker(
-    crystal: Crystal,
-    monomers: list[Monomer],
-    site_atol: float = SITE_ATOL,
-) -> None:
-    """Process-pool initializer: bind the deduper globals in a worker process.
-
-    :param crystal: The crystal passed to :func:`bind`
-    :param monomers: The reference monomers passed to :func:`bind`
-    :param site_atol: The tolerance passed to :func:`bind`
-    :returns: ``None``
-    """
-    bind(crystal, monomers, site_atol)

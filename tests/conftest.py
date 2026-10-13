@@ -8,7 +8,7 @@ import crystalatte as cle
 # root of fixture tree, crystals live in x23/ and other/
 DATA = Path(__file__).parent
 
-GENERATE_KW = {"use_origin": True, "n_jobs": 1, "verbose": 0}
+GENERATE_KW = {"use_origin": True, "verbose": 0}
 
 # ice is proton disordered (4 sites with 1/2 occupancy each)
 DISORDERED = {"ice"}

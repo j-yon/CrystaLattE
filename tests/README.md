@@ -72,10 +72,9 @@ path = cif("fomepizole")                   # resolves under other/ too
 mers = cle.generate(xtal, 2, 8.0, **GENERATE_KW)
 ```
 
-`GENERATE_KW` is `use_origin=True, n_jobs=1, verbose=0` — the anchor-relative
-distance convention, serial dedup (deterministic, no pool), no progress bars. A
-test that passes something else is making a point about the convention or about
-the pool, and should say which.
+`GENERATE_KW` is `use_origin=True, verbose=0` — the anchor-relative
+distance convention and no progress bars. A test that passes something else is
+making a point about the convention, and should say which.
 
 Every fixture is laid out as `<name>/<name>.cif`, and `cif()` enforces that: a
 directory whose CIF is named something else fails with a message telling you to
