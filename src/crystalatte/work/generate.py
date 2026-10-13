@@ -44,7 +44,7 @@ def generate(
 
     :param crystal: crystal structure to generate multimers from
     :param N: number of monomers in the multimer 
-    :param R: maximum center-to-center monomer distance in Angstroms 
+    :param R: cutoff in Angstroms that every pair of monomers must satisfy (closest-contact distance by default) 
     :param detect_symmetry: if True, automatically detect and apply symmetry before enumeration
     :param symprec: symmetry detection tolerance in Angstroms 
     :param kwargs: additional options forwarded to :func:`generate_neighbors`.
