@@ -26,11 +26,11 @@ def merge(group: list[SymOpList]) -> tuple[SymOpList, list[SymOpList]]:
 def deduplicate_bucket(
     bucket: list[SymOpList],
 ) -> tuple[list[SymOpList], list[SymOpList]]:
-    """Deduplicate one bucket of clusters sharing an :func:`~crystalatte.work.dedup.invariants.orbit_key`
+    """Deduplicate one bucket of clusters sharing an :func:`~crystalatte.work.dedup.invariants.orbit_labels` label
 
-    The key is exact, so every cluster in the bucket is the same multimer.
+    The label is exact, so every cluster in the bucket is the same multimer.
 
-    :param bucket: clusters sharing a single orbit key
+    :param bucket: clusters sharing a single orbit label
     :returns: a tuple ``(unique, duplicate)`` of cluster lists
     """
     rep, duplicates = merge(bucket)

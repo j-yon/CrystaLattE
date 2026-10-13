@@ -1,24 +1,17 @@
 from collections import defaultdict
 from itertools import combinations, product
-from typing import Final
 
 import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.distance import cdist
-from tqdm import tqdm
 
 from ..core.crystal import Crystal
 from ..core.multimer import Monomer
 from ..core.space_group import SITE_ATOL
 from ..core.sym_ops import SymOp, SymOpList
 from .dedup import context, fallback
-from .dedup.context import init_worker
 from .dedup.equivalence import deduplicate_bucket
-from .dedup.invariants import orbit_key
-
-# below this much key work, compute orbit keys serially even when ``n_jobs > 1``: the pool costs ~1 s to start.
-# One unit is a fast-path key (trivial site symmetry); a general-path key costs ~10 units.
-PARALLEL_MIN_KEY_WORK: Final[int] = 75_000
+from .dedup.invariants import orbit_labels
 
 
 def _distance_mode(kwargs: dict) -> str:
@@ -57,62 +50,6 @@ def _neighbor_distance(
     return float(cdist(monomer.cart_coords, cart_mon).min())
 
 
-def _orbit_keys(chunk: list[SymOpList]) -> list[tuple]:
-    """Worker task: orbit keys for a chunk of candidates
-
-    :param chunk: candidates to key
-    :returns: their orbit keys, in order
-    """
-    return [orbit_key(g) for g in chunk]
-
-
-def _compute_keys(
-    candidates: list[SymOpList], n_jobs: int, initargs: tuple, verbose: int
-) -> list[tuple]:
-    """Compute orbit keys, in a process pool when requested and the workload amortizes it
-
-    :param candidates: candidate clusters
-    :param n_jobs: requested worker count
-    :param initargs: arguments for :func:`~crystalatte.work.dedup.context.init_worker`
-    :param verbose: show a progress bar if truthy
-    :returns: one orbit key per candidate, in order
-    """
-    weight = 1 if all(len(W) == 1 for W, _, _ in context.W_stacked_by_ref) else 10
-    if n_jobs <= 1 or weight * len(candidates) < PARALLEL_MIN_KEY_WORK:
-        return [
-            orbit_key(g)
-            for g in tqdm(candidates, desc="Keying candidates", leave=False, disable=not verbose)
-        ]
-
-    from concurrent.futures import ProcessPoolExecutor
-    from concurrent.futures.process import BrokenProcessPool
-    from multiprocessing import cpu_count
-
-    n_jobs = max(1, min(n_jobs, cpu_count() - 1))
-    size = -(-len(candidates) // (n_jobs * 8))  # ceil: ~8 chunks per worker
-    chunks = [candidates[i:i + size] for i in range(0, len(candidates), size)]
-    try:
-        with ProcessPoolExecutor(
-            max_workers=n_jobs, initializer=init_worker, initargs=initargs
-        ) as ex:
-            results = list(
-                tqdm(
-                    ex.map(_orbit_keys, chunks),
-                    total=len(chunks),
-                    desc="Keying candidates",
-                    leave=False,
-                    disable=not verbose,
-                )
-            )
-    except BrokenProcessPool as exc:
-        raise RuntimeError(
-            "the worker pool died during deduplication. The usual cause on macOS and Windows is calling "
-            "generate(..., n_jobs > 1) from a script whose top level is not protected: wrap the call in "
-            '`if __name__ == "__main__":`'
-        ) from exc
-    return [key for chunk in results for key in chunk]
-
-
 # TODO: split this into two functions, one for generating candidates and one for deduplicating them
 def generate_neighbors(
     crystal: Crystal,
@@ -129,7 +66,7 @@ def generate_neighbors(
     :param cutoff: per-axis ``(low, high)`` integer lattice translation bounds
     :param R: distance cutoff in Angstroms. The distance convention is selected by ``kwargs``
     :param N: N-mer order
-    :param kwargs: additional options (``n_jobs``, ``verbose``, etc.)
+    :param kwargs: additional options (``verbose``, ``site_atol``, etc.)
     :returns: unique cluster lists
     """
     verbose = kwargs.get("verbose", 1)
@@ -179,12 +116,9 @@ def generate_neighbors(
             candidates.append(sop)
 
     # exact pass: clusters sharing an orbit key are the same multimer
-    keys = _compute_keys(
-        candidates, kwargs.get("n_jobs", 1), (crystal, monomers, site_atol, full_congruence), verbose
-    )
-    buckets: dict[tuple, list[SymOpList]] = defaultdict(list)
-    for key, g_t in zip(keys, candidates):
-        buckets[key].append(g_t)
+    buckets: dict[int, list[SymOpList]] = defaultdict(list)
+    for label, g_t in zip(orbit_labels(candidates).tolist(), candidates):
+        buckets[label].append(g_t)
 
     unique: list[SymOpList] = []
     duplicate: list[SymOpList] = []
