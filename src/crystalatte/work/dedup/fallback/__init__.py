@@ -21,15 +21,11 @@ WINDOW = 0.05
 
 
 def is_needed() -> bool:
-    """Return True iff a congruence gate is open or two references share an atomic composition
+    """Return True iff some reference's congruence gate is open
 
     :returns: whether :func:`merge_congruent` can find anything
     """
-    if any(context.check_congruence_by_ref):
-        return True
-    # TODO: inert since the cross-reference matcher was removed; drop once confirmed
-    compositions = [tuple(sorted(z.tolist())) for z in context.Z_by_ref]
-    return len(set(compositions)) < len(compositions)
+    return any(context.check_congruence_by_ref)
 
 
 def are_congruent(g_N: SymOpList, h_N: SymOpList) -> bool:
