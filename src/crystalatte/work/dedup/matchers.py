@@ -178,7 +178,7 @@ def same_multimer_int(
     Exact-integer form of :func:`anchored_match`: roundoff-free and complete
     for every same-orbit merge, including centrosymmetric site-inversion cases.
     Congruences whose dressing lies outside ``W`` (non-crystallographic) are not
-    found here; they are left to :mod:`~crystalatte.work.dedup.fallback`.
+    found here; they are left to :mod:`~crystalatte.work.dedup.congruence`.
 
     :param g_N: The first cluster
     :param h_N: The second cluster
