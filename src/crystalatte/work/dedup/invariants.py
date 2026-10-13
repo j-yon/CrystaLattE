@@ -296,5 +296,5 @@ def fingerprints_match(g_N: SymOpList, h_N: SymOpList, atol: float = 1e-6) -> bo
     if zz_g.shape != zz_h.shape or not np.array_equal(zz_g, zz_h): 
         return False # different number of atom pairs or different Z products
 
-    # compare distances with tolerance
-    return np.allclose(d_g, d_h, atol=atol, rtol=0.0)
+    # compare distances with tolerance (np.allclose costs ~10x more per call on these short arrays)
+    return bool(np.abs(d_g - d_h).max(initial=0.0) <= atol)
