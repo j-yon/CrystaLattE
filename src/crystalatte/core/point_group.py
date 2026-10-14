@@ -318,14 +318,17 @@ class PointGroup(Sequence[NDArray]):
         extra = list(cls.from_solver(symbols, cart_coords)) if use_solver else []
 
         found: list[NDArray] = []
+        stack = np.empty((0, 3, 3))
         for u in frame.candidates():
-            # if the operation is already in the found list, skip it
-            if any(np.allclose(u, v, atol=1e-4) for v in found):
+            # if the operation is already in the found list, skip it. This is
+            # ``any(np.allclose(u, v, atol=1e-4) for v in found)`` evaluated over the whole stack at once
+            if (np.abs(stack - u) <= 1e-4 + 1e-5 * np.abs(stack)).all(axis=(1, 2)).any():
                 continue
 
             # if the operation is a symmetry at the given tolerance, add it to the found list
             if frame.is_symmetry(u, atol):
                 found.append(u)
+                stack = np.concatenate((stack, u[None]))
 
         # iterate over the symmetry tolerance ladder, tightening the rung each time
         for factor in _TOLERANCE_LADDER:
