@@ -194,15 +194,17 @@ class Crystal:
         mask = ~np.any(np.abs(all_frac) > 2.0, axis=1)
         all_frac, all_symbols = all_frac[mask], all_symbols[mask]
 
-        # determine superimposed atoms
-        unique_indices = []
-        for i in range(len(all_frac)):
-            if not unique_indices:
-                unique_indices.append(i)
-                continue
-            dists = np.linalg.norm(all_frac[unique_indices] - all_frac[i], axis=1)
-            if np.all(dists >= 1e-3):
-                unique_indices.append(i)
+        # determine superimposed atoms: an atom is dropped iff an earlier KEPT atom lies within 1e-3.
+        # The tree only proposes pairs; the strict ``< 1e-3`` test is the original norm, so results are exact
+        pairs = cKDTree(all_frac).query_pairs(1e-3, output_type="ndarray")  # i < j
+        close = np.linalg.norm(all_frac[pairs[:, 0]] - all_frac[pairs[:, 1]], axis=1) < 1e-3
+        pairs = pairs[close]
+        keep = np.ones(len(all_frac), dtype=bool)
+        # visiting pairs by ascending j settles every keep[i] (i < j) before it is read
+        for i, j in pairs[np.argsort(pairs[:, 1], kind="stable")].tolist():
+            if keep[i]:
+                keep[j] = False
+        unique_indices = np.flatnonzero(keep)
 
         # deduplicate the arrays based on the unique indices
         unique_frac = all_frac[unique_indices]
