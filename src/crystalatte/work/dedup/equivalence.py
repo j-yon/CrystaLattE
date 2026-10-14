@@ -9,7 +9,7 @@ def translation_norm(g_N: SymOpList) -> float:
     :param g_N: cluster to measure
     :returns: sum of the members' translation norms
     """
-    return float(np.linalg.norm(g_N.translations, axis=1).sum())
+    return float(np.linalg.norm(g_N.tr_cache, axis=1).sum())
 
 
 def merge(group: list[SymOpList]) -> tuple[SymOpList, list[SymOpList]]:
