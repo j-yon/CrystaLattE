@@ -299,7 +299,7 @@ class SymOpList:
         return iter(self.sym_ops)
 
     def __len__(self):
-        return len(self.sym_ops)
+        return len(self._rot_cache)
 
     def __getitem__(self, index: int) -> SymOp:
         """Return the symmetry operation at the specified index."""

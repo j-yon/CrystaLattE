@@ -151,10 +151,11 @@ def generate_neighbors(
     # anchor each reference i; partners = pool members within R of anchor i
     # excludes anchor i's own zero-translation identity
     candidates: list[SymOpList] = []
+    identity = SymOp.identity()  # parse once; SymOps are never mutated, so members can share it
     for i, anchor in enumerate(monomers):
         near, carts = [], []
         for j, op in pool:
-            if j == i and op == SymOp.identity():
+            if j == i and op == identity:
                 continue  # skip self-identity
 
             # filter partners by distance to anchor i
@@ -176,13 +177,36 @@ def generate_neighbors(
                 carts, [context.mass_by_ref[j] for j, _ in near], R, mode
             )
 
-        for idx in _cliques(adj, len(near), N - 1):
-            members = [(i, SymOp.identity()), *(near[k] for k in idx)]
-            ops = [op for (_, op) in members]
-            refs = np.array([b for (b, _) in members], dtype=np.int64)
-            sop = SymOpList(ops, 1)
-            sop.ref_indices = refs
-            candidates.append(sop)
+        idx = np.array(list(_cliques(adj, len(near), N - 1)), dtype=np.int64)
+        if len(idx) == 0:
+            continue
+
+        # gather every clique's members at once, the anchor's identity first; each candidate is a view
+        C = len(idx)
+        rot = np.concatenate(
+            (
+                np.broadcast_to(identity.rot, (C, 1, 3, 3)),
+                np.stack([op.rot for _, op in near])[idx],
+            ),
+            axis=1,
+        )
+        tr = np.concatenate(
+            (
+                np.broadcast_to(identity.tr, (C, 1, 3)),
+                np.stack([op.tr for _, op in near])[idx],
+            ),
+            axis=1,
+        )
+        refs = np.concatenate(
+            (
+                np.full((C, 1), i, dtype=np.int64),
+                np.array([j for j, _ in near], dtype=np.int64)[idx],
+            ),
+            axis=1,
+        )
+        candidates.extend(
+            SymOpList.from_components(rot[c], tr[c], 1, refs[c]) for c in range(C)
+        )
 
     # exact pass: clusters sharing an orbit key are the same multimer
     buckets: dict[int, list[SymOpList]] = defaultdict(list)
