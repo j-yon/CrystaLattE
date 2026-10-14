@@ -178,8 +178,12 @@ def _group_keys(cands: list[SymOpList], refs: tuple[int, ...]) -> NDArray:
             ]
         )
 
-        # many clusters share a relative transform: dress each distinct one once
-        U, inverse = np.unique(D, axis=0, return_inverse=True)
+        # many clusters share a relative transform: dress each distinct one once.
+        # Rows are packed into int64 codes first, a 1-D unique being far faster than unique(axis=0)
+        _, first, inverse = np.unique(
+            lex_codes(D), return_index=True, return_inverse=True
+        )
+        U = D[first]
         codes = lex_codes(_dressed_minima(U, refs[0], ref_b))[inverse.ravel()].reshape(
             len(pairs), N, S
         )
