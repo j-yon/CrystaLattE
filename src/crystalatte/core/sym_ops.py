@@ -74,9 +74,35 @@ class SymOp:
 
         return rot, tr
 
+    @staticmethod
+    def _format_symop(rot: NDArray[np.int16], tr: NDArray[np.int16]) -> str:
+        """Format rotation and translation components as an xyz string, the inverse of :meth:`_parse_symop`
+
+        :param rot: A 3x3 matrix corresponding to the rotational component of the symmetry operation in fractional coordinates
+        :param tr: A 3D vector corresponding to the translational component in twelfths, lattice part included
+        :returns: A canonical symmetry operation string like '-x+y+1,-x,z+2/3'
+        :raises ValueError: if a rotation coefficient lies outside ±1, which the xyz syntax cannot express
+        """
+        rows = []
+        for coeffs, t in zip(rot.tolist(), tr.tolist()):
+            if any(abs(c) > 1 for c in coeffs):
+                raise ValueError(
+                    f"cannot format rotation row {coeffs} as xyz: coefficients must be in ±1"
+                )
+            terms = "".join(
+                ("+" if c > 0 else "-") + v for c, v in zip(coeffs, "xyz") if c
+            )
+            if t:
+                f = Fraction(int(t), 12)
+                terms += f"{'+' if f > 0 else '-'}{abs(f)}"
+            rows.append(terms.lstrip("+") or "0")
+        return ",".join(rows)
+
     @property
-    def op(self) -> str | None:
-        """Return the original symmetry operation string."""
+    def op(self) -> str:
+        """Return the symmetry operation string, formatted from the components when none was given."""
+        if self._op is None:
+            self._op = self._format_symop(self._rot, self._tr)
         return self._op
 
     @property
@@ -129,7 +155,9 @@ class SymOp:
         :returns: A new SymOp with the same rotation but translated by the given vector
         """
         new_tr = self._tr + translation
-        return SymOp.from_components(self._rot, new_tr, self._op)
+        # a shifted op no longer matches the original string, so let it be formatted on demand
+        op = self._op if not np.any(translation) else None
+        return SymOp.from_components(self._rot, new_tr, op)
 
     def apply(self, frac_coords: NDArray[np.float64]) -> NDArray[np.float64]:
         """Apply this SymOp to the given fractional coordinates
