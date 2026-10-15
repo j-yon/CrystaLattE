@@ -13,6 +13,45 @@ from .space_group import SpaceGroup
 from .sym_ops import SymOp
 
 
+@dataclass(frozen=True)
+class DisorderState:
+    """One ordered state of a disordered CIF block
+
+    :param label: Human-readable name, e.g. ``"A1 B2"`` or ``"config 1"``
+    :param weight: Fraction of the disordered crystal this state represents, as implied by the CIF
+    :param groups: ``(assembly, group)`` choices for explicit disorder groups; empty if none
+    """
+
+    label: str
+    weight: float
+    groups: tuple[tuple[str, str], ...] = ()
+
+
+def expand_cell(
+    positions: NDArray[np.float64], symbols: list[str], sym_ops: list[SymOp]
+) -> tuple[NDArray[np.float64], NDArray[np.str_], NDArray[np.intp]]:
+    """Expand an asymmetric unit into every distinct atom of the unit cell
+
+    :param positions: Fractional coordinates of the ASU sites, shape ``(n, 3)``
+    :param symbols: Atomic symbols of the ASU sites
+    :param sym_ops: Operations of the space group
+    :returns: Fractional coordinates wrapped into [0, 1), their symbols, and the ASU site each came from
+    """
+    frac, syms, site = [], [], []
+    for i, (pos, sym) in enumerate(zip(positions, symbols)):
+        for op in sym_ops:
+            r = op.apply(np.asarray(pos, dtype=float)) % 1.0
+            r[r > 1.0 - 1e-6] = 0.0  # wrap 0.999999 -> 0
+            if frac:
+                d = (np.asarray(frac) - r + 0.5) % 1.0 - 0.5  # periodic distance
+                if np.any(np.linalg.norm(d, axis=1) < 1e-3):
+                    continue
+            frac.append(r)
+            syms.append(sym)
+            site.append(i)
+    return np.array(frac), np.array(syms), np.array(site, dtype=np.intp)
+
+
 @dataclass
 class Crystal:
     """Molecular crystal with lattice parameters and space group symmetry
@@ -21,6 +60,7 @@ class Crystal:
     :param _angles: Lattice angles (alpha, beta, gamma)
     :param _space_group: :class:`SpaceGroup` representing this crystal's symmetry
     :param _asu: Asymmetric unit (:class:`ASU`) of this crystal
+    :param _state: :class:`DisorderState` this crystal represents, ``None`` for an ordered CIF
     :ivar _frac_to_cart: 3x3 matrix to convert fractional coordinates to Cartesian
     """
 
@@ -31,6 +71,9 @@ class Crystal:
 
     # computed matrices for coordinate transformations
     _frac_to_cart: NDArray[np.float64] = field(init=False, repr=False)
+
+    # which ordered state of a disordered CIF this is, if any
+    _state: DisorderState | None = None
 
     def __post_init__(self):
         """Validate crystal attributes and initialize transformation matrices"""
@@ -94,6 +137,10 @@ class Crystal:
     @property
     def space_group(self) -> SpaceGroup:
         return self._space_group
+
+    @property
+    def state(self) -> DisorderState | None:
+        return self._state
 
     @property
     def lattice_parameters(
@@ -312,25 +359,10 @@ class Crystal:
         lattice = self._frac_to_cart.T
 
         # expand ASU to full cell using declared symmetry ops
-        frac, nums = [], []
-        for op in self._space_group.sym_ops:
-            for pos, sym in zip(self._asu.positions, self._asu.atoms):
-                frac.append(op.apply(np.asarray(pos, dtype=float)) % 1.0)
-                nums.append(qcel.periodictable.to_Z(sym))
-        frac = np.array(frac)
-        nums = np.array(nums)
-
-        # dedup coincident atoms (mod 1)
-        keep = []
-        for i in range(len(frac)):
-            if not keep:
-                keep.append(i)
-                continue
-            d = (frac[keep] - frac[i] + 0.5) % 1.0 - 0.5  # periodic distance
-            if np.all(np.linalg.norm(d, axis=1) >= 1e-3):
-                keep.append(i)
-        positions = frac[keep]
-        numbers = nums[keep].tolist()
+        positions, symbols, _ = expand_cell(
+            self._asu.positions, self._asu.atoms, self._space_group.sym_ops
+        )
+        numbers = [qcel.periodictable.to_Z(s) for s in symbols]
 
         # call spglib to detect symmetry, ignoring warnings (spglib can be noisy)
         try:
@@ -398,4 +430,4 @@ class Crystal:
             number = None
 
         new_sg = SpaceGroup.from_sym_ops(detected, number=number)
-        return Crystal(self._vectors, self._angles, new_sg, self._asu)
+        return Crystal(self._vectors, self._angles, new_sg, self._asu, self._state)
