@@ -119,3 +119,6 @@ data/test
 
 # claude
 .claude/worktrees
+
+# mac
+.DS_Store
