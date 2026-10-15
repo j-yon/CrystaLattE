@@ -119,15 +119,16 @@ def generate_neighbors(
     N: int,
     **kwargs,
 ) -> list[SymOpList]:
-    """Generate and deduplicate all unique N-mers in the supercell defined by ``cutoff``
+    """Generate and deduplicate all unique multimers in the supercell defined by ``cutoff``.
+    Multimers are not actually constructed, only their symmetry operations are considered
 
-    :param crystal: crystal containing the monomers
-    :param monomers: reference monomer(s) used to anchor the N-mer search
-    :param cutoff: per-axis ``(low, high)`` integer lattice translation bounds
-    :param R: distance cutoff in Angstroms, applied to every pair of members. The distance convention is selected by ``kwargs``
+    :param crystal: :class:`Crystal` containing the monomers
+    :param monomers: Reference :class:`Monomer` instance(s) used to anchor the N-mer search
+    :param cutoff: Per-axis ``(low, high)`` integer lattice translation bounds
+    :param R: Distance cutoff in Angstroms, applied to every pair of members. The distance convention is selected by ``kwargs``
     :param N: N-mer order
-    :param kwargs: additional options (``verbose``, ``site_atol``, etc.)
-    :returns: unique cluster lists
+    :param kwargs: Additional options (``verbose``, ``site_atol``, etc.)
+    :returns: Unique clusters as a list of :class:`SymOpList` instances
     """
     verbose = kwargs.get("verbose", 1)
     mode = _distance_mode(kwargs)
@@ -148,8 +149,7 @@ def generate_neighbors(
         for op, tr in product(sym_ops, translations):
             pool.append((j, op.translate(np.array(tr, dtype=np.int16) * 12)))
 
-    # anchor each reference i; partners = pool members within R of anchor i
-    # excludes anchor i's own zero-translation identity
+    # anchor each reference i
     candidates: list[SymOpList] = []
     identity = SymOp.identity()  # parse once; SymOps are never mutated, so members can share it
     for i, anchor in enumerate(monomers):

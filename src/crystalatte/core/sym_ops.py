@@ -10,12 +10,16 @@ from numpy.typing import NDArray
 @dataclass()
 class SymOp:
     """
-    A symmetry operation defined by a rotation matrix and translation vector. The symmetry operation transforms fractional coordinates as: x' = rot @ x + tr
+    A symmetry operation defined by a rotation matrix and translation vector. 
+    The symmetry operation transforms fractional coordinates as: 
 
-    :param _op: A symmetry operation string like 'x,y,z' or '-x+1/2,y,-z+1/2'
-    :ivar _rot: A 3x3 matrix corresponding to the rotational component of the symmetry operation in fractional coordinates
-    :ivar _tr: A 3D vector corresponding to the translational component of the symmetry operation in fractional coordinates
-    :ivar _augment: A 4x4 matrix representing the symmetry operation in augmented matrix form, where the upper left 3x3 block is the rotation and the upper right 3x1 block is the translation. The last row is [0, 0, 0, 1] for homogeneous coordinates.
+    .. math::
+        x' = rot @ x + tr
+
+    :param _op: Symmetry operation string like ``'x,y,z'`` or ``'-x+1/2,y,-z+1/2'``
+    :ivar _rot: 3x3 matrix corresponding to the rotational component of the operation in fractional coordinates
+    :ivar _tr: 3D vector corresponding to the translational component of the operation in fractional coordinates
+    :ivar _augment: 4x4 matrix representing the symmetry operation in augmented matrix form
     """
 
     _op: str | None
@@ -24,7 +28,6 @@ class SymOp:
     _augment: NDArray[np.int16] = field(init=False)
 
     def __post_init__(self):
-        """Constructor method"""
         if self._op is None:
             raise ValueError(
                 "SymOp must be initialized with a symmetry operation string"
@@ -36,11 +39,12 @@ class SymOp:
         augment[:3, 3] = self._tr
         self._augment = augment
 
-    def _parse_symop(self, op: str) -> tuple[NDArray[np.int16], NDArray[np.int16]]:
+    @staticmethod
+    def _parse_symop(op: str) -> tuple[NDArray[np.int16], NDArray[np.int16]]:
         """Parse a symmetry operation from an xyz string
 
-        :param op: A symmetry operation string like 'x,y,z' or '-x+1/2,y,-z+1/2'
-        :returns: A tuple of (rot, tr) where rot is a 3x3 matrix corresponding to the rotational component of the symmetry operation in fractional coordinates, and tr is a 3D vector corresponding to the translational component of the symmetry operation in fractional coordinates (integers representing multiples of 1/12 for efficiency)
+        :param op: Symmetry operation string like ``'x,y,z'`` or ``'-x+1/2,y,-z+1/2'``
+        :returns: Rotations and translations in matrix/vector form parsed from the string
         """
         rot = np.zeros((3, 3), dtype=np.int16)
         tr = np.zeros(3, dtype=np.int16)
@@ -76,12 +80,12 @@ class SymOp:
 
     @staticmethod
     def _format_symop(rot: NDArray[np.int16], tr: NDArray[np.int16]) -> str:
-        """Format rotation and translation components as an xyz string, the inverse of :meth:`_parse_symop`
+        """Format rotation and translation components as an xyz string (inverse of :meth:`_parse_symop`)
 
-        :param rot: A 3x3 matrix corresponding to the rotational component of the symmetry operation in fractional coordinates
-        :param tr: A 3D vector corresponding to the translational component in twelfths, lattice part included
-        :returns: A canonical symmetry operation string like '-x+y+1,-x,z+2/3'
-        :raises ValueError: if a rotation coefficient lies outside ±1, which the xyz syntax cannot express
+        :param rot: 3x3 matrix corresponding to the rotational component of the operation in fractional coordinates
+        :param tr: 3D vector corresponding to the translational component in twelfths, lattice part included
+        :returns: Canonical symmetry operation string like ``'-x+y+1,-x,z+2/3'``
+        :raises ValueError: If a rotation coefficient lies outside ±1, which the xyz syntax cannot express
         """
         rows = []
         for coeffs, t in zip(rot.tolist(), tr.tolist()):
@@ -98,75 +102,6 @@ class SymOp:
             rows.append(terms.lstrip("+") or "0")
         return ",".join(rows)
 
-    @property
-    def op(self) -> str:
-        """Return the symmetry operation string, formatted from the components when none was given."""
-        if self._op is None:
-            self._op = self._format_symop(self._rot, self._tr)
-        return self._op
-
-    @property
-    def rot(self) -> NDArray[np.int16]:
-        """Return the rotational component of the symmetry operation."""
-        return self._rot
-
-    @property
-    def tr(self) -> NDArray[np.int16]:
-        """Return the translational component of the symmetry operation."""
-        return self._tr
-
-    @property
-    def augment(self) -> NDArray[np.int16]:
-        """Return the augmented matrix representation of the symmetry operation."""
-        return self._augment
-
-    @classmethod
-    def identity(cls) -> SymOp:
-        """Return the identity symmetry operation."""
-        return cls("x,y,z")
-
-    @classmethod
-    def from_components(
-        cls, rot: NDArray[np.int16], tr: NDArray[np.int16], op: str | None = None
-    ) -> SymOp:
-        """Create a SymOp from given rotation and translation components
-
-        :param rot: A 3x3 matrix corresponding to the rotational component of the symmetry operation in fractional coordinates
-        :param tr: A 3D vector corresponding to the translational component of the symmetry operation in fractional coordinates
-        :param op: An optional symmetry operation string like 'x,y,z' or '-x+1/2,y,-z+1/2' to associate with the SymOp for reference. This is not used for any calculations, but can be useful for debugging or output purposes.
-        :returns: A SymOp object with the specified rotation and translation components, and an optional symmetry operation string for reference
-        """
-        symop = cls.__new__(cls)
-        symop._rot = rot
-        symop._tr = tr
-
-        augment = np.eye(4, dtype=np.int16)
-        augment[:3, :3] = rot
-        augment[:3, 3] = tr
-        symop._augment = augment
-        symop._op = op
-
-        return symop
-
-    def translate(self, translation: NDArray[np.int16]) -> SymOp:
-        """Return a new SymOp with the same rotation but translated by the given vector. The original vector in fractional coordinates must be given multiplied by 12, since translations are stored as integers for efficiency.
-
-        :param translation: A 3D vector in fractional coordinates to translate the symmetry operation by
-        :returns: A new SymOp with the same rotation but translated by the given vector
-        """
-        new_tr = self._tr + translation
-        # a shifted op no longer matches the original string, so let it be formatted on demand
-        op = self._op if not np.any(translation) else None
-        return SymOp.from_components(self._rot, new_tr, op)
-
-    def apply(self, frac_coords: NDArray[np.float64]) -> NDArray[np.float64]:
-        """Apply this SymOp to the given fractional coordinates
-
-        :param frac_coords: An Nx3 array of fractional coordinates to transform
-        :returns: The transformed fractional coordinates after applying the symmetry operation, calculated as x' = rot @ x + tr, where rot is the rotational component and tr is the translational component of the symmetry operation
-        """
-        return (self._rot @ frac_coords.T).T + (self._tr / 12)
-
     def __eq__(self, value: object, /) -> bool:
         if not isinstance(value, SymOp):
             return NotImplemented
@@ -182,19 +117,92 @@ class SymOp:
     def __repr__(self) -> str:
         return f"SymOp(op='{self._op}', rot='{self._rot}', tr='{self._tr}', augment=\n{self._augment})"
 
+    @property
+    def op(self) -> str:
+        if self._op is None:
+            self._op = self._format_symop(self._rot, self._tr)
+        return self._op
+
+    @property
+    def rot(self) -> NDArray[np.int16]:
+        return self._rot
+
+    @property
+    def tr(self) -> NDArray[np.int16]:
+        return self._tr
+
+    @property
+    def augment(self) -> NDArray[np.int16]:
+        return self._augment
+
+    @classmethod
+    def identity(cls) -> SymOp:
+        """Return the identity symmetry operation"""
+        return cls("x,y,z")
+
+    @classmethod
+    def from_components(
+        cls, rot: NDArray[np.int16], tr: NDArray[np.int16], op: str | None = None
+    ) -> SymOp:
+        """Create a :class:`SymOp` from given rotation and translation components
+
+        :param rot: 3x3 matrix corresponding to the rotational component of the operation in fractional coordinates
+        :param tr: 3D vector corresponding to the translational component of the operation in fractional coordinates
+        :param op: Optional symmetry operation string to associate with the operation for reference
+        :returns: :class:`SymOp` object with the specified rotation and translation components
+        """
+        symop = cls.__new__(cls)
+        symop._rot = rot
+        symop._tr = tr
+
+        augment = np.eye(4, dtype=np.int16)
+        augment[:3, :3] = rot
+        augment[:3, 3] = tr
+        symop._augment = augment
+        symop._op = op
+
+        return symop
+
+    def translate(self, translation: NDArray[np.int16 | np.float64]) -> SymOp:
+        """Translate a class:`SymOp` by a vector in fractional space
+
+        .. note::
+            If the translation vector has dtype ``np.int16``, it is assumed to be scaled by 12 
+            to match the internal representation of the translation vector
+
+        :param translation: 3D vector in fractional coordinates to translate the symmetry operation by
+        :returns: New :class:`SymOp` with the same rotation but translated by the given vector
+        """
+        # if the translation is given in float, convert it to integer representation in twelfths
+        if translation.dtype == np.float64:
+            translation = np.round(translation * 12).astype(np.int16)
+        new_tr = self._tr + translation
+
+        # a shifted op no longer matches the original string, so let it be formatted on demand
+        op = self._op if not np.any(translation) else None
+        return SymOp.from_components(self._rot, new_tr, op)
+
+    def apply(self, frac_coords: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Apply this :class:`SymOp` to the given fractional coordinates
+
+        :param frac_coords: Nx3 array of fractional coordinates to transform
+        :returns: Transformed fractional coordinates after applying the symmetry operation
+        """
+        return (self._rot @ frac_coords.T).T + (self._tr / 12)
+
 
 @dataclass
 class SymOpList:
     """
-    A list of symmetry operations, typically representing a subset of symmetry operations of a space group.
+    A list of symmetry operations, typically representing a subset of symmetry operations of a :class:`SpaceGroup`
 
-    :param _sym_ops: A list of :class:`SymOp` objects representing the symmetry operations
-    :param _multiplicity: The number of equivalent multimers that can be generated by this list of symmetry operations
-    :param _ref_indices: Per-member base-reference index (which ASU molecule each member is a placement of); defaults to all-zeros
-    :ivar _rot_cache: A cached array of the rotational components of the symmetry operations for efficient access
-    :ivar _tr_cache: A cached array of the translational components of the symmetry operations
-    :ivar _rel_cache: Lazily cached ``(L, v)`` pairwise relative Cartesian transforms, populated by the multimer deduper
-    :ivar _dist_fp_cache: Lazily cached ``(zz, distances)`` Z-tagged distance fingerprint, populated by the multimer deduper
+    :param _sym_ops: List of :class:`SymOp` objects representing the symmetry operations
+    :param _multiplicity: Number of equivalent multimers that correspond to these symmetry operations
+    :param _ref_indices: Per-member base-reference index, defaults to all-zeros for single-reference clusters
+    :ivar _rot_cache: Cached array of the rotational components of the symmetry operations
+    :ivar _tr_cache: Cached array of the translational components of the symmetry operations
+    :ivar _rel_cache: Lazily cached ``(L, v)`` pairwise relative Cartesian transforms
+    :ivar _dist_fp_cache: Lazily cached ``(zz, distances)`` Z-tagged distance fingerprint
     """
 
     _sym_ops: list[SymOp] | None
@@ -203,22 +211,15 @@ class SymOpList:
     _rot_cache: NDArray = field(init=False, repr=False)
     _tr_cache: NDArray = field(init=False, repr=False)
 
-    # lazily populated geometry caches used by the multimer deduper
-    _rel_cache: tuple[NDArray, NDArray] | None = field(
-        default=None, init=False, repr=False, compare=False
-    )
-    _rel_int_cache: tuple[NDArray, NDArray] | None = field(
-        default=None, init=False, repr=False, compare=False
-    )
-    _dist_fp_cache: tuple[NDArray, NDArray] | None = field(
-        default=None, init=False, repr=False, compare=False
-    )
+    _rel_cache: tuple[NDArray, NDArray] | None = field(default=None, init=False, repr=False, compare=False)
+    _rel_int_cache: tuple[NDArray, NDArray] | None = field(default=None, init=False, repr=False, compare=False)
+    _dist_fp_cache: tuple[NDArray, NDArray] | None = field(default=None, init=False, repr=False, compare=False)
 
     # lazily-derived geometry caches
     _PICKLE_EXCLUDED = ("_rel_cache", "_rel_int_cache", "_dist_fp_cache")
 
     def __getstate__(self):
-        """Drop the derived caches when pickling, rebuild on demand.
+        """Drop the derived caches when pickling, rebuild on demand
 
         :returns: The instance dict with the derived cache slots cleared
         """
@@ -228,7 +229,7 @@ class SymOpList:
         return state
 
     def __post_init__(self):
-        """Constructor method to validate inputs and compute caches for the symmetry operations.
+        """Constructor method to validate inputs and compute caches for the symmetry operations
 
         :raises ValueError: If the list of symmetry operations is empty or if the multiplicity is not a positive integer
         """
@@ -244,85 +245,6 @@ class SymOpList:
         if self._ref_indices is None:
             self._ref_indices = np.zeros(len(self._sym_ops), dtype=np.int64)
 
-    @property
-    def sym_ops(self) -> list[SymOp]:
-        """Return the list of symmetry operations."""
-        if self._sym_ops is None:
-            self._sym_ops = [
-                SymOp.from_components(self._rot_cache[i], self._tr_cache[i])
-                for i in range(len(self._rot_cache))
-            ]
-        return self._sym_ops
-
-    @property
-    def multiplicity(self) -> int:
-        """Return the multiplicity of multimers generated by this list of symmetry operations."""
-        return self._multiplicity
-
-    @multiplicity.setter
-    def multiplicity(self, value: int):
-        self._multiplicity = value
-
-    @property
-    def translations(self) -> list[NDArray]:
-        """Return a list of the translational components of the symmetry operations."""
-        return [sym_op.tr for sym_op in self.sym_ops]
-
-    @property
-    def rot_cache(self) -> NDArray:
-        """Return the cached array of rotational components of the symmetry operations."""
-        return self._rot_cache
-
-    @property
-    def tr_cache(self) -> NDArray:
-        """Return the cached array of translational components of the symmetry operations."""
-        return self._tr_cache
-
-    @property
-    def ref_indices(self) -> NDArray:
-        """Per-member base-reference index. Defaults to all-zeros for single-reference clusters."""
-        return self._ref_indices
-
-    @ref_indices.setter
-    def ref_indices(self, value: NDArray):
-        self._ref_indices = np.asarray(value, dtype=np.int64)
-
-    @classmethod
-    def from_components(
-        cls,
-        rot: NDArray,
-        tr: NDArray,
-        multiplicity: int,
-        ref_indices: NDArray | None = None,
-    ) -> SymOpList:
-        """Create a SymOpList from given rotation and translation components.
-
-        :param rot: An Nx3x3 array of the rotational components of the symmetry operations in fractional coordinates
-        :param tr: An Nx3 array of the translational components of the symmetry operations in fractional coordinates (integers representing multiples of 1/12 for efficiency)
-        :param multiplicity: The number of equivalent multimers that can be generated by this list of symmetry operations
-        :param ref_indices: An optional array of per-member base-reference indices (defaults to all-zeros)
-        :returns: A SymOpList object with the specified rotation and translation components and multiplicity
-        """
-        instance = cls.__new__(cls)
-        instance._sym_ops = None
-        instance._multiplicity = multiplicity
-        instance._ref_indices = (
-            np.zeros(len(rot), dtype=np.int64)
-            if ref_indices is None
-            else np.asarray(ref_indices, dtype=np.int64)
-        )
-
-        # set caches
-        instance._rot_cache = rot
-        instance._tr_cache = tr
-
-        # __new__ bypasses the dataclass __init__, so the lazily-populated geometry caches must be initialized explicitly here
-        instance._rel_cache = None
-        instance._rel_int_cache = None
-        instance._dist_fp_cache = None
-
-        return instance
-
     def __iter__(self):
         return iter(self.sym_ops)
 
@@ -330,7 +252,6 @@ class SymOpList:
         return len(self._rot_cache)
 
     def __getitem__(self, index: int) -> SymOp:
-        """Return the symmetry operation at the specified index."""
         return self.sym_ops[index]
 
     def __eq__(self, value: object, /) -> bool:
@@ -345,3 +266,77 @@ class SymOpList:
 
     def __repr__(self) -> str:
         return f"SymOpList(sym_ops={self._sym_ops}, multiplicity={self._multiplicity})"
+
+    @property
+    def sym_ops(self) -> list[SymOp]:
+        # lazily populate the list of SymOp objects from the cached rotation and translation components
+        if self._sym_ops is None:
+            self._sym_ops = [
+                SymOp.from_components(self._rot_cache[i], self._tr_cache[i])
+                for i in range(len(self._rot_cache))
+            ]
+        return self._sym_ops
+
+    @property
+    def multiplicity(self) -> int:
+        return self._multiplicity
+
+    @multiplicity.setter
+    def multiplicity(self, value: int):
+        self._multiplicity = value
+
+    @property
+    def translations(self) -> list[NDArray]:
+        return [sym_op.tr for sym_op in self.sym_ops]
+
+    @property
+    def rot_cache(self) -> NDArray:
+        return self._rot_cache
+
+    @property
+    def tr_cache(self) -> NDArray:
+        return self._tr_cache
+
+    @property
+    def ref_indices(self) -> NDArray:
+        return self._ref_indices
+
+    @ref_indices.setter
+    def ref_indices(self, value: NDArray):
+        self._ref_indices = np.asarray(value, dtype=np.int64)
+
+    @classmethod
+    def from_components(
+        cls,
+        rot: NDArray,
+        tr: NDArray,
+        multiplicity: int,
+        ref_indices: NDArray | None = None,
+    ) -> SymOpList:
+        """Create a SymOpList from given rotation and translation components
+
+        :param rot: Nx3x3 array of the rotational components of the operations in fractional coordinates
+        :param tr: Nx3 array of the translational components of the operations in fractional coordinates
+        :param multiplicity: Number of equivalent multimers that can correspond to this operation list
+        :param ref_indices: Optional array of per-member base-reference indices (defaults to all-zeros)
+        :returns: A :class:`SymOpList` object with the specified rotation and translation components and multiplicity
+        """
+        instance = cls.__new__(cls)
+        instance._sym_ops = None
+        instance._multiplicity = multiplicity
+        instance._ref_indices = (
+            np.zeros(len(rot), dtype=np.int64)
+            if ref_indices is None
+            else np.asarray(ref_indices, dtype=np.int64)
+        )
+
+        # set caches
+        instance._rot_cache = rot
+        instance._tr_cache = tr
+
+        # __new__ bypasses the dataclass __init__, so initialize lazily-populated geometry caches
+        instance._rel_cache = None
+        instance._rel_int_cache = None
+        instance._dist_fp_cache = None
+
+        return instance

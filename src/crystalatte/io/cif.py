@@ -4,6 +4,7 @@ from collections.abc import Generator
 
 import numpy as np
 from CifFile import ReadCif
+from numpy.typing import NDArray
 
 from ..core.crystal import Crystal
 from ..core.multimer import ASU, Monomer
@@ -36,8 +37,8 @@ DISORDER_POLICIES = ("error", "ignore", "drop")
 def _clean_block(block):
     """Strip standard-uncertainty parentheses and convert numeric fields to floats
 
-    :param block: raw pycifrw data block
-    :returns: plain dict with numbers converted and uncertainties removed
+    :param block: Raw ``pycifrw`` data block
+    :returns: Plain dict with numbers converted and uncertainties removed
     """
     cleaned_block = {}
     # pycifrw partitions CIF into a dict of lists/strings/floats
@@ -73,11 +74,11 @@ def _clean_block(block):
 
 
 def _first(block: dict, fields: tuple[str, ...]):
-    """Return the first of ``fields`` present in ``block``, or None
+    """Return the first of ``fields`` present in ``block``, or ``None``
 
-    :param block: cleaned data block
-    :param fields: accepted spellings, most-preferred first
-    :returns: value of the first field present, else None
+    :param block: Cleaned data block
+    :param fields: Accepted spellings, most-preferred first
+    :returns: Value of the first field present, else None
     """
     for name in fields:
         if name in block and block[name] not in (None, "", "?", "."):
@@ -88,8 +89,8 @@ def _first(block: dict, fields: tuple[str, ...]):
 def _normalise_symbol(symbol) -> str:
     """Reduce a space-group symbol to a comparable form
 
-    :param symbol: symbol as written in the file
-    :returns: normalised symbol
+    :param symbol: Symbol as written in the file
+    :returns: Normalized symbol
     """
     return re.sub(r"[\s_]", "", str(symbol)).lower()
 
@@ -126,8 +127,8 @@ def _hall_from_hm(symbol: str) -> str | None:
 def _listed_sym_ops(block: dict) -> list[SymOp] | None:
     """Return the operations the file lists explicitly, if it lists any
 
-    :param block: cleaned data block
-    :returns: operations as :class:`SymOp`, or None if the file lists none
+    :param block: Cleaned data block
+    :returns: Operations as :class:`SymOp`, or ``None`` if the file lists none
     """
     raw = _first(block, _SYMOP_FIELDS)
     if raw is None:
@@ -148,24 +149,24 @@ def _listed_sym_ops(block: dict) -> list[SymOp] | None:
 def _op_signature(ops) -> set[tuple[bytes, bytes]]:
     """Return a comparable signature for a set of operations, e.g. different coset representatives of the same setting
 
-    :param ops: operations to summarise
-    :returns: set of ``(rotation, translation mod 1)`` byte pairs
+    :param ops: Operations to summarize
+    :returns: Set of ``(rotation, translation % 1)`` byte pairs
     """
     return {
         (
             np.asarray(op.rot, dtype=np.int64).tobytes(),
-            (np.asarray(op.tr, dtype=np.int64) % 12).tobytes(),
+            (np.asarray(op.tr, dtype=np.int64) % 12).tobytes(), # mod 12 to match int convention
         )
         for op in ops
     }
 
 
-def _verify_against_listed_ops(space_group, listed, source: str):
+def _verify_against_listed_ops(space_group: SpaceGroup, listed, source: str) -> SpaceGroup:
     """Check a resolved space group against the file's own operation list
 
-    :param space_group: space group resolved from symbol or number
-    :param listed: operations the file lists, or None
-    :param source: how the space group was resolved, for the warning text
+    :param space_group: :class:`SpaceGroup` resolved from symbol or number
+    :param listed: Operations the file lists, or None
+    :param source: How the :class:`SpaceGroup` was resolved for the warning text
     :returns: ``space_group``, or one rebuilt from ``listed`` on disagreement
     """
     if not listed or _op_signature(space_group.sym_ops) == _op_signature(listed):
@@ -186,9 +187,9 @@ def _verify_against_listed_ops(space_group, listed, source: str):
 def _resolve_space_group(block: dict) -> SpaceGroup:
     """Determine the space group of one data block
 
-    :param block: cleaned data block
-    :returns: resolved :class:`SpaceGroup`
-    :raises ValueError: if the block carries no usable symmetry information
+    :param block: Cleaned data block
+    :returns: Resolved :class:`SpaceGroup`
+    :raises ValueError: If the block carries no usable symmetry information
     """
     if SpaceGroup._data == {}:
         SpaceGroup.load_data()
@@ -236,12 +237,12 @@ def _resolve_space_group(block: dict) -> SpaceGroup:
     )
 
 
-def _site_occupancies(block: dict, n_sites: int) -> np.ndarray:
-    """Return per-site occupancies
+def _site_occupancies(block: dict, n_sites: int) -> NDArray[np.float64]:
+    """Return per-site occupancies from the block, defaulting to 1.0 if absent
 
-    :param block: cleaned data block
-    :param n_sites: how many atom sites the block describes
-    :returns: an ``(n_sites,)`` float array
+    :param block: Cleaned data block
+    :param n_sites: How many atom sites the block describes
+    :returns: An ``(n_sites,)`` float array of occupancies
     """
     raw = _first(block, ("_atom_site_occupancy",))
     if raw is None:
@@ -259,14 +260,14 @@ def _site_occupancies(block: dict, n_sites: int) -> np.ndarray:
     return occupancies
 
 
-def _apply_disorder_policy(block: dict, coords: np.ndarray, policy: str):
+def _apply_disorder_policy(block: dict, coords: NDArray[np.float64], policy: str) -> np.ndarray:
     """Resolve partially occupied sites according to ``policy``
 
-    :param block: cleaned data block
-    :param coords: fractional coordinates, shape ``(n, 3)``
-    :param policy: one of :data:`DISORDER_POLICIES`
-    :returns: boolean mask selecting the sites to keep
-    :raises ValueError: if ``policy`` is unknown or is ``"error"`` and the block contains partial occupation
+    :param block: Cleaned data block
+    :param coords: Fractional coordinates, shape ``(n, 3)``
+    :param policy: One of :data:`DISORDER_POLICIES`
+    :returns: Boolean mask selecting the sites to keep
+    :raises ValueError: If ``policy`` is unknown or is ``"error"`` and the block is disordered
     """
     if policy not in DISORDER_POLICIES:
         raise ValueError(
@@ -312,14 +313,14 @@ def _apply_disorder_policy(block: dict, coords: np.ndarray, policy: str):
     return ~partial
 
 
-def _resolve_asu(block: dict, coords: np.ndarray, keep: np.ndarray) -> ASU:
+def _resolve_asu(block: dict, coords: NDArray[np.float64], keep: NDArray[np.int16]) -> ASU:
     """Build the asymmetric unit, deriving element symbols however the file allows
 
-    :param block: cleaned data block
-    :param coords: fractional coordinates, shape ``(n, 3)``
-    :param keep: boolean mask of the sites to retain, from the disorder policy
-    :returns: assembled :class:`ASU`
-    :raises ValueError: if neither field is present
+    :param block: Cleaned data block
+    :param coords: Fractional coordinates, shape ``(n, 3)``
+    :param keep: Boolean mask of the sites to retain, from the disorder policy
+    :returns: Assembled :class:`ASU`
+    :raises ValueError: If neither field is present
     """
     symbols = None
     if "_atom_site_type_symbol" in block:
@@ -345,10 +346,14 @@ def from_cif(
 ) -> Generator[tuple[Crystal, Monomer]]:
     """Parse a CIF file into :class:`Crystal` / :class:`Monomer` pairs.
 
-    :param cif_file: path to the CIF file
-    :param disorder: policy for partially occupied sites ("error", "ignore", or "drop")
-    :returns: generator of ``(Crystal, Monomer)``, one per data block
-    :raises ValueError: if block information is generally inconsistent or uninterpretable
+    .. note::
+        The CIF format allows multiple data blocks per file, so this function yields instead
+        of returning a single crystal
+
+    :param cif_file: Path to the CIF file
+    :param disorder: Policy for partially occupied sites ("error", "ignore", or "drop")
+    :returns: Generator of ``(Crystal, Monomer)``, one per data block
+    :raises ValueError: If block information is generally inconsistent or uninterpretable
     """
     # grab the raw CIF data using pycifrw
     cif = ReadCif(cif_file)

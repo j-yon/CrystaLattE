@@ -22,6 +22,7 @@ def write_inputs(
     output_dir = Path(output_dir)
     writer = get_writer(software)
 
+    # TODO: maybe improve writing by grouping multimers by order and writing them in subdirectories?
     by_order: dict[int, list[Multimer]] = defaultdict(list)
     for m in multimers:
         by_order[len(m.monomers)].append(m)

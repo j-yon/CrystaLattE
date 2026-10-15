@@ -11,9 +11,9 @@ def _nre(elem: list[str], geom: NDArray) -> float:
     """Compute the nuclear repulsion energy of a multimer
     (Exact copy of the original CLE code)
 
-    :param elem: List of atomic symbols of each atom.
-    :param geom: Array of 3 columns with the coordinates of the system.
-    :returns: Nuclear repulsion energy of the system.
+    :param elem: List of atomic symbols of each atom
+    :param geom: Array of the coordinates of the system
+    :returns: Nuclear repulsion energy of the system
     """
     Z = np.array([qcel.periodictable.to_Z(e) for e in elem])
     dist = np.sqrt(
@@ -30,9 +30,9 @@ def _chsev(elem: list[str], geom: NDArray) -> NDArray:
     """Diagonalize the chemical space matrix of a multimer 
     (Exact copy of the original CLE code)
 
-    :param elem: List of atomic symbols of each atom.
-    :param geom: Array of 3 columns with the coordinates of the system.
-    :returns: Sorted eigenvalues of the chemical space matrix.
+    :param elem: List of atomic symbols of each atom
+    :param geom: Array of the coordinates of the system
+    :returns: Sorted eigenvalues of the chemical space matrix
     """
 
     Z = np.array([qcel.periodictable.to_Z(e) for e in elem])
@@ -66,8 +66,8 @@ def _chsev(elem: list[str], geom: NDArray) -> NDArray:
 def _nre_chsev(multimer: Multimer) -> tuple[float, NDArray]:
     """Return `(NRE, sorted Coulomb-matrix eigenvalues)` for a multimer
 
-    :param multimer: Multimer object.
-    :returns: tuple of nuclear repulsion energy and sorted eigenvalues of the chemical space matrix
+    :param multimer: :class:`Multimer` object
+    :returns: Nuclear repulsion energy and sorted eigenvalues of the chemical space matrix
     """
     symbols: list[str] = []
     cart_list: list[NDArray] = []
@@ -81,12 +81,12 @@ def _nre_chsev(multimer: Multimer) -> tuple[float, NDArray]:
 def count_chemistry_classes(
     multimers: list[Multimer], atol: float = 1e-9
 ) -> tuple[int, list[list[int]]]:
-    """Group `multimers` into chemistry-equivalence classes via (NRE, CHSEV) comparison
+    """Group :class:`Multimer` instances into chemistry-equivalence classes via (NRE, CHSEV) comparison
     (The original CLE code has atol = 1e-8)
 
-    :param multimers: list of Multimer objects to classify.
-    :param atol: absolute tolerance for comparing NRE and CHSEV values.
-    :returns: tuple of number of classes and a list of lists containing indices of partitioned multimers
+    :param multimers: List of :class:`Multimer` objects to classify.
+    :param atol: Absolute tolerance for comparing NRE and CHSEV values.
+    :returns: Tuple of number of classes and a list of lists containing indices of partitioned multimers
     """
     fingerprints = [_nre_chsev(m) for m in multimers]
     classes: list[list[int]] = []

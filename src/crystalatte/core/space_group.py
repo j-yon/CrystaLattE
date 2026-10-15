@@ -30,21 +30,21 @@ class CrystalSystem(Enum):
 
 @dataclass
 class SpaceGroup:
-    """Represents a space group and contains information about the space group number, symbol,
-    point group, crystal system, lattice system, symmetry operations, lattice constraints,
-    and special Wyckoff positions
+    """One of the 230 space groups which contains information about the space group number,
+    symbol, point group, crystal system, lattice system, symmetry operations, lattice 
+    constraints, and special Wyckoff positions
 
-    :param _number: space group number (1-230)
+    :param _number: Space group number (1-230)
     :param _hall: Hall symbol identifying the specific setting
-    :param _symbol: dictionary of symbols for different conventions
-    :param _point_group: point group symbol
-    :param _crystal_system: crystal system enum
-    :param _lattice_system: lattice system enum
-    :param _sym_ops: list of SymOp objects representing the symmetry operations
-    :param _lattice_constraints: dictionary of lattice constraints
-    :param _special_positions: dictionary of special Wyckoff positions
-    :ivar _registry: stores instances of SpaceGroup keyed by their lookup key to ensure one instance per setting
-    :ivar _data: stores the space group data loaded from a JSON
+    :param _symbol: Dictionary of symbols for different conventions
+    :param _point_group: Point group Schoenflies symbol
+    :param _crystal_system: :class:`CrystalSystem` enum
+    :param _lattice_system: Lattice system enum
+    :param _sym_ops: list of :class:`SymOp` instances representing the symmetry operations
+    :param _lattice_constraints: Dictionary of lattice constraints
+    :param _special_positions: Dictionary of special Wyckoff positions
+    :ivar _registry: Stores space group instances keyed by lookup
+    :ivar _data: Stores the space group data loaded from a JSON
     """
 
     _number: int
@@ -61,11 +61,11 @@ class SpaceGroup:
     _data: ClassVar[dict[str, dict]] = {}
 
     def __new__(cls, number: int, hall: str | None = None) -> Self:
-        """Create a SpaceGroup instance from a space group number and optional Hall symbol.
+        """Create a :class:`SpaceGroup` instance from a space group number and optional Hall symbol
 
         :param number: The space group number (1-230)
-        :param hall: Optional Hall symbol (e.g. "-P 2yab") to select a specific setting
-        :returns: A cached SpaceGroup instance for the requested setting
+        :param hall: Optional Hall symbol to select a specific setting
+        :returns: A cached :class:`SpaceGroup` instance for the requested setting
         """
         key = hall.strip() if hall else str(number)
         if key in cls._registry:
@@ -150,7 +150,7 @@ class SpaceGroup:
 
     @classmethod
     def _reconstruct_detected(cls, sym_ops, number, symbol) -> Self:
-        """Reconstruct a detected SpaceGroup from pickled data"""
+        """Reconstruct a detected :class:`SpaceGroup` from pickled data"""
         return cls.from_sym_ops(sym_ops, number=number, symbol=symbol)
 
     @classmethod
@@ -162,14 +162,12 @@ class SpaceGroup:
 
     @classmethod
     def from_sym_ops(cls, sym_ops, number=None, symbol=None) -> Self:
-        """Build a SpaceGroup from an explicit operation list and bypass the DB/registry
+        """Build a :class:`SpaceGroup` from an explicit operation list and bypass the DB/registry
 
-        Has no special-position table, ``get_unique_sym_ops`` dedups by centroid image
-
-        :param sym_ops: symmetry operations
-        :param number: optional international number
-        :param symbol: optional symbol dict
-        :returns: fresh, uncached SpaceGroup carrying exactly these ops
+        :param sym_ops: list of :class:`SymOp` instances
+        :param number: Optional international number
+        :param symbol: Optional symbol dict
+        :returns: Fresh, uncached :class:`SpaceGroup` carrying the provided symmetry operations
         """
         instance = object.__new__(cls)
         instance._number = number
@@ -190,10 +188,10 @@ class SpaceGroup:
     ) -> list[SymOp]:
         """Return one representative operation per distinct image of ``coords`` (modulo the lattice)
 
-        :param coords: fractional coordinates of the monomer centroid
-        :param atol: fractional tolerance for deciding two images coincide
-        :returns: one SymOp per distinct centroid image
-        :raises ValueError: if an unambiguously matched special position's multiplicity disagrees with the computed orbit size
+        :param coords: Fractional coordinates of the monomer centroid
+        :param atol: Fractional tolerance for deciding two images coincide
+        :returns: One :class:`SymOp` per distinct centroid image
+        :raises ValueError: If an unambiguously matched special position's multiplicity disagrees with the computed orbit size
         """
         coords = np.asarray(coords, dtype=float)
 
@@ -220,9 +218,7 @@ class SpaceGroup:
             if any(np.allclose(coords, site) for site in pos["coordinates"])
         }
 
-        # only an unambiguous match is checked: parameterised positions (e.g. (x, x, z)) are
-        # tabulated with free parameters at zero, so at the origin SG 217 matches g, e, c and a
-        # at once and the true multiplicity is unknown; orbit-stabilizer fixes the count anyway
+        # parameterized positions are tabulated with free parameters at zero, so true multiplicity is unknown
         if len(matches) == 1:
             ((letter, multiplicity),) = matches.items()
             if len(result) != multiplicity:
@@ -238,22 +234,18 @@ class SpaceGroup:
     ) -> list[SymOp]:
         """Get the site-symmetry stabilizer of ``coords``
 
-        :param coords: fractional coordinates of the monomer centroid
-        :param atol: fractional tolerance for deciding an operation fixes the site
-        :returns: subset of symmetry operations fixing ``coords`` including identity
+        :param coords: Fractional coordinates of the monomer centroid
+        :param atol: Fractional tolerance for deciding an operation fixes the site
+        :returns: Subset of symmetry operations fixing ``coords`` (including ``SymOp.identity``)
         """
         coords = np.asarray(coords, dtype=float)
 
         result: list[SymOp] = []
         for op in self._sym_ops:
-            # simply check if this opp leaves the site invariant (mod lattice translations)
+            # simply check if this op leaves the site invariant (mod lattice translations)
             # site symmetries will always have coincident atom types, so no permutation check
             delta = op.apply(coords) - coords
             if np.allclose(delta - np.round(delta), 0.0, atol=atol):
                 result.append(op)
 
         return result
-
-
-if __name__ == "__main__":
-    pass
