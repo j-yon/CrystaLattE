@@ -6,10 +6,11 @@ import numpy as np
 from CifFile import ReadCif
 from numpy.typing import NDArray
 
-from ..core.crystal import Crystal
+from ..core.crystal import Crystal, DisorderState
 from ..core.multimer import ASU, Monomer
 from ..core.space_group import SpaceGroup
 from ..core.sym_ops import SymOp
+from .disorder import FULL_OCCUPANCY, explicit_choices, normalize_tag, symmetry_choices
 
 # accepted spellings for each item
 _NUMBER_FIELDS = ("_symmetry_int_tables_number", "_space_group_it_number")
@@ -27,11 +28,11 @@ _CELL_ANGLE_FIELDS = ("_cell_angle_alpha", "_cell_angle_beta", "_cell_angle_gamm
 # lazily built map from a normalised Hermann-Mauguin symbol to its Hall symbol
 _HM_INDEX: dict[str, str] = {}
 
-# occupancy at or above this counts as fully occupied
-_FULL_OCCUPANCY = 0.999
-
 # what `from_cif` may be told to do about partially occupied sites
-DISORDER_POLICIES = ("error", "ignore", "drop")
+DISORDER_POLICIES = ("enumerate", "error", "ignore", "drop")
+
+# the trivial group that states with symmetry-generated disorder start from
+_P1 = SpaceGroup.from_sym_ops([SymOp.identity()], number=1)
 
 
 def _clean_block(block):
@@ -260,6 +261,16 @@ def _site_occupancies(block: dict, n_sites: int) -> NDArray[np.float64]:
     return occupancies
 
 
+def _describe_partial(block: dict, occupancies: NDArray[np.float64]) -> str:
+    """Name every partially occupied site and its occupancy, e.g. ``"H1=0.5, H2=0.5"``"""
+    labels = _first(block, ("_atom_site_label",)) or []
+    labels = labels if isinstance(labels, list) else [labels]
+    return ", ".join(
+        f"{labels[i] if i < len(labels) else f'site {i}'}={occupancies[i]:g}"
+        for i in np.flatnonzero(occupancies < FULL_OCCUPANCY)
+    )
+
+
 def _apply_disorder_policy(block: dict, coords: NDArray[np.float64], policy: str) -> np.ndarray:
     """Resolve partially occupied sites according to ``policy``
 
@@ -275,16 +286,11 @@ def _apply_disorder_policy(block: dict, coords: NDArray[np.float64], policy: str
         )
 
     occupancies = _site_occupancies(block, len(coords))
-    partial = occupancies < _FULL_OCCUPANCY
+    partial = occupancies < FULL_OCCUPANCY
     if not partial.any():
         return np.ones(len(coords), dtype=bool)  # found no partial occupancy
 
-    labels = _first(block, ("_atom_site_label",)) or []
-    labels = labels if isinstance(labels, list) else [labels]
-    named = ", ".join(
-        f"{labels[i] if i < len(labels) else f'site {i}'}={occupancies[i]:g}"
-        for i in np.flatnonzero(partial)
-    )
+    named = _describe_partial(block, occupancies)
 
     # the user has asked us to error on partial occupancy, so do that
     if policy == "error":
@@ -341,8 +347,65 @@ def _resolve_asu(block: dict, coords: NDArray[np.float64], keep: NDArray[np.int1
     )
 
 
+def _tags(block: dict, field: str, n_sites: int) -> list[str | None]:
+    """Return a per-site disorder tag column, all ``None`` if absent or the wrong length"""
+    raw = _first(block, (field,))
+    if raw is None:
+        return [None] * n_sites
+    values = raw if isinstance(raw, list) else [raw]
+    return [normalize_tag(v) for v in values] if len(values) == n_sites else [None] * n_sites
+
+
+def _ordered_states(
+    block: dict,
+    cell: tuple[tuple[float, float, float], tuple[float, float, float]],
+    space_group: SpaceGroup,
+    coords: NDArray[np.float64],
+    occupancies: NDArray[np.float64],
+) -> list[Crystal]:
+    """Build one :class:`Crystal` per ordered state of a disordered block
+
+    Explicit groups are chosen first and keep ``space_group``; any partial sites left over are
+    resolved over the full cell and their crystals get their symmetry back from spglib.
+
+    :param block: Cleaned data block
+    :param cell: Lattice lengths and angles
+    :param space_group: Declared space group
+    :param coords: Fractional coordinates of every site, shape ``(n, 3)``
+    :param occupancies: Occupancy of every site
+    :returns: The state crystals, each carrying its :class:`DisorderState`
+    :raises ValueError: If a leftover partial site has no ordered state in this cell
+    """
+    n = len(coords)
+    labels = _first(block, ("_atom_site_label",)) or []
+    labels = labels if isinstance(labels, list) else [labels]
+    labels = [str(labels[i]) if i < len(labels) else f"site {i}" for i in range(n)]
+    assemblies = _tags(block, "_atom_site_disorder_assembly", n)
+    groups = _tags(block, "_atom_site_disorder_group", n)
+
+    crystals = []
+    for choice in explicit_choices(occupancies, assemblies, groups):
+        asu = _resolve_asu(block, coords, choice.keep)
+        residual = np.where(choice.settled, 1.0, occupancies)[choice.keep]
+        if not (residual < FULL_OCCUPANCY).any():
+            state = DisorderState(choice.label, choice.weight, choice.groups)
+            crystals.append(Crystal(*cell, space_group, asu, state))
+            continue
+
+        lattice = Crystal(*cell, space_group, asu).lattice_vectors
+        kept_labels = [labels[i] for i in np.flatnonzero(choice.keep)]
+        for sym in symmetry_choices(
+            asu.positions, asu.atoms, residual, kept_labels, space_group.sym_ops, lattice
+        ):
+            label = f"{choice.label} / {sym.label}" if choice.label else sym.label
+            state = DisorderState(label, choice.weight * sym.weight, choice.groups)
+            p1 = Crystal(*cell, _P1, ASU([str(s) for s in sym.symbols], sym.frac), state)
+            crystals.append(p1.detect_symmetry())
+    return crystals
+
+
 def from_cif(
-    cif_file: str, disorder: str = "error"
+    cif_file: str, disorder: str = "enumerate"
 ) -> Generator[tuple[Crystal, Monomer]]:
     """Parse a CIF file into :class:`Crystal` / :class:`Monomer` pairs.
 
@@ -351,10 +414,17 @@ def from_cif(
         of returning a single crystal
 
     :param cif_file: Path to the CIF file
-    :param disorder: Policy for partially occupied sites ("error", "ignore", or "drop")
-    :returns: Generator of ``(Crystal, Monomer)``, one per data block
+    :param disorder: Policy for partially occupied sites: "enumerate" (default) yields one crystal per
+        ordered state, each with :attr:`Crystal.state` set; "error", "ignore" or "drop" yield one crystal
+    :returns: Generator of ``(Crystal, Monomer)``, one per data block, or one per ordered state of a
+        disordered block
     :raises ValueError: If block information is generally inconsistent or uninterpretable
     """
+    if disorder not in DISORDER_POLICIES:
+        raise ValueError(
+            f"unknown disorder policy {disorder!r}; expected one of {DISORDER_POLICIES}"
+        )
+
     # grab the raw CIF data using pycifrw
     cif = ReadCif(cif_file)
     blocks = [item[-1] for item in cif.items()]
@@ -381,7 +451,7 @@ def from_cif(
         # attempt to resolve the space group
         space_group = _resolve_space_group(block)
 
-        # grab the fractional coordinates and apply the disorder policy
+        # grab the fractional coordinates
         coords = np.array(
             [
                 block["_atom_site_fract_x"],
@@ -389,23 +459,36 @@ def from_cif(
                 block["_atom_site_fract_z"],
             ]
         ).T
-        keep = _apply_disorder_policy(block, coords, disorder)
+        occupancies = _site_occupancies(block, len(coords))
+        cell = ((a, b, c), (alpha, beta, gamma))
 
-        # finally, assemble the crystal and its asymmetric unit
-        crystal = Crystal(
-            (a, b, c),
-            (alpha, beta, gamma),
-            space_group,
-            _resolve_asu(block, coords, keep),
-        )
+        # build one crystal per ordered state, or one crystal by the requested policy
+        if disorder == "enumerate" and (occupancies < FULL_OCCUPANCY).any():
+            try:
+                crystals = _ordered_states(block, cell, space_group, coords, occupancies)
+            except ValueError as exc:
+                raise ValueError(
+                    f"{exc}. Pass disorder='ignore' or disorder='drop' to read this block anyway."
+                ) from exc
+            warnings.warn(
+                f"CIF contains partially occupied site(s) ({_describe_partial(block, occupancies)}); "
+                f"yielding {len(crystals)} ordered state(s), one Crystal each (see Crystal.state). "
+                "Pass disorder='error', 'ignore' or 'drop' to opt out.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        else:
+            keep = _apply_disorder_policy(block, coords, disorder)
+            crystals = [Crystal(*cell, space_group, _resolve_asu(block, coords, keep))]
 
         # cross-check the declared volume against the one the cell implies
         declared = _first(block, ("_cell_volume",))
-        if declared is not None and abs(crystal.volume - float(declared)) > 0.1:
+        if declared is not None and abs(crystals[0].volume - float(declared)) > 0.1:
             raise ValueError(
                 f"Discordant unit cell volumes:\nDeclared in CIF: {float(declared):.2f} A^3\n"
-                f"Calculated from primitive vectors: {crystal.volume:.2f} A^3"
+                f"Calculated from primitive vectors: {crystals[0].volume:.2f} A^3"
             )
 
         # since the CIF format allows multiple data blocks, yield each crystal and its reference monomer
-        yield crystal, crystal.get_reference()
+        for crystal in crystals:
+            yield crystal, crystal.get_reference()

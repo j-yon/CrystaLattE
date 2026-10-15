@@ -101,7 +101,8 @@ rename it, rather than resolving quietly. Add a fixture by creating
 
 **ice is proton-disordered.** Both hydrogen sites carry occupancy 0.5, so
 reading every site gives each oxygen four hydrogens at 0.85–1.00 Å. `from_cif`
-refuses that by default now; the tests opt back in via `conftest.DISORDERED`,
+now enumerates its two ordered states by default (`tests/test_disorder.py`); the
+legacy tests read it with `disorder="ignore"` via `conftest.DISORDERED`,
 because ice is a useful high-symmetry fixture (P6₃/mmc) and the dedup machinery
 it exercises is orthogonal to whether its monomer is chemically real. Its dimer
 counts are **disorder-averaged, not physical water dimers** — do not read them as

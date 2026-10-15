@@ -546,11 +546,10 @@ def disordered(tmp_path):
     return str(path)
 
 
-def test_partial_occupancy_is_refused_by_default(disordered):
-    # The default has to be refusal, not a warning: a warning is easy to miss in
-    # a long run, and every downstream quantity -- connectivity, point group,
-    # interaction energy -- is meaningless once an impossible molecule is built.
-    with pytest.raises(ValueError, match="partially occupied"):
+def test_default_refuses_a_cell_with_no_ordered_state(disordered):
+    # The default enumerates ordered states; this synthetic P1 cell holds half a hydrogen
+    # per site, which no ordered state can have, so it must still refuse rather than guess.
+    with pytest.raises(ValueError, match="whole number"):
         next(cle.from_cif(disordered))
 
 
@@ -558,7 +557,7 @@ def test_partial_occupancy_error_names_the_offending_sites(disordered):
     # The message has to identify WHICH sites and at what occupancy, or the user
     # cannot tell whether the disorder is incidental or structural.
     with pytest.raises(ValueError) as excinfo:
-        next(cle.from_cif(disordered))
+        next(cle.from_cif(disordered, disorder="error"))
     message = str(excinfo.value)
     assert "H1=0.5" in message and "H2=0.5" in message
     assert "O1" not in message, "a fully occupied site must not be reported"
@@ -593,9 +592,13 @@ def test_unknown_disorder_policy_is_rejected(disordered):
 def test_ice_is_the_real_motivating_case():
     # Not a synthetic construction: ice Ih is proton-disordered, both hydrogen
     # sites carry occupancy 0.5, and reading them all produces one oxygen with
-    # four hydrogens at bonding distance. This is what the default prevents.
+    # four hydrogens at bonding distance. The default resolves it into ordered
+    # states; 'error' still refuses and 'ignore' still builds the impossible molecule.
+    with pytest.warns(RuntimeWarning, match="2 ordered state"):
+        assert len(list(cle.from_cif(cif("ice")))) == 2
+
     with pytest.raises(ValueError, match="partially occupied"):
-        next(cle.from_cif(cif("ice")))
+        next(cle.from_cif(cif("ice"), disorder="error"))
 
     with pytest.warns(RuntimeWarning):
         crystal, reference = next(cle.from_cif(cif("ice"), disorder="ignore"))
