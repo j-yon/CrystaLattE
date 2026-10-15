@@ -87,17 +87,40 @@ two cases.
   (Ice: the two H sites on one O···O contact are 0.76 Å apart — just
   above the 0.74 Å H–H bond cutoff — so without the H–H rule the ice rules
   would hinge on 0.02 Å.)
-- **Skeletons** are the connected components of fully occupied atoms. A
-  selection is valid when no chosen atoms clash and, after adding them,
-  every connected component contains exactly one skeleton and skeletons in
-  the same parent-symmetry orbit end up with the same formula. For water
-  this is exactly the Bernal–Fowler ice rules.
-- Every partial atom must be connected to some skeleton through the
-  all-sites bond graph; otherwise (a whole molecule disordered over
-  symmetry images) → `ValueError`, not supported.
+- **The asymmetric unit as written is the geometric reference** (it lists
+  one consistent alternative). A pair or triple involving a partial atom
+  conflicts when it clashes; when it is bonded with a length more than
+  0.15 Å from the same two sites' as-written length; when two bonded
+  partial atoms come from different symmetry copies (alternatives of one
+  fragment, or halves of two alternatives: "chimeras"); or when an angle
+  is more than 10° from the as-written angle of the same three sites
+  (angles between two images of one site have no reference and are free —
+  ice needs that).
+- **Molecules** are the connected components of the all-sites bond graph,
+  so fully occupied pieces joined only through partial atoms (a disordered
+  bridge) are one molecule. A molecule with no fully occupied atom → 
+  `ValueError` (whole-molecule disorder over symmetry images, not
+  supported).
+- Every molecule in a parent-symmetry orbit gets the same share of each
+  element (for water: two H per O — with the clash rule, the Bernal–Fowler
+  ice rules). Each partial site must also be filled exactly `p × m` times
+  over the cell.
+- Partial sites that clash with each other **inside the asymmetric unit as
+  written** are untagged alternatives that cannot be told apart →
+  `ValueError` asking for disorder groups.
+- Search is per molecule: enumerate each molecule's valid ways to take its
+  share, then combine molecules with cross-molecule conflicts and per-site
+  counts as pruning (the cell-wide atom-combination search did not finish
+  in 90 s on a 16-molecule cell; this takes 0.3 s).
 - Valid selections related by a parent operation are one state; its weight
   is orbit size / number of valid selections. States are ordered by weight
   (descending), then by canonical selection.
+
+### Explicit groups across a symmetry element
+A positive group whose atoms, expanded by the full space group, conflict
+with their own images (clash, wrong bond, cross-copy bond, wrong angle) is
+disorder across a symmetry element. Its whole assembly is untagged and
+handled by the symmetry path instead of being kept as a whole.
 - Each state is built as a P1 `Crystal` whose ASU is the selected cell
   atoms, then passed through `detect_symmetry()` before being yielded.
 

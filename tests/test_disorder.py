@@ -163,6 +163,66 @@ def test_whole_molecule_disorder_is_refused():
         symmetry_choices(np.array([[0.1, 0.1, 0.1]]), ["O"], [0.5], ["O1"], ops, np.diag([5.0, 5.0, 5.0]))
 
 
+_CUBE_LATTICE = np.diag([10.0, 10.0, 10.0])
+_MIRROR = [SymOp.identity(), SymOp("x,-y,z")]
+_INVERSION = [SymOp.identity(), SymOp("-x,-y,-z")]
+
+
+def test_bonded_alternatives_are_never_mixed():
+    # ethyl disordered across a mirror: C3 of one orientation with C4 of the other sits 1.71 A apart
+    c2 = np.array([4.5, 0.0, 5.0])
+    c3 = c2 + [1.0, 0.4, 1.0]
+    c4 = c3 + [1.2, 0.2, -0.7]
+    pos = np.array([[3.0, 0.0, 5.0], c2, c3, c4]) / 10
+    choices = symmetry_choices(pos, ["C"] * 4, [1, 1, 0.5, 0.5], ["C1", "C2", "C3", "C4"], _MIRROR, _CUBE_LATTICE)
+    assert [c.weight for c in choices] == [1.0]
+    d = _periodic_distances(choices[0].frac, _CUBE_LATTICE)
+    assert d[2, 3] == pytest.approx(np.linalg.norm(c4 - c3))
+
+
+def test_disordered_atom_may_join_two_fully_occupied_pieces():
+    pos = np.array([[0.30, 0.0, 0.5], [0.55, 0.0, 0.5], [0.425, 0.06, 0.5]])
+    choices = symmetry_choices(pos, ["C"] * 3, [1, 1, 0.5], ["C1", "C5", "C3"], _MIRROR, _CUBE_LATTICE)
+    assert [c.weight for c in choices] == [1.0]
+    assert len(choices[0].symbols) == 3
+
+
+def test_hydrogens_keep_the_angle_they_were_refined_with():
+    # water on an inversion centre: H1 with the image of H2 would close H-O-H to 75 degrees
+    pos = np.array([[0.0, 0.0, 0.0], [0.096, 0.0, 0.0], [-0.024, 0.0929, 0.0]])
+    choices = symmetry_choices(pos, ["O", "H", "H"], [1, 0.5, 0.5], ["O1", "H1", "H2"], _INVERSION, _CUBE_LATTICE)
+    assert [c.weight for c in choices] == [1.0]
+
+
+def test_untagged_alternatives_inside_the_asymmetric_unit_are_refused():
+    # two half-occupied positions of one hydrogen written side by side with no disorder group
+    pos = np.array([[0.10, 0.10, 0.10], [0.196, 0.10, 0.10], [0.18, 0.16, 0.10]])
+    with pytest.raises(ValueError, match="H1.*H1'.*disorder group"):
+        symmetry_choices(pos, ["O", "H", "H"], [1, 0.5, 0.5], ["O1", "H1", "H1'"], _INVERSION, _CUBE_LATTICE)
+
+
+_PBCA = [SymOp(s) for s in ("x,y,z", "1/2-x,-y,1/2+z", "-x,1/2+y,1/2-z", "1/2+x,1/2-y,-z",
+                            "-x,-y,-z", "1/2+x,y,1/2-z", "x,1/2-y,1/2+z", "1/2-x,1/2+y,z")]
+
+
+def _hydroxyl(origin):
+    o = np.asarray(origin, dtype=float)
+    return [o, o + [1.43, 0, 0], o + [-0.3, 0.91, 0.0], o + [-0.3, -0.45, 0.79]]
+
+
+def test_enumeration_works_molecule_by_molecule():
+    # two independent hydroxyls in Pbca, each H in two places: 16 molecules in the cell. Choosing
+    # atoms cell-wide would mean C(8,4)^4 = 2.4e7 configurations; per molecule it is quick.
+    lattice = np.diag([10.0, 12.0, 14.0])
+    atoms = _hydroxyl([3.0, 4.9, 5.0]) + _hydroxyl([6.4, 2.0, 12.6])  # general positions, no clashes
+    pos = np.array(atoms) / np.diag(lattice)
+    occupancies = [1, 1, 0.5, 0.5] * 2
+    labels = ["O1", "C1", "H1a", "H1b", "O2", "C2", "H2a", "H2b"]
+    choices = symmetry_choices(pos, ["O", "C", "H", "H"] * 2, occupancies, labels, _PBCA, lattice)
+    assert sum(c.weight for c in choices) == pytest.approx(1.0)
+    assert all(sorted(c.symbols.tolist()).count("H") == 16 for c in choices)
+
+
 def _states(path, **kwargs):
     with pytest.warns(RuntimeWarning, match="ordered state"):
         return list(cle.from_cif(path, **kwargs))
@@ -249,18 +309,45 @@ def test_explicit_and_symmetry_disorder_in_one_block(tmp_path):
     path = tmp_path / "mixed.cif"
     path.write_text(_MIXED)
     pairs = _states(str(path))
-    assert [c.state.label for c, _ in pairs] == ["A1 / config 1", "A1 / config 2", "A2 / config 1", "A2 / config 2"]
-    assert [c.state.weight for c, _ in pairs] == pytest.approx([0.3, 0.3, 0.2, 0.2])
-    assert all(len(c.get_references()) == 3 for c, _ in pairs)
+    # the only H pair that keeps the refined H-O-H angle is H1 with H2 (or both inverted)
+    assert [c.state.label for c, _ in pairs] == ["A1 / config 1", "A2 / config 1"]
+    assert [c.state.weight for c, _ in pairs] == pytest.approx([0.6, 0.4])
+    for crystal, _ in pairs:
+        refs = crystal.get_references()
+        assert len(refs) == 3 and all(sorted(r.symbols) == ["H", "H", "O"] for r in refs)
 
 
 def test_multi_block_cif_yields_each_blocks_states_in_order(tmp_path):
     path = tmp_path / "two_blocks.cif"
     path.write_text(_MIXED + "\n" + _ORDERED_WATER)
     pairs = _states(str(path))
-    assert [c.state.label if c.state else None for c, _ in pairs] == [
-        "A1 / config 1", "A1 / config 2", "A2 / config 1", "A2 / config 2", None,
-    ]
+    assert [c.state.label if c.state else None for c, _ in pairs] == ["A1 / config 1", "A2 / config 1", None]
+
+
+def test_group_that_collides_with_its_own_image_is_resolved_by_symmetry(tmp_path):
+    # tagging the inversion-centre water's hydrogens as one group must not keep all four of them
+    path = tmp_path / "tagged.cif"
+    path.write_text(
+        _MIXED.replace("H1 H 0.096 0.0 0.0 0.5 . .", "H1 H 0.096 0.0 0.0 0.5 . 1")
+        .replace("H2 H -0.024 0.0929 0.0 0.5 . .", "H2 H -0.024 0.0929 0.0 0.5 . 1")
+    )
+    pairs = _states(str(path))
+    assert [c.state.label for c, _ in pairs] == ["A1 / config 1", "A2 / config 1"]
+    assert [c.state.weight for c, _ in pairs] == pytest.approx([0.6, 0.4])
+
+
+def test_whole_molecule_tagged_across_a_symmetry_element_is_refused(tmp_path):
+    # a water 0.6 A from its own inversion image, tagged as a lone group: never two waters, never none
+    path = tmp_path / "whole.cif"
+    path.write_text(_MIXED.split("O1 O")[0] + """O2 O 0.40 0.30 0.60 1.0 . .
+H3 H 0.496 0.30 0.60 1.0 . .
+H4 H 0.376 0.3929 0.60 1.0 . .
+O1 O 0.03 0.0 0.0 0.5 . 1
+H1 H 0.126 0.0 0.0 0.5 . 1
+H2 H 0.006 0.0929 0.0 0.5 . 1
+""")
+    with pytest.raises(ValueError, match="not bonded to any fully occupied atom"):
+        list(cle.from_cif(str(path)))
 
 
 def test_no_ordered_state_names_the_site_and_suggests_a_policy(tmp_path):

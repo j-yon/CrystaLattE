@@ -10,7 +10,13 @@ from ..core.crystal import Crystal, DisorderState
 from ..core.multimer import ASU, Monomer
 from ..core.space_group import SpaceGroup
 from ..core.sym_ops import SymOp
-from .disorder import FULL_OCCUPANCY, explicit_choices, normalize_tag, symmetry_choices
+from .disorder import (
+    FULL_OCCUPANCY,
+    explicit_choices,
+    normalize_tag,
+    overlapping_assemblies,
+    symmetry_choices,
+)
 
 # accepted spellings for each item
 _NUMBER_FIELDS = ("_symmetry_int_tables_number", "_space_group_it_number")
@@ -383,6 +389,15 @@ def _ordered_states(
     assemblies = _tags(block, "_atom_site_disorder_assembly", n)
     groups = _tags(block, "_atom_site_disorder_group", n)
 
+    # a group that collides with its own images is disorder across a symmetry element
+    everything = _resolve_asu(block, coords, np.ones(n, dtype=bool))
+    lattice = Crystal(*cell, space_group, everything).lattice_vectors
+    routed = overlapping_assemblies(
+        everything.positions, everything.atoms, occupancies, assemblies, groups,
+        space_group.sym_ops, lattice,
+    )
+    groups = [None if (a or "") in routed else g for a, g in zip(assemblies, groups)]
+
     crystals = []
     for choice in explicit_choices(occupancies, assemblies, groups):
         asu = _resolve_asu(block, coords, choice.keep)
@@ -392,7 +407,6 @@ def _ordered_states(
             crystals.append(Crystal(*cell, space_group, asu, state))
             continue
 
-        lattice = Crystal(*cell, space_group, asu).lattice_vectors
         kept_labels = [labels[i] for i in np.flatnonzero(choice.keep)]
         for sym in symmetry_choices(
             asu.positions, asu.atoms, residual, kept_labels, space_group.sym_ops, lattice
