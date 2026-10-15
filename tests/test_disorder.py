@@ -7,7 +7,13 @@ from crystalatte.core.crystal import Crystal, DisorderState, expand_cell
 from crystalatte.core.multimer import ASU
 from crystalatte.core.space_group import SpaceGroup
 from crystalatte.core.sym_ops import SymOp
-from crystalatte.io.disorder import explicit_choices, normalize_tag
+from crystalatte.io.disorder import (
+    _periodic_distances,
+    contacts,
+    explicit_choices,
+    normalize_tag,
+    symmetry_choices,
+)
 
 P1 = SpaceGroup.from_sym_ops([SymOp.identity()], number=1)
 
@@ -93,3 +99,61 @@ def test_block_without_groups_is_a_single_trivial_choice():
     (only,) = explicit_choices([1.0, 0.5], [None, None], [None, None])
     assert (only.label, only.weight, only.groups) == ("", 1.0, ())
     assert only.keep.all() and not only.settled.any()
+
+
+def _ice_inputs():
+    crystal, _ = load("ice")  # conftest reads ice with disorder="ignore"
+    asu = crystal._asu
+    occupancies = [1.0 if s == "O" else 0.5 for s in asu.atoms]
+    labels = [f"site {i}" for i in range(len(asu.atoms))]
+    return asu.positions, asu.atoms, occupancies, labels, crystal.space_group.sym_ops, crystal.lattice_vectors
+
+
+def test_two_hydrogens_are_never_bonded():
+    # ice: the two H sites on one O...O contact are 0.76 A apart, just above the 0.74 A H-H cutoff
+    bonded, clash = contacts(["H", "H"], np.array([[0.0, 0.7], [0.7, 0.0]]))
+    assert not bonded[0, 1] and clash[0, 1]
+
+
+def test_ice_has_two_ordered_states_in_its_own_cell():
+    choices = symmetry_choices(*_ice_inputs())
+    # 18 Bernal-Fowler configurations of the 4-molecule cell fall into 12 + 6 under P6_3/mmc
+    assert [c.label for c in choices] == ["config 1", "config 2"]
+    assert [c.weight for c in choices] == pytest.approx([12 / 18, 6 / 18])
+    for c in choices:
+        assert sorted(c.symbols.tolist()) == ["H"] * 8 + ["O"] * 4
+
+
+def test_ice_states_obey_the_ice_rules():
+    *_, lattice = _ice_inputs()
+    for c in symmetry_choices(*_ice_inputs()):
+        d = _periodic_distances(c.frac, lattice)
+        oxygen, hydrogen = c.symbols == "O", c.symbols == "H"
+        assert ((d[np.ix_(oxygen, hydrogen)] < 1.2).sum(axis=1) == 2).all(), "two H per O"
+        hh = d[np.ix_(hydrogen, hydrogen)] + np.eye(hydrogen.sum()) * 9
+        assert hh.min() > 1.2, "one H per O...O contact"
+
+
+def test_ice_states_recover_cc_and_cmc21():
+    lattice_parameters = load("ice")[0].lattice_parameters
+    numbers = []
+    for c in symmetry_choices(*_ice_inputs()):
+        crystal = Crystal(*lattice_parameters, P1, ASU([str(s) for s in c.symbols], c.frac)).detect_symmetry()
+        refs = crystal.get_references()
+        assert len(refs) == 2 and all(sorted(r.symbols) == ["H", "H", "O"] for r in refs)
+        numbers.append(crystal.space_group.number)
+    assert numbers == [9, 36]
+
+
+def test_half_an_atom_per_cell_has_no_ordered_state():
+    with pytest.raises(ValueError, match="H1.*whole number"):
+        symmetry_choices(
+            np.array([[0.10, 0.20, 0.30], [0.15, 0.25, 0.35]]), ["O", "H"], [1.0, 0.5],
+            ["O1", "H1"], [SymOp.identity()], np.diag([5.0, 6.0, 7.0]),
+        )
+
+
+def test_whole_molecule_disorder_is_refused():
+    ops = [SymOp.identity(), SymOp("-x,-y,-z")]
+    with pytest.raises(ValueError, match="not bonded to any fully occupied atom"):
+        symmetry_choices(np.array([[0.1, 0.1, 0.1]]), ["O"], [0.5], ["O1"], ops, np.diag([5.0, 5.0, 5.0]))
