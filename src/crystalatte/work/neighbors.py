@@ -4,6 +4,7 @@ from itertools import product
 import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.distance import cdist
+from tqdm import tqdm
 
 from ..core.crystal import Crystal
 from ..core.multimer import Monomer
@@ -152,61 +153,62 @@ def generate_neighbors(
     # anchor each reference i
     candidates: list[SymOpList] = []
     identity = SymOp.identity()  # parse once; SymOps are never mutated, so members can share it
-    for i, anchor in enumerate(monomers):
-        near, carts = [], []
-        for j, op in pool:
-            if j == i and op == identity:
-                continue  # skip self-identity
+    with tqdm(
+        total=len(monomers) * len(pool),
+        desc="Generating candidate operations",
+        leave=False,
+        disable=not verbose,
+    ) as pbar:
+        for i, anchor in enumerate(monomers):
+            near, carts = [], []
+            for j, op in pool:
+                pbar.update()
+                if j == i and op == identity:
+                    continue  # skip self-identity
 
-            # filter partners by distance to anchor i
-            partner_cart = crystal.to_cartesian(op.apply(monomers[j].frac_coords))
-            if (
-                _neighbor_distance(partner_cart, context.mass_by_ref[j], anchor, mode)
-                <= R
-            ):
-                near.append((j, op))
-                carts.append(partner_cart)
+                # filter partners by distance to anchor i
+                partner_cart = crystal.to_cartesian(op.apply(monomers[j].frac_coords))
+                if (_neighbor_distance(partner_cart, context.mass_by_ref[j], anchor, mode) <= R):
+                    near.append((j, op))
+                    carts.append(partner_cart)
 
-        if verbose:
-            print(f"Reference {i}: {len(near)} monomers within {R} Angstroms.")
+            if verbose:
+                tqdm.write(f"Reference {i}: {len(near)} monomers within {R} Angstroms.")
 
-        # every pair of members must lie within R, so partners must also be within R of each other
-        adj = None
-        if N > 2:
-            adj = _partner_adjacency(
-                carts, [context.mass_by_ref[j] for j, _ in near], R, mode
+            # every pair of members must lie within R, so partners must also be within R of each other
+            adj = None
+            if N > 2:
+                adj = _partner_adjacency(
+                    carts, [context.mass_by_ref[j] for j, _ in near], R, mode
+                )
+
+            cliques = tqdm(
+                _cliques(adj, len(near), N - 1),
+                desc=f"Enumerating clusters for reference {i}",
+                unit=" clusters",
+                position=1,
+                leave=False,
+                disable=not verbose,
             )
+            idx = np.array(list(cliques), dtype=np.int64)
+            if len(idx) == 0:
+                continue
 
-        idx = np.array(list(_cliques(adj, len(near), N - 1)), dtype=np.int64)
-        if len(idx) == 0:
-            continue
-
-        # gather every clique's members at once, the anchor's identity first; each candidate is a view
-        C = len(idx)
-        rot = np.concatenate(
-            (
-                np.broadcast_to(identity.rot, (C, 1, 3, 3)),
-                np.stack([op.rot for _, op in near])[idx],
-            ),
-            axis=1,
-        )
-        tr = np.concatenate(
-            (
-                np.broadcast_to(identity.tr, (C, 1, 3)),
-                np.stack([op.tr for _, op in near])[idx],
-            ),
-            axis=1,
-        )
-        refs = np.concatenate(
-            (
-                np.full((C, 1), i, dtype=np.int64),
-                np.array([j for j, _ in near], dtype=np.int64)[idx],
-            ),
-            axis=1,
-        )
-        candidates.extend(
-            SymOpList.from_components(rot[c], tr[c], 1, refs[c]) for c in range(C)
-        )
+            # gather every clique's members at once, the anchor's identity first; each candidate is a view
+            C = len(idx)
+            rot = np.concatenate(
+                (np.broadcast_to(identity.rot, (C, 1, 3, 3)), np.stack([op.rot for _, op in near])[idx]),
+                axis=1,
+            )
+            tr = np.concatenate(
+                (np.broadcast_to(identity.tr, (C, 1, 3)), np.stack([op.tr for _, op in near])[idx]),
+                axis=1,
+            )
+            refs = np.concatenate(
+                (np.full((C, 1), i, dtype=np.int64), np.array([j for j, _ in near], dtype=np.int64)[idx]),
+                axis=1,
+            )
+            candidates.extend(SymOpList.from_components(rot[c], tr[c], 1, refs[c]) for c in range(C))
 
     # exact pass: clusters sharing an orbit key are the same multimer
     buckets: dict[int, list[SymOpList]] = defaultdict(list)
@@ -215,7 +217,12 @@ def generate_neighbors(
 
     unique: list[SymOpList] = []
     duplicate: list[SymOpList] = []
-    for bucket in buckets.values():
+    for bucket in tqdm(
+        buckets.values(), 
+        desc="Deduplicating candidates with exact integer checks", 
+        leave=False,
+        disable=not verbose
+    ):
         local_unique, local_dup = deduplicate_bucket(bucket)
         unique.extend(local_unique)
         duplicate.extend(local_dup)

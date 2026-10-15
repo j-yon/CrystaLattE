@@ -10,6 +10,7 @@ from collections import defaultdict, deque
 
 import numpy as np
 from scipy.spatial.distance import pdist
+from tqdm import tqdm
 
 from ...core.sym_ops import SymOpList
 from . import context
@@ -127,7 +128,7 @@ def merge_congruent(
     windows: dict[int, deque[tuple[float, int, np.ndarray, np.ndarray]]] = defaultdict(
         deque
     )
-    for i in sorted(range(len(unique)), key=spread.__getitem__):
+    for i in tqdm(sorted(range(len(unique)), key=spread.__getitem__), desc="Merging congruent representatives", leave=False):
         g = unique[i]
         ref = _congruence_ref(g)
         if ref is None:
