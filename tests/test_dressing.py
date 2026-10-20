@@ -5,8 +5,9 @@ See ``docs/superpowers/specs/2026-10-20-integer-extra-symmetry-design.md``.
 
 import numpy as np
 import pytest
+import qcelemental as qcel
 
-from crystalatte.work.dedup import context, dressing
+from crystalatte.work.dedup import dressing
 
 from conftest import crystal
 
@@ -33,6 +34,10 @@ MONOCLINIC = {
 
 # fixtures whose monomer has exact symmetry beyond its site symmetry, and the size of its dressing group
 EXTRA = {"triazine": 12, "carbon_dioxide": 12}
+
+
+def _Z(mon):
+    return np.array([qcel.periodictable.to_Z(s) for s in mon.symbols], dtype=np.int64)
 
 
 def _cell_symmetry(xtal):
@@ -88,14 +93,13 @@ def test_cell_symmetry_adds_a_cell_shape_more_symmetric_than_its_space_group():
 def test_dressing_group(name):
     xtal = crystal(name).detect_symmetry(1e-3)
     refs = xtal.get_references()
-    context.bind(xtal, refs)
     H = _cell_symmetry(xtal)
     A = np.asarray(xtal.lattice_vectors, float)
 
     for i, mon in enumerate(refs):
-        W, W_tr = context.W_lin_by_ref[i], context.W_tr_by_ref[i]
+        W, W_tr = dressing.site_symmetry(xtal.space_group, mon.centroid_frac)
         D, D_tr = dressing.dressing_group(
-            mon.frac_coords, mon.centroid_frac, context.Z_by_ref[i], A, W, W_tr, H
+            mon.frac_coords, mon.centroid_frac, _Z(mon), A, W, W_tr, H
         )
 
         assert len(D) == EXTRA.get(name, len(W))
@@ -119,11 +123,9 @@ def test_dressing_group_rejects_an_approximate_symmetry():
     # Benzene's molecular point group detects at 0.05 A with four operations, but only the two in the
     # site symmetry are exact; an approximate operation must not become a dressing.
     xtal = crystal("benzene").detect_symmetry(1e-3)
-    refs = xtal.get_references()
-    context.bind(xtal, refs)
+    mon = xtal.get_references()[0]
     D, _ = dressing.dressing_group(
-        refs[0].frac_coords, refs[0].centroid_frac, context.Z_by_ref[0],
-        np.asarray(xtal.lattice_vectors, float),
-        context.W_lin_by_ref[0], context.W_tr_by_ref[0], _cell_symmetry(xtal),
+        mon.frac_coords, mon.centroid_frac, _Z(mon), np.asarray(xtal.lattice_vectors, float),
+        *dressing.site_symmetry(xtal.space_group, mon.centroid_frac), _cell_symmetry(xtal),
     )
     assert len(D) == 2

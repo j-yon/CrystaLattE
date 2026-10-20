@@ -16,6 +16,8 @@ import numpy as np
 import spglib
 from numpy.typing import NDArray
 
+from ...core.space_group import SITE_ATOL, SpaceGroup
+
 #: Cartesian tolerance (Angstroms) for accepting a cell operation as an exact self-isometry
 EXACT_ATOL: Final[float] = 1e-6
 
@@ -118,6 +120,36 @@ def cell_symmetry(rotations: NDArray, lattice: NDArray) -> NDArray:
         )
         H = lookup
     return Q @ H @ Q_inv
+
+
+def site_symmetry(
+    space_group: SpaceGroup, centroid_frac: NDArray, atol: float = SITE_ATOL
+) -> tuple[list[NDArray], list[NDArray]]:
+    """Return the site symmetry of a monomer as integer dressings that fix its centroid exactly
+
+    A site operation fixes the centroid only modulo a lattice vector, so that lattice part is stripped
+    off the operation's own translation. A dressing is an isometry about the centroid, not the origin:
+    as a map on the reference's raw coordinates it is ``x -> w @ x + t / 12`` with ``t / 12 = c - w @ c``.
+
+    :param space_group: the crystal's space group
+    :param centroid_frac: the monomer centroid ``c`` in fractional coordinates
+    :param atol: fractional tolerance for the site-symmetry test; must match the one
+        ``generate_neighbors`` passes to ``get_unique_sym_ops`` or stabilizer and orbit disagree
+    :returns: ``(W, W_tr)``, int64 linear parts and their translations in twelfths
+    """
+    c = np.asarray(centroid_frac, dtype=float)
+    W, W_tr = [], []
+    for op in space_group.get_site_symmetry(c, atol=atol):
+        r = op.rot.astype(np.int64)
+        if any(np.array_equal(r, w) for w in W):
+            continue
+        tr = op.tr.astype(np.int64)
+        lattice = np.rint(r @ c + tr / 12.0 - c).astype(np.int64)
+        W.append(r)
+        W_tr.append(tr - 12 * lattice)
+    if not W:
+        W, W_tr = [np.eye(3, dtype=np.int64)], [np.zeros(3, dtype=np.int64)]
+    return W, W_tr
 
 
 def dressing_group(

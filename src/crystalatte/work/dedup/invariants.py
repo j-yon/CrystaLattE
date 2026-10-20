@@ -1,5 +1,4 @@
 from collections import defaultdict
-from functools import cache
 from typing import Final
 
 import numpy as np
@@ -24,35 +23,6 @@ def int_inv(M: NDArray) -> NDArray:
     )
 
     return inv
-
-
-def relative_transforms(g_N: SymOpList) -> tuple[NDArray, NDArray]:
-    """Return the cluster's pairwise relative transforms ``Delta[a,b] = T_a^-1 T_b = (L[a,b], v[a,b])``
-
-    Exact integers in the lattice basis (translations in twelfths), cached on the cluster
-
-    :param g_N: cluster whose relative transforms are requested
-    :returns: A tuple ``(L, v)`` of shapes ``(n, n, 3, 3)`` and ``(n, n, 3)``
-    """
-    # check for existing cache
-    cached = getattr(g_N, "_rel_int_cache", None)
-    if cached is not None:
-        return cached
-
-    R = g_N.rot_cache.astype(np.int64)  # (n, 3, 3)
-    t = g_N.tr_cache.astype(np.int64)  # (n, 3), twelfths
-    R_inv = int_inv(R)
-
-    # contract rotations
-    L = np.einsum("aij,bjk->abik", R_inv, R)  # (n, n, 3, 3)
-
-    # contract translations
-    dt = t[None, :, :] - t[:, None, :]  # (n, n, 3): t_b - t_a
-    v = np.einsum("aij,abj->abi", R_inv, dt)  # (n, n, 3)
-
-    # cache and return transform
-    g_N._rel_int_cache = (L, v)
-    return L, v
 
 
 #: dressed rows materialised per chunk in :func:`_dressed_minima`; bounds its intermediates to ~100 MB
@@ -220,54 +190,3 @@ def orbit_labels(candidates: list[SymOpList]) -> NDArray:
         labels[idx] = inverse.ravel() + n_labels
         n_labels += int(inverse.max()) + 1
     return labels
-
-
-def cluster_atoms_cart(g_N: SymOpList) -> NDArray:
-    """Reconstruct the cluster's Cartesian atom positions from the module-level context bindings
-
-    :param g_N: The cluster whose atom positions are requested
-    :returns: An ``(n_atoms, 3)`` array of Cartesian coordinates
-    """
-    ref = g_N.ref_indices
-    parts = [
-        op.apply(context.references[ref[k]].frac_coords) for k, op in enumerate(g_N)
-    ]
-    return context.active_crystal.to_cartesian(np.vstack(parts))
-
-
-@cache
-def _triu_indices(n: int) -> tuple[NDArray, NDArray]:
-    """Cache np.triu_indices for efficiency
-
-    :param n: Number of atoms in the cluster
-    :returns: The ``(i, j)`` index arrays for pairs with ``i < j``
-    """
-    return np.triu_indices(n, k=1)
-
-
-def distance_fingerprint(g_N: SymOpList) -> tuple[NDArray, NDArray]:
-    """Return the cluster's cached Z-tagged sorted pairwise atom-distance fingerprint
-
-    :param g_N: cluster to fingerprint
-    :returns: tuple ``(zz, distances)`` of equal-length 1-D arrays, sorted jointly by ``(zz, distance)``
-    """
-    # if cached, return
-    cached = getattr(g_N, "_dist_fp_cache", None)
-    if cached is not None:
-        return cached
-
-    # not cached, compute here
-    atoms = cluster_atoms_cart(g_N)  # (n_atoms, 3)
-    ref = g_N.ref_indices  # (n_ops,)
-    Z = np.concatenate(
-        [context.Z_by_ref[ref[k]] for k in range(len(g_N))]
-    )  # (n_atoms,)
-    i_idx, j_idx = _triu_indices(len(atoms))  # (n_atom_pairs,)
-    dists = np.linalg.norm(atoms[i_idx] - atoms[j_idx], axis=1)
-    zz = Z[i_idx] * Z[j_idx]
-    order = np.lexsort((dists, zz))  # lexsort by (zz, dists)
-    fp = (zz[order], dists[order])
-
-    # cache and return
-    g_N._dist_fp_cache = fp
-    return fp

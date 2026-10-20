@@ -8,7 +8,7 @@ import numpy as np
 
 from crystalatte.core.sym_ops import SymOp, SymOpList
 from crystalatte.work import generate
-from crystalatte.work.dedup import context, invariants
+from crystalatte.work.dedup import context
 
 from conftest import GENERATE_KW, load
 
@@ -55,23 +55,10 @@ def test_bind_multi_reference_state():
     refs = crystal.get_references()
     context.bind(crystal, refs)
     assert len(context.references) == 4
-    assert len(context.Z_by_ref) == 4
-    assert len(context.W_lin_by_ref) == 4
+    assert len(context.mass_by_ref) == 4
     assert len(context.dress_stacked_by_ref) == 4
-    # NH3 Z tags = [7,1,1,1] per reference
-    assert list(context.Z_by_ref[0]) == [7, 1, 1, 1]
-
-
-def test_fingerprint_uses_per_member_reference():
-    # A 2-member cluster whose members come from different NH3 references must
-    # reconstruct atoms from each base reference; fingerprint is well-defined.
-    crystal, _ = load("ammonia")
-    refs = crystal.get_references()
-    context.bind(crystal, refs)
-    g = SymOpList([SymOp.identity(), SymOp.identity()], 1)
-    g.ref_indices = np.array([0, 1])   # member 0 <- ref 0, member 1 <- ref 1
-    zz, d = invariants.distance_fingerprint(g)
-    assert len(zz) == len(d) > 0
+    # NH3: one N and three H per reference
+    assert list(context.references[0].symbols) == ["N", "H", "H", "H"]
 
 
 #: Ammonia's CIF is written in P1 with four NH3 in the cell, so it is Z' = 4

@@ -7,8 +7,7 @@ from crystalatte import count_chemistry_classes
 from crystalatte.core.space_group import SpaceGroup
 from crystalatte.core.sym_ops import SymOp, SymOpList
 from crystalatte.work import generate, neighbors
-from crystalatte.work.dedup import context, invariants
-from crystalatte.work.dedup.invariants import cluster_atoms_cart
+from crystalatte.work.dedup import context, dressing, invariants
 from crystalatte.work.validate import _chsev, _nre
 
 from conftest import GENERATE_KW, load
@@ -70,32 +69,11 @@ def _same_label(G, H, W_by_ref, W_tr_by_ref=None):
     return bool(labels[0] == labels[1])
 
 
-def test_relative_transforms_integer_pure_translation():
-    g = SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1)
-    L, v = invariants.relative_transforms(g)
-    assert np.array_equal(L[0, 1], np.eye(3, dtype=np.int64))
-    assert np.array_equal(v[0, 1], np.array([12, 0, 0]))
-    assert np.array_equal(v[1, 0], np.array([-12, 0, 0]))
-
-
-def test_relative_transforms_integer_nonorthogonal_inverse():
-    # hexagonal 6-fold: rot = [[1,-1,0],[1,0,0],[0,0,1]] is NOT orthogonal;
-    # its inverse differs from its transpose.
-    six = SymOp("x-y,x,z")
-    g = SymOpList([SymOp.identity(), six], 1)
-    L, v = invariants.relative_transforms(g)
-    R = six.rot.astype(np.int64)
-    # L[1,0] = rot_inv[1] @ rot[0] = inv(R); verify it is the exact inverse
-    assert np.array_equal(L[1, 0] @ R, np.eye(3, dtype=np.int64))
-    # and that the wrong (transpose) formula would have differed
-    assert not np.array_equal(L[1, 0], R.T)
-
-
-def test_relative_transforms_integer_is_cached():
-    g = SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1)
-    first = invariants.relative_transforms(g)
-    second = invariants.relative_transforms(g)
-    assert first[0] is second[0]  # same cached array object
+def _site(i: int = 0):
+    """``(W, W_tr)`` for bound reference ``i``, as :func:`context.bind` builds it"""
+    return dressing.site_symmetry(
+        context.active_crystal.space_group, context.references[i].centroid_frac
+    )
 
 
 def test_orbit_label_translation_swap():
@@ -277,12 +255,12 @@ def test_bind_sets_site_symmetry():
     context.bind(crystal, crystal.get_references())
 
     # Benzene is on an inversion centre: identity + inversion in the dressing.
-    assert any(np.array_equal(w, np.eye(3, dtype=np.int64)) for w in context.W_lin_by_ref[0])
-    assert any(np.array_equal(w, -np.eye(3, dtype=np.int64)) for w in context.W_lin_by_ref[0])
+    assert any(np.array_equal(w, np.eye(3, dtype=np.int64)) for w in _site(0)[0])
+    assert any(np.array_equal(w, -np.eye(3, dtype=np.int64)) for w in _site(0)[0])
     # Its molecular point group is richer than the site symmetry, but only
     # approximately: none of the extra operations is exact, so the dressing
     # group is the site symmetry alone.
-    assert len(context.dress_stacked_by_ref[0][0]) == len(context.W_lin_by_ref[0])
+    assert len(context.dress_stacked_by_ref[0][0]) == len(_site(0)[0])
 
 
 def test_generate_dimer_count_regression():
@@ -309,8 +287,8 @@ def test_bind_sets_dressing_translations():
     context.bind(crystal, crystal.get_references())
 
     D, _, D_tr = context.dress_stacked_by_ref[0]
-    W = context.W_lin_by_ref[0]
-    W_tr = context.W_tr_by_ref[0]
+    W = _site(0)[0]
+    W_tr = _site(0)[1]
     assert len(D_tr) == len(D)
     assert len(W_tr) == len(W)
 
@@ -330,7 +308,7 @@ def test_bind_dressing_translations_vanish_for_benzene():
     crystal, _ = load("benzene")
     context.bind(crystal, crystal.get_references())
     assert not np.any(context.dress_stacked_by_ref[0][2])
-    assert all(not np.any(t) for t in context.W_tr_by_ref[0])
+    assert all(not np.any(t) for t in _site(0)[1])
 
 
 def test_orbit_label_needs_dressing_translation():
@@ -341,7 +319,7 @@ def test_orbit_label_needs_dressing_translation():
     crystal = crystal.detect_symmetry(1e-3)
     refs = crystal.get_references()
     context.bind(crystal, refs)
-    W, W_tr = context.W_lin_by_ref[0], context.W_tr_by_ref[0]
+    W, W_tr = _site(0)
 
     rot = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, -1]], dtype=np.int16)
     g = SymOpList([SymOp.identity(),
@@ -486,12 +464,9 @@ def _cluster_referee(g_N):
     whole reason CHSEV is here:
 
     - NRE is ``sum_{i<j} Z_i Z_j / r_ij`` -- a pure function of the multiset of
-      Z-tagged interatomic distances. That multiset is exactly what
-      :func:`fingerprints_match` already gates on, so NRE agrees to machine
-      precision on ANY pair that clears the gate. As a referee it can only catch
-      a merge that bypassed the gate, and is blind to every over-merge committed
-      downstream of it -- which is where the integer matcher, the Cartesian
-      fallback and the cloud matcher all live.
+      Z-tagged interatomic distances, so it agrees to machine precision on ANY
+      two clusters with the same distances, including homometric ones that are
+      structurally different. It cannot see an over-merge between such a pair.
     - CHSEV is the sorted eigenvalue spectrum of the Coulomb matrix. The same
       distances appear in it, but the eigenvalues depend on how they are
       ARRANGED in the matrix, not merely on their multiset, so CHSEV sees inside
@@ -504,7 +479,10 @@ def _cluster_referee(g_N):
     that closes the gap.
     """
 
-    atoms = cluster_atoms_cart(g_N)
+    parts = [
+        op.apply(context.references[r].frac_coords) for r, op in zip(g_N.ref_indices, g_N)
+    ]
+    atoms = context.active_crystal.to_cartesian(np.vstack(parts))
     symbols = np.concatenate(
         [context.references[g_N.ref_indices[k]].symbols for k in range(len(g_N))]
     )
@@ -720,7 +698,7 @@ def test_bound_dressing_groups_satisfy_the_containment_theorem(name):
 
     for i in range(len(refs)):
         D = context.dress_stacked_by_ref[i][0]
-        for w in context.W_lin_by_ref[i]:
+        for w in _site(i)[0]:
             assert any(np.array_equal(w, d) for d in D), (
                 f"{name}: reference {i} has a site operation absent from D. "
                 "Any merge that needs it as a dressing is lost."
