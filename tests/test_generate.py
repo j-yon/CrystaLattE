@@ -13,6 +13,8 @@ Run with:
 See tests/README.md for the suite map.
 """
 
+from collections import Counter
+
 import pytest
 
 import crystalatte as cle
@@ -251,3 +253,26 @@ def test_dimer_count_decreases_with_tighter_R(name):
     assert counts == sorted(counts, reverse=True), (
         f"Dimer counts should be non-increasing as R decreases: {counts}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Extra molecular symmetry
+# ---------------------------------------------------------------------------
+
+# Molecular symmetry beyond the site symmetry. Recorded from the exact +
+# Cartesian-congruence pipeline (ddc4c41) before the congruence pass was folded
+# into the integer orbit key; the unique count, the total multiplicity and the
+# multiplicity histogram must all survive that change.
+@pytest.mark.parametrize("name,N,R,n_unique,total,histogram", [
+    ("triazine", 2, 20.0, 61, 418, {2: 5, 6: 44, 12: 12}),
+    pytest.param("triazine", 2, 35.0, 266, 2082, {2: 9, 6: 178, 12: 75, 24: 4},
+                 marks=pytest.mark.slow),
+    ("triazine", 3, 12.0, 123, 2103, {3: 1, 6: 2, 9: 14, 18: 103, 36: 3}),
+    ("ammonia", 2, 20.0, 183, 1075, {2: 2, 3: 5, 6: 176}),
+    ("benzene", 2, 20.0, 116, 366, {2: 49, 4: 67}),
+])
+def test_extra_symmetry_regression(name, N, R, n_unique, total, histogram):
+    mers = cle.generate(crystal(name), N, R, **GENERATE_KW)
+    assert len(mers) == n_unique
+    assert sum(m.multiplicity for m in mers) == total
+    assert dict(Counter(m.multiplicity for m in mers)) == histogram
