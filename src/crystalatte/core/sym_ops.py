@@ -201,7 +201,7 @@ class SymOpList:
     :param _ref_indices: Per-member base-reference index, defaults to all-zeros for single-reference clusters
     :ivar _rot_cache: Cached array of the rotational components of the symmetry operations
     :ivar _tr_cache: Cached array of the translational components of the symmetry operations
-    :ivar _rel_cache: Lazily cached ``(L, v)`` pairwise relative Cartesian transforms
+    :ivar _rel_int_cache: Lazily cached ``(L, v)`` pairwise relative integer transforms
     :ivar _dist_fp_cache: Lazily cached ``(zz, distances)`` Z-tagged distance fingerprint
     """
 
@@ -211,12 +211,11 @@ class SymOpList:
     _rot_cache: NDArray = field(init=False, repr=False)
     _tr_cache: NDArray = field(init=False, repr=False)
 
-    _rel_cache: tuple[NDArray, NDArray] | None = field(default=None, init=False, repr=False, compare=False)
     _rel_int_cache: tuple[NDArray, NDArray] | None = field(default=None, init=False, repr=False, compare=False)
     _dist_fp_cache: tuple[NDArray, NDArray] | None = field(default=None, init=False, repr=False, compare=False)
 
     # lazily-derived geometry caches
-    _PICKLE_EXCLUDED = ("_rel_cache", "_rel_int_cache", "_dist_fp_cache")
+    _PICKLE_EXCLUDED = ("_rel_int_cache", "_dist_fp_cache")
 
     def __getstate__(self):
         """Drop the derived caches when pickling, rebuild on demand
@@ -335,7 +334,6 @@ class SymOpList:
         instance._tr_cache = tr
 
         # __new__ bypasses the dataclass __init__, so initialize lazily-populated geometry caches
-        instance._rel_cache = None
         instance._rel_int_cache = None
         instance._dist_fp_cache = None
 
