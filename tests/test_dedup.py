@@ -303,27 +303,6 @@ UREA_DIMERS_R10 = 18  # urea, N=2, R=10.0, use_origin=True; verified against the
                       # NRE+CHSEV oracle and by explicit Kabsch congruence
 
 
-def test_self_isometry_linear_part_is_not_a_symmetry():
-    # A self-isometry is an isometry about the monomer CENTROID. Applied as a
-    # bare linear map about the origin it does NOT map the molecule onto
-    # itself unless the centroid happens to be a fixed point. Urea is a case
-    # where it does not: the linear part displaces the molecule by several
-    # Angstroms, which is exactly why the affine translation part is required.
-    crystal, _ = load("urea")
-    mon = crystal.get_references()[0]
-    X, c = mon.cart_coords, mon.centroid_cart
-
-    def max_mismatch(P):
-        return max(np.min(np.linalg.norm(X - p, axis=1)) for p in P)
-
-    worst_linear = 0.0
-    for s in mon.point_group:
-        worst_linear = max(worst_linear, max_mismatch(X @ s.T))
-        # the affine form about the centroid IS a symmetry
-        assert max_mismatch((X - c) @ s.T + c) < 1e-8
-    assert worst_linear > 1.0  # linear part alone is badly wrong
-
-
 def test_bind_sets_dressing_translations():
     crystal, _ = load("urea")
     crystal = crystal.detect_symmetry(1e-3)

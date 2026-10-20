@@ -8,10 +8,9 @@ dynamic = ["version"]
 dependencies = [
     "numpy",
     "pycifrw",              # CIF parsing (io/cif.py)
-    "pymatgen",             # point group symmetry detection
     "qcelemental",          # element data and Molecule export
     "scipy",                # spatial.distance, spatial.cKDTree
-    "spglib",               # crystal symmetry detection and point-group naming
+    "spglib",               # crystal symmetry detection and Niggli reduction
     "tqdm",                 # progress bars in generate/neighbors
 ]
 requires-python = ">=3.13"

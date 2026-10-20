@@ -1,6 +1,6 @@
 # Test suite
 
-424 tests over the v2 pipeline: CIF in, deduplicated multimers out, QC decks on
+312 tests over the v2 pipeline: CIF in, deduplicated multimers out, QC decks on
 disk. The v1 suite is gone — all 31 files were removed in `602943c` after they
 had been failing for the length of the branch against an API, a module and a
 fixture tree that no longer exist.
@@ -8,17 +8,18 @@ fixture tree that no longer exist.
 ## Running
 
 ```bash
-pytest                    # everything, ~45 s
-pytest -m "not slow"      # ~33 s, still touches every module
-pytest -m slow            # just the 21 expensive cases
+pytest                    # everything, ~26 s
+pytest -m "not slow"      # ~21 s, still touches every module
+pytest -m slow            # just the 11 marked cases
 pytest tests/test_dedup.py -k over_merge      # one concern
 pytest --durations=15     # find the next thing worth marking slow
 ```
 
 `slow` is applied in `conftest.py`, not with decorators at each site, because
 the cost is usually a property of the *fixture* rather than the test: the same
-test is fast on benzene and slow on hexamine, whose point-group detection has to
-close 42 candidate operations down the tolerance ladder. Keeping the list in one
+test can be fast on one crystal and slow on another. Hexamine was the motivating
+case while deduplication ran point-group detection; that is gone and its cases
+now take about 0.5 s, so the list is due a re-measure. Keeping the list in one
 place also means the fast run's contents are visible at a glance. Use it for a
 quick signal; run the full suite before merging.
 
@@ -26,7 +27,6 @@ quick signal; run the full suite before merging.
 
 | Module | Cases | What it holds you to |
 | --- | ---: | --- |
-| `test_self_isometries.py` | 111 | Molecular point-group detection (a library feature; deduplication no longer uses it): closure under composition, valid group order, inverses present. Plus site-symmetry seeding, which is what makes `W_lin ≤ S` true by construction rather than by luck — including adamantane's `S4` rotoreflections and ice's site symmetry, neither of which the detector can reach on its own at any tolerance. Plus the optional external solver: that it names the idealised group, that consulting it can never *shrink* the detected one, and that its contribution is still a group. |
 | `test_dedup.py` | 77 | The deduplication core. Exact orbit-key correctness, written as the specification the removed integer matcher was held to: translation swaps, inversion needing `W`, dressing translations, reference-compatibility of the permutation, and dressings drawn from each member's own reference. Cross-reference counts at `Z′ = 2` and `Z′ = 3`; every dressing a real symmetry and `W ⊆ D`; over-merge and multiplicity conservation across `N = 2…5`, including rows where only the extra dressings merge (triazine, CO₂). |
 | `test_dressing.py` | 56 | The dressing group `D`: the cell's integer symmetry `H` per fixture (crystal-family orders, lookup on an inconsistent cell, metric test on a cell more symmetric than its group, and the hexagonal box rather than the R lattice for triazine), then `D = W ∪ {exact cell-symmetry self-isometries}`: `W` kept even when inexact (ice), extra operations exact and in twelfths, closure, and approximate symmetry rejected (benzene). |
 | `test_generate.py` | 41 | End-to-end regression counts at four orders — 14 dimer, 3 trimer, 4 tetramer, 3 pentamer rows — each also asserting the chemistry oracle agrees. Plus extra-symmetry rows (triazine, ammonia, benzene, CO₂) pinning count, total multiplicity and multiplicity histogram, count monotonicity in `R`, and the `N ≥ 2` input gate. |
@@ -56,8 +56,8 @@ deletes a distinct interaction and inflates another's multiplicity, corrupting
 the sum by `(m_B/N)(E_A − E_B)`, and the usual equality check *cannot see it*
 because both sides fall together. That asymmetry is why
 `test_no_over_merge_every_discarded_cluster_matches_a_survivor` exists and why
-tolerances in point-group detection should always be biased toward finding fewer
-operations.
+a dressing is only accepted when it is an exact symmetry of its monomer
+(`dedup.dressing`).
 
 ## Fixtures and shared helpers
 
