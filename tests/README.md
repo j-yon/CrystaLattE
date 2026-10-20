@@ -1,6 +1,6 @@
 # Test suite
 
-361 tests over the v2 pipeline: CIF in, deduplicated multimers out, QC decks on
+424 tests over the v2 pipeline: CIF in, deduplicated multimers out, QC decks on
 disk. The v1 suite is gone — all 31 files were removed in `602943c` after they
 had been failing for the length of the branch against an API, a module and a
 fixture tree that no longer exist.
@@ -10,7 +10,7 @@ fixture tree that no longer exist.
 ```bash
 pytest                    # everything, ~45 s
 pytest -m "not slow"      # ~33 s, still touches every module
-pytest -m slow            # just the 18 expensive cases
+pytest -m slow            # just the 21 expensive cases
 pytest tests/test_dedup.py -k over_merge      # one concern
 pytest --durations=15     # find the next thing worth marking slow
 ```
@@ -26,9 +26,10 @@ quick signal; run the full suite before merging.
 
 | Module | Cases | What it holds you to |
 | --- | ---: | --- |
-| `test_self_isometries.py` | 111 | Molecular point-group detection: closure under composition, valid group order, inverses present. Plus site-symmetry seeding, which is what makes `W_lin ≤ S` true by construction rather than by luck — including adamantane's `S4` rotoreflections and ice's site symmetry, neither of which the detector can reach on its own at any tolerance. Plus the optional external solver: that it names the idealised group, that consulting it can never *shrink* the detected one, and that its contribution is still a group. |
-| `test_dedup.py` | 76 | The deduplication core. Exact orbit-key correctness, written as the specification the removed integer matcher was held to: translation swaps, inversion needing `W`, dressing translations, reference-compatibility of the permutation, and dressings drawn from each member's own reference. Cross-reference counts at `Z′ = 2` and `Z′ = 3`; the `|S| > |W|` congruence gate; over-merge and multiplicity conservation across `N = 2…5`. |
-| `test_generate.py` | 35 | End-to-end regression counts at four orders — 14 dimer, 3 trimer, 4 tetramer, 3 pentamer rows — each also asserting the chemistry oracle agrees. Plus count monotonicity in `R`, and the `N ≥ 2` input gate. |
+| `test_self_isometries.py` | 111 | Molecular point-group detection (a library feature; deduplication no longer uses it): closure under composition, valid group order, inverses present. Plus site-symmetry seeding, which is what makes `W_lin ≤ S` true by construction rather than by luck — including adamantane's `S4` rotoreflections and ice's site symmetry, neither of which the detector can reach on its own at any tolerance. Plus the optional external solver: that it names the idealised group, that consulting it can never *shrink* the detected one, and that its contribution is still a group. |
+| `test_dedup.py` | 77 | The deduplication core. Exact orbit-key correctness, written as the specification the removed integer matcher was held to: translation swaps, inversion needing `W`, dressing translations, reference-compatibility of the permutation, and dressings drawn from each member's own reference. Cross-reference counts at `Z′ = 2` and `Z′ = 3`; every dressing a real symmetry and `W ⊆ D`; over-merge and multiplicity conservation across `N = 2…5`, including rows where only the extra dressings merge (triazine, CO₂). |
+| `test_dressing.py` | 56 | The dressing group `D`: the cell's integer symmetry `H` per fixture (crystal-family orders, lookup on an inconsistent cell, metric test on a cell more symmetric than its group, and the hexagonal box rather than the R lattice for triazine), then `D = W ∪ {exact cell-symmetry self-isometries}`: `W` kept even when inexact (ice), extra operations exact and in twelfths, closure, and approximate symmetry rejected (benzene). |
+| `test_generate.py` | 41 | End-to-end regression counts at four orders — 14 dimer, 3 trimer, 4 tetramer, 3 pentamer rows — each also asserting the chemistry oracle agrees. Plus extra-symmetry rows (triazine, ammonia, benzene, CO₂) pinning count, total multiplicity and multiplicity histogram, count monotonicity in `R`, and the `N ≥ 2` input gate. |
 | `test_sym_ops.py` | 32 | `SymOp` xyz strings: formatting from `rot`/`tr` round-trips every table operation under lattice shifts and every generated monomer op across all fixtures, and a shifted op never keeps its source string. |
 | `test_cif_parsing.py` | 47 | CIF ingestion across 13 space groups spanning every crystal system, several in more than one setting. Space-group number, Hall symbol, lattice parameters, ASU atom count. Plus field-name flexibility: CIF1 vs CIF2 spellings, Hall-only, H-M-only (with punctuation variants), operation-list-only, and a listed-operations-vs-declared-symbol contradiction. Plus the partial-occupancy guard and its three policies. |
 | `test_writers.py` | 25 | QC input generation: writer registry, the full Psi4 deck (fragments, charge/multiplicity, geometry, options, BSSE), and `write_inputs` directory layout and naming. |
