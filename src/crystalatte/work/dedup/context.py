@@ -16,6 +16,7 @@ from numpy.typing import NDArray
 from ...core.crystal import Crystal
 from ...core.multimer import Monomer
 from ...core.space_group import SITE_ATOL
+from . import dressing
 
 # Module-level bindings set by `bind`.
 # Per-reference lists indexed by reference index (one entry per independent monomer).
@@ -35,8 +36,9 @@ self_iso_tr_by_ref: list[list[NDArray]] = [[np.zeros(3)]]  # Cartesian, Angstrom
 W_tr_by_ref: list[list[NDArray]] = [
     [np.zeros(3, dtype=np.int64)]
 ]  # lattice basis, twelfths
-# The same site-symmetry dressings stacked as ``(W, W^-1, W_tr)`` arrays for the vectorized orbit key.
-W_stacked_by_ref: list[tuple[NDArray, NDArray, NDArray]] = []
+# Each reference's dressing group D (site symmetry plus exact cell-symmetry self-isometries, see
+# :mod:`.dressing`), stacked as ``(D, D^-1, D_tr)`` arrays for the vectorized orbit key.
+dress_stacked_by_ref: list[tuple[NDArray, NDArray, NDArray]] = []
 frac_to_cart: NDArray | None = (
     None  # fractional -> Cartesian matrix (cart = frac_to_cart @ frac)
 )
@@ -64,15 +66,20 @@ def bind(
     """
     global active_crystal, references, Z_by_ref, mass_by_ref, self_iso_by_ref
     global W_lin_by_ref, check_congruence_by_ref, frac_to_cart, cart_to_frac
-    global self_iso_tr_by_ref, W_tr_by_ref, W_stacked_by_ref
+    global self_iso_tr_by_ref, W_tr_by_ref, dress_stacked_by_ref
     active_crystal = crystal
     references = list(monomers)
     frac_to_cart = np.asarray(crystal.lattice_vectors, dtype=float)
     cart_to_frac = np.linalg.inv(frac_to_cart)
 
+    # the cell's integer symmetry depends only on the crystal, so it is shared by every reference
+    H = dressing.cell_symmetry(
+        np.stack([op.rot for op in crystal.space_group.sym_ops]).astype(np.int64), frac_to_cart
+    )
+
     Z_by_ref, mass_by_ref, self_iso_by_ref = [], [], []
     W_lin_by_ref, check_congruence_by_ref = [], []
-    self_iso_tr_by_ref, W_tr_by_ref, W_stacked_by_ref = [], [], []
+    self_iso_tr_by_ref, W_tr_by_ref, dress_stacked_by_ref = [], [], []
     for mon in references:
         Z_by_ref.append(
             np.array([qcel.periodictable.to_Z(s) for s in mon.symbols], dtype=np.int64)
@@ -101,9 +108,11 @@ def bind(
             W_tr = [np.zeros(3, dtype=np.int64)]
         W_lin_by_ref.append(W)
         W_tr_by_ref.append(W_tr)
-        W_stack = np.stack(W)
-        W_stacked_by_ref.append(
-            (W_stack, np.rint(np.linalg.inv(W_stack)).astype(np.int64), np.stack(W_tr))
+        D, D_tr = dressing.dressing_group(
+            mon.frac_coords, c_frac, Z_by_ref[-1], frac_to_cart, W, W_tr, H
+        )
+        dress_stacked_by_ref.append(
+            (D, np.rint(np.linalg.inv(D)).astype(np.int64), D_tr)
         )
 
         # W must be built BEFORE S, because S is seeded with it. `W_lin <= S` is

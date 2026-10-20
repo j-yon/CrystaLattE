@@ -48,16 +48,11 @@ _ATOL = 1e-8
     ("imidazole",          15.0, 135),
     ("urea",                    15.0, 49),
     ("adamantane",        15.0, 17),
-    pytest.param(
-        "carbon_dioxide", 15.0, 36,
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason="linear monomer: deduplication is knowingly incomplete, so 3 "
-                   "duplicate pairs survive and 39 are returned. 36 is the "
-                   "correct answer and is kept here as the target; see the "
-                   "limitation note in crystalatte.work.dedup",
-        ),
-    ),
+    # Linear monomer: 39 were returned until the orbit key was dressed with the
+    # cell-symmetry self-isometries about the molecular axis (D3d on [111]),
+    # which merge the 3 surviving duplicate pairs. Linear dedup is still
+    # incomplete in general; see test_linear_monomer_dedup_is_complete.
+    ("carbon_dioxide", 15.0, 36),
     ("hexamine",            15.0, 9),
     pytest.param(
         "ice", 15.0, 208,

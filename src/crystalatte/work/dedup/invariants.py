@@ -98,16 +98,17 @@ def _dressed_minima(D: NDArray, ref_a: int, ref_b: int) -> NDArray:
     """Return each relative transform's canonical partner row under every anchor dressing
 
     Row ``u`` of ``D`` is a relative transform ``Delta = (L, v)`` from an anchor of reference ``ref_a`` to a
-    partner of reference ``ref_b``. For every ``s`` in ``W_a``, the result holds the lexicographically smallest
-    row of the coset ``s^-1 Delta W_b``: the partner's label once the anchor is relabelled by ``s``.
+    partner of reference ``ref_b``. For every ``s`` in the anchor's dressing group ``D_a``, the result holds the
+    lexicographically smallest row of the coset ``s^-1 Delta D_b``: the partner's label once the anchor is
+    relabelled by ``s``.
 
     :param D: ``(U, 12)`` int64 relative transforms flattened as ``(L (9), v (3))``
     :param ref_a: anchor base reference
     :param ref_b: partner base reference
-    :returns: ``(U, |W_a|, 12)`` int64 canonical rows
+    :returns: ``(U, |D_a|, 12)`` int64 canonical rows
     """
-    _, Wa_inv, da = context.W_stacked_by_ref[ref_a]
-    Wb, _, db = context.W_stacked_by_ref[ref_b]
+    _, Wa_inv, da = context.dress_stacked_by_ref[ref_a]
+    Wb, _, db = context.dress_stacked_by_ref[ref_b]
     S, K = len(Wa_inv), len(Wb)
     out = np.empty((len(D), S, 12), dtype=np.int64)
     step = max(1, DRESS_CHUNK_ROWS // (S * K))
@@ -162,7 +163,7 @@ def _group_keys(cands: list[SymOpList], refs: tuple[int, ...]) -> NDArray:
     # After sorting they are the first c members, and each sees its partners' references as refs[1:]
     c = refs.count(refs[0])
     partner_refs = refs[1:]
-    S = len(context.W_stacked_by_ref[refs[0]][0])
+    S = len(context.dress_stacked_by_ref[refs[0]][0])
     M = np.empty(
         (N, c, S, n - 1), dtype=np.int64
     )  # (cluster, anchor, anchor dressing, partner slot)
@@ -200,13 +201,15 @@ def _group_keys(cands: list[SymOpList], refs: tuple[int, ...]) -> NDArray:
 
 
 def orbit_labels(candidates: list[SymOpList]) -> NDArray:
-    """Label clusters so that two share a label iff they are the same multimer under a crystallographic
-    isometry, modulo each member's site-symmetry dressing
+    """Label clusters so that two share a label iff they are the same multimer under an isometry, modulo each
+    member's dressing group
 
     The label is the class of an exact orbit key. Seen from an anchor ``a``, each partner ``b`` is the coset
-    ``Delta[a,b] W_b`` (the site symmetry relabels the same molecule), reduced to its lexicographic minimum.
-    The key is the minimum, over every anchor ``a`` and anchor dressing ``s`` in ``W_a``, of the sorted cosets
-    ``s^-1 Delta[a,b] W_b``, prefixed with base-reference indices.
+    ``Delta[a,b] D_b`` (a dressing relabels the same molecule), reduced to its lexicographic minimum. The key
+    is the minimum, over every anchor ``a`` and anchor dressing ``s`` in ``D_a``, of the sorted cosets
+    ``s^-1 Delta[a,b] D_b``, prefixed with base-reference indices. ``D`` is the site symmetry plus each exact
+    cell-symmetry self-isometry of the monomer (:mod:`.dressing`), so non-crystallographic congruences such as
+    triazine's sigma_h merge here too.
 
     All clusters are keyed in one batch: each distinct relative transform is dressed once
     (:func:`_dressed_minima`) and rows are compared as packed int64 codes (:func:`lex_codes`).

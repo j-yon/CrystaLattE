@@ -65,7 +65,7 @@ def _same_label(G, H, W_by_ref, W_tr_by_ref=None):
             else np.stack([np.asarray(t, dtype=np.int64) for t in W_tr_by_ref[r]])
         )
         stacked.append((W, invariants.int_inv(W), tr))
-    context.W_stacked_by_ref = stacked
+    context.dress_stacked_by_ref = stacked
     labels = invariants.orbit_labels([G, H])
     return bool(labels[0] == labels[1])
 
@@ -417,12 +417,6 @@ def test_generate_runs_on_high_symmetry_crystals():
         assert len(mers) > 0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="linear monomers are out of scope; deduplication is knowingly "
-           "incomplete for them. Kept as the target so a future fix shows up "
-           "as XPASS. See the limitation note in crystalatte.work.dedup",
-)
 def test_linear_monomer_dedup_is_complete():
     # CO2 is linear, so every atom lies ON the molecular axis and a twist about
     # that axis moves nothing. But a placement stores a full 3x3 rotation, so
@@ -434,10 +428,13 @@ def test_linear_monomer_dedup_is_complete():
     # dressings did no physical work (one displaced no atom by more than 0.000
     # A) and it only worked when the needed twist fell inside the sample.
     #
-    # Consequence, and what this test pins: 3 duplicate pairs now survive, so
-    # n_classes (36) < len(mers) (39). The fix is to compare atoms rather than
-    # rotations for linear monomers -- the removed point-cloud matcher merged
-    # all 108 affected pairs that way.
+    # That left 3 duplicate pairs surviving at R = 15 (n_classes 36 < 39). They
+    # are merged now by the dressing group: CO2 lies on the cubic cell's [111]
+    # axis, so the 12 cell-symmetry operations fixing that axis are exact
+    # self-isometries and the orbit key uses them (see dedup.dressing). Linear
+    # dedup is still incomplete in general -- a twist about the axis that is not
+    # a cell symmetry is never a dressing, and one duplicate pair survives at
+    # R = 20 -- but at this radius the result is complete, and this pins it.
 
     crystal, _ = load("carbon_dioxide")
     mers = generate.generate(crystal, 2, 15.0, **GENERATE_KW)
