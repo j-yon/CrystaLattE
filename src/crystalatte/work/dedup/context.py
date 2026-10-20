@@ -24,15 +24,11 @@ active_crystal: Crystal | None = None
 references: list[Monomer] = []
 Z_by_ref: list[NDArray] = []
 mass_by_ref: list[NDArray] = []
-self_iso_by_ref: list[list[NDArray]] = [[np.eye(3)]]
+# Site symmetry: the space-group operations fixing each reference monomer. A dressing is
+# an isometry about the monomer's CENTROID, not the coordinate origin, so as a map on the
+# reference's raw coordinates it is the affine ``x -> w @ x + t / 12`` with
+# ``t / 12 = c - w @ c``; dropping ``t`` is only valid when ``w @ c == c``.
 W_lin_by_ref: list[list[NDArray]] = [[np.eye(3, dtype=np.int64)]]
-check_congruence_by_ref: list[bool] = [False]
-# Translation parts of the dressings, index-aligned with the groups above.
-# A monomer self-isometry is an isometry about the monomer's CENTROID, not
-# about the coordinate origin, so as a map on the reference monomer's raw
-# coordinates it is the affine map ``x -> s @ x + d`` with ``d = c - s @ c``.
-# Dropping ``d`` (using ``s`` alone) is only valid when ``s @ c == c``.
-self_iso_tr_by_ref: list[list[NDArray]] = [[np.zeros(3)]]  # Cartesian, Angstroms
 W_tr_by_ref: list[list[NDArray]] = [
     [np.zeros(3, dtype=np.int64)]
 ]  # lattice basis, twelfths
@@ -42,7 +38,6 @@ dress_stacked_by_ref: list[tuple[NDArray, NDArray, NDArray]] = []
 frac_to_cart: NDArray | None = (
     None  # fractional -> Cartesian matrix (cart = frac_to_cart @ frac)
 )
-cart_to_frac: NDArray | None = None  # Cartesian -> fractional matrix
 
 
 def bind(
@@ -53,9 +48,8 @@ def bind(
     """Bind the deduper's per-run inputs at module scope.
 
     Sets the module globals for per-reference state: per-reference Z and mass
-    arrays, self-isometries, site-symmetry dressings and the congruence
-    gates. Also sets the lattice vectors ``frac_to_cart`` / ``cart_to_frac`` for
-    fractional<->Cartesian conversion.
+    arrays, the site symmetry, and the dressing group the orbit key canonicalises
+    over. Also sets the lattice matrix ``frac_to_cart``.
 
     :param crystal: The crystal supplying the lattice and Cartesian conversion
     :param monomers: The reference monomers (one per crystal asymmetric unit)
@@ -64,22 +58,19 @@ def bind(
         ``get_unique_sym_ops`` or stabilizer and orbit disagree
     :returns: ``None``
     """
-    global active_crystal, references, Z_by_ref, mass_by_ref, self_iso_by_ref
-    global W_lin_by_ref, check_congruence_by_ref, frac_to_cart, cart_to_frac
-    global self_iso_tr_by_ref, W_tr_by_ref, dress_stacked_by_ref
+    global active_crystal, references, Z_by_ref, mass_by_ref, frac_to_cart
+    global W_lin_by_ref, W_tr_by_ref, dress_stacked_by_ref
     active_crystal = crystal
     references = list(monomers)
     frac_to_cart = np.asarray(crystal.lattice_vectors, dtype=float)
-    cart_to_frac = np.linalg.inv(frac_to_cart)
 
     # the cell's integer symmetry depends only on the crystal, so it is shared by every reference
     H = dressing.cell_symmetry(
         np.stack([op.rot for op in crystal.space_group.sym_ops]).astype(np.int64), frac_to_cart
     )
 
-    Z_by_ref, mass_by_ref, self_iso_by_ref = [], [], []
-    W_lin_by_ref, check_congruence_by_ref = [], []
-    self_iso_tr_by_ref, W_tr_by_ref, dress_stacked_by_ref = [], [], []
+    Z_by_ref, mass_by_ref = [], []
+    W_lin_by_ref, W_tr_by_ref, dress_stacked_by_ref = [], [], []
     for mon in references:
         Z_by_ref.append(
             np.array([qcel.periodictable.to_Z(s) for s in mon.symbols], dtype=np.int64)
@@ -114,33 +105,3 @@ def bind(
         dress_stacked_by_ref.append(
             (D, np.rint(np.linalg.inv(D)).astype(np.int64), D_tr)
         )
-
-        # W must be built BEFORE S, because S is seeded with it. `W_lin <= S` is
-        # a theorem, but the detector cannot realise it on its own: the missing
-        # operations are rotoreflections, which its candidate library does not
-        # contain at any tolerance and which closure cannot reach. Supplying
-        # them here is the only route. Measured effect: adamantane 2 -> 4, ice
-        # 2 -> 6, the other ten X23 references unchanged.
-        #
-        # Note the site symmetry was determined at the mass-weighted centroid
-        # while `PointGroup.detect` centres on the unweighted one. That is
-        # harmless: a genuine symmetry permutes atoms preserving mass, so it
-        # fixes the offset between the two centroids, and its linear part about
-        # either is the same matrix.
-        W_cart = [frac_to_cart @ w.astype(float) @ cart_to_frac for w in W]
-        S = mon.point_group_seeded(W_cart)
-        self_iso_by_ref.append(S)
-        # Cartesian dressing translations: d = c - s @ c (zero iff s fixes c).
-        c_cart = np.asarray(mon.centroid_cart, dtype=float)
-        self_iso_tr_by_ref.append([c_cart - s @ c_cart for s in S])
-
-        # Gate for the tolerant Cartesian branch: it can only help when the molecular
-        # point group is richer than the site symmetry. Molecular operations outside W
-        # can coincide with lattice symmetry the space group lacks (triazine in R-3c:
-        # sigma_h and sigma_v pair up dimers beyond ~17 A), in any space group, so the
-        # gate is no longer restricted to Sohncke groups. The branch runs only on the
-        # orbit-key representatives, which keeps it cheap.
-        #
-        # When |S| == |W| the gate stays shut: S is seeded with W, so S == W, and a
-        # W-dressed match is exactly what the orbit key already decides.
-        check_congruence_by_ref.append(len(S) > len(W))

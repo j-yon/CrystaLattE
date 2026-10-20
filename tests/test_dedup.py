@@ -72,7 +72,7 @@ def _same_label(G, H, W_by_ref, W_tr_by_ref=None):
 
 def test_relative_transforms_integer_pure_translation():
     g = SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1)
-    L, v = invariants.relative_transforms(g, integer=True)
+    L, v = invariants.relative_transforms(g)
     assert np.array_equal(L[0, 1], np.eye(3, dtype=np.int64))
     assert np.array_equal(v[0, 1], np.array([12, 0, 0]))
     assert np.array_equal(v[1, 0], np.array([-12, 0, 0]))
@@ -83,7 +83,7 @@ def test_relative_transforms_integer_nonorthogonal_inverse():
     # its inverse differs from its transpose.
     six = SymOp("x-y,x,z")
     g = SymOpList([SymOp.identity(), six], 1)
-    L, v = invariants.relative_transforms(g, integer=True)
+    L, v = invariants.relative_transforms(g)
     R = six.rot.astype(np.int64)
     # L[1,0] = rot_inv[1] @ rot[0] = inv(R); verify it is the exact inverse
     assert np.array_equal(L[1, 0] @ R, np.eye(3, dtype=np.int64))
@@ -93,8 +93,8 @@ def test_relative_transforms_integer_nonorthogonal_inverse():
 
 def test_relative_transforms_integer_is_cached():
     g = SymOpList([SymOp.identity(), _translate([12, 0, 0])], 1)
-    first = invariants.relative_transforms(g, integer=True)
-    second = invariants.relative_transforms(g, integer=True)
+    first = invariants.relative_transforms(g)
+    second = invariants.relative_transforms(g)
     assert first[0] is second[0]  # same cached array object
 
 
@@ -272,18 +272,17 @@ def test_cross_reference_dedup_stays_complete(name, N, R):
     assert n_classes == len(mers)
 
 
-def test_bind_sets_site_symmetry_and_gate():
+def test_bind_sets_site_symmetry():
     crystal, monomer = load("benzene")
     context.bind(crystal, crystal.get_references())
 
     # Benzene is on an inversion centre: identity + inversion in the dressing.
     assert any(np.array_equal(w, np.eye(3, dtype=np.int64)) for w in context.W_lin_by_ref[0])
     assert any(np.array_equal(w, -np.eye(3, dtype=np.int64)) for w in context.W_lin_by_ref[0])
-    # The molecular point group IS richer than the site symmetry, which is
-    # exactly what opens the Cartesian congruence gate (4e5e4fa). See
-    # test_congruence_gate_opens_iff_point_group_exceeds_site_symmetry.
-    assert len(context.self_iso_by_ref[0]) > len(context.W_lin_by_ref[0])
-    assert context.check_congruence_by_ref[0] is True
+    # Its molecular point group is richer than the site symmetry, but only
+    # approximately: none of the extra operations is exact, so the dressing
+    # group is the site symmetry alone.
+    assert len(context.dress_stacked_by_ref[0][0]) == len(context.W_lin_by_ref[0])
 
 
 def test_generate_dimer_count_regression():
@@ -330,24 +329,19 @@ def test_bind_sets_dressing_translations():
     crystal = crystal.detect_symmetry(1e-3)
     context.bind(crystal, crystal.get_references())
 
-    S = context.self_iso_by_ref[0]
-    D = context.self_iso_tr_by_ref[0]
+    D, _, D_tr = context.dress_stacked_by_ref[0]
     W = context.W_lin_by_ref[0]
     W_tr = context.W_tr_by_ref[0]
-    assert len(D) == len(S)
+    assert len(D_tr) == len(D)
     assert len(W_tr) == len(W)
 
-    c = context.references[0].centroid_cart
-    for s, d in zip(S, D):
-        assert np.allclose(d, c - s @ c)
-    # urea's centroid is NOT a fixed point of its point group, so some
-    # dressing translations are nonzero (this is the case the bug missed)
-    assert max(float(np.linalg.norm(d)) for d in D) > 1.0
-    assert max(int(np.abs(t).max()) for t in W_tr) > 0
+    # urea's centroid is NOT a fixed point of its point group about the origin,
+    # so some dressing translations are nonzero (this is the case the bug missed)
+    assert max(int(np.abs(t).max()) for t in D_tr) > 0
 
     # the integer dressings must fix the centroid EXACTLY (in twelfths)
     c_frac = context.references[0].centroid_frac
-    for r, t in zip(W, W_tr):
+    for r, t in zip(D, D_tr):
         assert np.allclose(r @ c_frac + t / 12.0, c_frac, atol=1e-6)
 
 
@@ -356,7 +350,7 @@ def test_bind_dressing_translations_vanish_for_benzene():
     # dressing translation is zero and the pre-fix code was accidentally right.
     crystal, _ = load("benzene")
     context.bind(crystal, crystal.get_references())
-    assert all(np.allclose(d, 0.0) for d in context.self_iso_tr_by_ref[0])
+    assert not np.any(context.dress_stacked_by_ref[0][2])
     assert all(not np.any(t) for t in context.W_tr_by_ref[0])
 
 
@@ -454,34 +448,6 @@ def test_nonlinear_monomer_emits_no_warning(recwarn):
     crystal, _ = load("benzene")
     generate.generate(crystal, 2, 6.0, **GENERATE_KW)
     assert not [w for w in recwarn if "linear molecule" in str(w.message)]
-
-
-def test_congruence_gate_opens_iff_point_group_exceeds_site_symmetry():
-    # The Cartesian congruence pass can only find something when the molecular
-    # point group S holds operations outside the site symmetry W: with S == W
-    # (S is seeded with W) a W-dressed match is exactly what the orbit key
-    # already decides. It was once restricted to Sohncke groups, but molecular
-    # operations outside W can coincide with lattice symmetry the space group
-    # lacks in ANY group -- triazine in R-3c pairs dimers through sigma_h and
-    # sigma_v beyond ~17 A -- so since 4e5e4fa the gate is `|S| > |W|` alone.
-    # It runs only on orbit-key representatives, which keeps an open gate cheap.
-    def _gate(name):
-        crystal, _ = load(name)
-        crystal = crystal.detect_symmetry(1e-3)
-        context.bind(crystal, crystal.get_references())
-        S, W = len(context.self_iso_by_ref[0]), len(context.W_lin_by_ref[0])
-        return context.check_congruence_by_ref[0], S > W
-
-    opened = {}
-    for name in ("ammonia", "benzene", "triazine", "carbon_dioxide",
-                 "urea", "ice", "adamantane", "hexamine", "uracil"):
-        gate, richer = _gate(name)
-        assert gate is richer, f"{name}: gate={gate} but |S| > |W| is {richer}"
-        opened[name] = gate
-
-    # the motivating non-Sohncke case must open, and the rule must not be vacuous
-    assert opened["triazine"] is True
-    assert opened["urea"] is False and opened["ice"] is False
 
 
 def test_special_position_tolerance_absorbs_cif_rounding():
@@ -594,6 +560,10 @@ def test_chsev_separates_a_homometric_pair_that_nre_cannot():
         "CHSEV must separate them, or it adds nothing over NRE"
 
 
+#: enumeration box half-width (cells) for referee rows whose merges sit beyond one cell
+_REFEREE_BOX = {("carbon_dioxide", 2, 15.0): 2}
+
+
 # Parametrized over ORDER as well as crystal. The direct over-merge check used
 # to run only at N = 2, which left the regime where the anchored search works
 # hardest -- its cost is O(|S| n^3) in cluster size and the permutation
@@ -617,6 +587,9 @@ def test_chsev_separates_a_homometric_pair_that_nre_cannot():
     ("benzene", 4, 6.0), ("ammonia", 4, 5.0),
     ("fomepizole", 2, 7.0), ("fomepizole", 3, 6.0),   # Z' = 3
     ("benzene", 5, 8.0), ("urea", 5, 8.0),
+    # extra dressings beyond the site symmetry: each row has merges that only the
+    # exact cell-symmetry self-isometries make (triazine's sigma_h, CO2's D3d)
+    ("triazine", 3, 10.0), ("carbon_dioxide", 2, 15.0),
 ])
 def test_no_over_merge_every_discarded_cluster_matches_a_survivor(name, N, R, monkeypatch):
     # Direct over-merge test. Every cluster the deduper THREW AWAY must be
@@ -634,7 +607,8 @@ def test_no_over_merge_every_discarded_cluster_matches_a_survivor(name, N, R, mo
     crystal, _ = load(name)
     crystal = crystal.detect_symmetry(1e-3)
     refs = crystal.get_references()
-    bounds = np.array([[-1, 1], [-1, 1], [-1, 1]])
+    box = _REFEREE_BOX.get((name, N, R), 1)
+    bounds = np.array([[-box, box]] * 3)
 
     duplicate = []
     real_dedup = neighbors.deduplicate_bucket
@@ -708,17 +682,15 @@ def test_no_over_merge_multiplicity_is_conserved(monkeypatch):
 ])
 def test_every_dressing_is_a_symmetry_of_its_monomer(name):
     # The ONLY protection against over-merging lives in how the dressing groups
-    # are built. `anchored_match` trusts whatever group it is handed -- it solves
-    # the relative-transform equations over that group and never asks whether a
-    # dressing is a real symmetry. So the invariant that matters is checked here:
-    # every stored dressing must actually map its monomer onto itself.
+    # are built. The orbit key trusts whatever group it is handed -- it
+    # canonicalises over that group and never asks whether a dressing is a real
+    # symmetry. So the invariant that matters is checked here: every stored
+    # dressing must actually map its monomer onto itself.
     #
-    # W is derived from the space group, so it is EXACT (a site operation
-    # necessarily permutes the atoms of the molecule it fixes).
-    # S is detected numerically at atol=0.05, so its operations are only good to
-    # that tolerance -- measured worst case 0.0482 A on imidazole. That gap is
-    # the over-merge exposure; loosening detection widens it, and this test is
-    # what would notice.
+    # W is derived from the space group, so it is exact up to the CIF's own
+    # rounding (ice's reconstructed H atoms fit to ~2.7e-4 A). The extra
+    # dressings are accepted only when exact to 1e-6 A (dedup.dressing), so the
+    # bound below holds for all of D.
 
     crystal, _ = load(name)
     crystal = crystal.detect_symmetry(1e-3)
@@ -740,21 +712,15 @@ def test_every_dressing_is_a_symmetry_of_its_monomer(name):
                 worst = max(worst, min(np.linalg.norm(pos[j] - Y[i]) for j in same_z))
         return worst
 
-    W_cart = [A @ w.astype(float) @ np.linalg.inv(A)
-              for w in context.W_lin_by_ref[0]]
-    dW = worst_displacement(W_cart)
-    dS = worst_displacement(context.self_iso_by_ref[0])
+    D_cart = [A @ d.astype(float) @ np.linalg.inv(A)
+              for d in context.dress_stacked_by_ref[0][0]]
+    dD = worst_displacement(D_cart)
 
-    assert dW < 1e-3, (
-        f"{name}: a site-symmetry dressing displaces an atom by {dW:.4f} A. "
-        "W is supposed to be exact by construction -- this means the site "
-        "symmetry does not actually preserve the molecule."
-    )
-    assert dS <= 0.05 + 1e-9, (
-        f"{name}: a molecular dressing displaces an atom by {dS:.4f} A, beyond "
-        "the 0.05 A detection tolerance. Dressings this far from a real symmetry "
-        "can merge genuinely distinct clusters (over-merge), which corrupts the "
-        "lattice sum and is invisible to the n_classes == len(mers) check."
+    assert dD < 1e-3, (
+        f"{name}: a dressing displaces an atom by {dD:.4f} A. Dressings this far "
+        "from a real symmetry can merge genuinely distinct clusters (over-merge), "
+        "which corrupts the lattice sum and is invisible to the "
+        "n_classes == len(mers) check."
     )
 
 
@@ -763,23 +729,20 @@ def test_every_dressing_is_a_symmetry_of_its_monomer(name):
     "imidazole", "urea", "adamantane", "carbon_dioxide", "hexamine", "ice",
 ])
 def test_bound_dressing_groups_satisfy_the_containment_theorem(name):
-    # W_lin <= S is a theorem, and `bind` is where the two groups meet, so this
+    # W <= D by construction, and `bind` is where the two groups meet, so this
     # is where the containment has to actually hold. It is the previous test's
     # companion: that one checks no dressing is spurious (no over-detection),
-    # this one checks none is missing (no under-detection). The first protects
-    # the lattice energy; the second protects against redundant QC jobs.
+    # this one checks no site operation is missing (no under-detection). The
+    # first protects the lattice energy; the second against redundant QC jobs.
     crystal, _ = load(name)
     crystal = crystal.detect_symmetry(1e-3)
     refs = crystal.get_references()
     context.bind(crystal, refs)
 
-    A = np.asarray(crystal.lattice_vectors, float)
-    A_inv = np.linalg.inv(A)
     for i in range(len(refs)):
-        S = context.self_iso_by_ref[i]
+        D = context.dress_stacked_by_ref[i][0]
         for w in context.W_lin_by_ref[i]:
-            w_cart = A @ np.asarray(w, float) @ A_inv
-            assert any(np.allclose(w_cart, s, atol=1e-3) for s in S), (
-                f"{name}: reference {i} has a site operation absent from S. "
+            assert any(np.array_equal(w, d) for d in D), (
+                f"{name}: reference {i} has a site operation absent from D. "
                 "Any merge that needs it as a dressing is lost."
             )

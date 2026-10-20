@@ -257,7 +257,7 @@ def test_dimer_count_decreases_with_tighter_R(name):
 # Molecular symmetry beyond the site symmetry. Recorded from the exact +
 # Cartesian-congruence pipeline (ddc4c41) before the congruence pass was folded
 # into the integer orbit key; the unique count, the total multiplicity and the
-# multiplicity histogram must all survive that change.
+# multiplicity histogram all survived that change, except for CO2 (below).
 @pytest.mark.parametrize("name,N,R,n_unique,total,histogram", [
     ("triazine", 2, 20.0, 61, 418, {2: 5, 6: 44, 12: 12}),
     pytest.param("triazine", 2, 35.0, 266, 2082, {2: 9, 6: 178, 12: 75, 24: 4},
@@ -265,6 +265,10 @@ def test_dimer_count_decreases_with_tighter_R(name):
     ("triazine", 3, 12.0, 123, 2103, {3: 1, 6: 2, 9: 14, 18: 103, 36: 3}),
     ("ammonia", 2, 20.0, 183, 1075, {2: 2, 3: 5, 6: 176}),
     ("benzene", 2, 20.0, 116, 366, {2: 49, 4: 67}),
+    # CO2 improved: 86 under the Cartesian pass, 81 now, every merge refereed.
+    # One duplicate pair survives (80 classes) -- a twist about the linear
+    # molecule's axis that is not a cell symmetry; see the linear-monomer note.
+    ("carbon_dioxide", 2, 20.0, 81, 832, {2: 2, 6: 20, 12: 59}),
 ])
 def test_extra_symmetry_regression(name, N, R, n_unique, total, histogram):
     mers = cle.generate(crystal(name), N, R, **GENERATE_KW)

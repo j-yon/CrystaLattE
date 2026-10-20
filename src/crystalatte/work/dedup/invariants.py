@@ -26,32 +26,22 @@ def int_inv(M: NDArray) -> NDArray:
     return inv
 
 
-def relative_transforms(g_N: SymOpList, integer: bool) -> tuple[NDArray, NDArray]:
+def relative_transforms(g_N: SymOpList) -> tuple[NDArray, NDArray]:
     """Return the cluster's pairwise relative transforms ``Delta[a,b] = T_a^-1 T_b = (L[a,b], v[a,b])``
 
-    Available in exact integer arithmetic or Cartesian coordinates, cached on the cluster for efficiency
+    Exact integers in the lattice basis (translations in twelfths), cached on the cluster
 
     :param g_N: cluster whose relative transforms are requested
-    :param integer: whether to work in the exact integer lattice basis
     :returns: A tuple ``(L, v)`` of shapes ``(n, n, 3, 3)`` and ``(n, n, 3)``
     """
-    slot = "_rel_int_cache" if integer else "_rel_cache"
-
     # check for existing cache
-    cached = getattr(g_N, slot, None)
+    cached = getattr(g_N, "_rel_int_cache", None)
     if cached is not None:
         return cached
 
-    if integer:
-        R = g_N.rot_cache.astype(np.int64)  # (n, 3, 3)
-        t = g_N.tr_cache.astype(np.int64)  # (n, 3), twelfths
-        R_inv = int_inv(R)
-    else:
-        R = (
-            context.frac_to_cart @ g_N.rot_cache.astype(float) @ context.cart_to_frac
-        )  # (n, 3, 3)
-        t = (context.frac_to_cart @ (g_N.tr_cache.astype(float) / 12.0).T).T  # (n, 3)
-        R_inv = np.linalg.inv(R)
+    R = g_N.rot_cache.astype(np.int64)  # (n, 3, 3)
+    t = g_N.tr_cache.astype(np.int64)  # (n, 3), twelfths
+    R_inv = int_inv(R)
 
     # contract rotations
     L = np.einsum("aij,bjk->abik", R_inv, R)  # (n, n, 3, 3)
@@ -61,7 +51,7 @@ def relative_transforms(g_N: SymOpList, integer: bool) -> tuple[NDArray, NDArray
     v = np.einsum("aij,abj->abi", R_inv, dt)  # (n, n, 3)
 
     # cache and return transform
-    setattr(g_N, slot, (L, v))
+    g_N._rel_int_cache = (L, v)
     return L, v
 
 
@@ -232,24 +222,6 @@ def orbit_labels(candidates: list[SymOpList]) -> NDArray:
     return labels
 
 
-def base_reference(g_N: SymOpList) -> int:
-    """Return the (single) base reference index of a mono-reference cluster
-
-    :param g_N: The cluster whose base reference index is requested
-    :returns: The base reference index (``g_N.ref_indices[0]``)
-    """
-    return int(g_N.ref_indices[0])
-
-
-def is_mono_reference(g_N: SymOpList) -> bool:
-    """Return True iff every member of ``g_N`` shares the same base reference
-
-    :param g_N: cluster to test
-    :returns: True iff ``g_N`` is mono-reference
-    """
-    return len(set(g_N.ref_indices.tolist())) == 1
-
-
 def cluster_atoms_cart(g_N: SymOpList) -> NDArray:
     """Reconstruct the cluster's Cartesian atom positions from the module-level context bindings
 
@@ -299,20 +271,3 @@ def distance_fingerprint(g_N: SymOpList) -> tuple[NDArray, NDArray]:
     # cache and return
     g_N._dist_fp_cache = fp
     return fp
-
-
-def fingerprints_match_many(
-    g_N: SymOpList, zz: NDArray, d: NDArray, atol: float = 1e-6
-) -> NDArray:
-    """Return which of a stack of fingerprints coincide with ``g_N``'s Z-tagged distance fingerprint
-
-    :param g_N: cluster to compare
-    :param zz: ``(k, n_pairs)`` stacked Z products of the other clusters
-    :param d: ``(k, n_pairs)`` stacked distances of the other clusters
-    :param atol: absolute tolerance in Angstroms for the distance comparison
-    :returns: ``(k,)`` boolean array; entry ``j`` is True iff ``g_N`` matches row ``j``
-    """
-    zz_g, d_g = distance_fingerprint(g_N)
-    if zz.shape[1:] != zz_g.shape:
-        return np.zeros(len(zz), dtype=bool)  # different number of atom pairs
-    return (zz == zz_g).all(axis=1) & (np.abs(d - d_g).max(axis=1, initial=0.0) <= atol)

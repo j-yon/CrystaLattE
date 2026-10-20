@@ -57,7 +57,7 @@ def test_bind_multi_reference_state():
     assert len(context.references) == 4
     assert len(context.Z_by_ref) == 4
     assert len(context.W_lin_by_ref) == 4
-    assert len(context.check_congruence_by_ref) == 4
+    assert len(context.dress_stacked_by_ref) == 4
     # NH3 Z tags = [7,1,1,1] per reference
     assert list(context.Z_by_ref[0]) == [7, 1, 1, 1]
 

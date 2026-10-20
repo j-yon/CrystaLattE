@@ -10,7 +10,7 @@ from ..core.crystal import Crystal
 from ..core.multimer import Monomer
 from ..core.space_group import SITE_ATOL
 from ..core.sym_ops import SymOp, SymOpList
-from .dedup import congruence, context
+from .dedup import context
 from .dedup.equivalence import deduplicate_bucket
 from .dedup.invariants import orbit_labels
 
@@ -225,11 +225,6 @@ def generate_neighbors(
     ):
         local_unique, local_dup = deduplicate_bucket(bucket)
         unique.extend(local_unique)
-        duplicate.extend(local_dup)
-
-    # congruence pass: congruences outside the crystal symmetry
-    if congruence.is_needed():
-        unique, local_dup = congruence.merge_congruent(unique)
         duplicate.extend(local_dup)
 
     if verbose:
