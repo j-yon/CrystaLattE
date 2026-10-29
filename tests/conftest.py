@@ -10,8 +10,10 @@ DATA = Path(__file__).parent
 
 GENERATE_KW = {"use_origin": True, "verbose": 0}
 
-# ice is proton disordered (4 sites with 1/2 occupancy each)
-DISORDERED = {"ice"}
+# disordered fixtures and the policy `load` reads them with
+# ice is proton disordered (4 sites with 1/2 occupancy each); its legacy tests expect the
+# unphysical 'ignore' reading. ritonavir_c2 has explicit groups; load its first ordered state
+DISORDERED = {"ice": "ignore", "ritonavir_c2": "enumerate"}
 
 # mark tests that are slow on some fixtures, so they can be deselected with -m "not slow"
 _SLOW_CRYSTALS = frozenset({"hexamine"})
@@ -56,7 +58,7 @@ def load(name: str, disorder: str | None = None):
     """
     if disorder is None:
         # if known to be disordered, ignore the warning; otherwise, raise it as an error
-        disorder = "ignore" if name in DISORDERED else "error"
+        disorder = DISORDERED.get(name, "error")
 
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*partially occupied.*")
