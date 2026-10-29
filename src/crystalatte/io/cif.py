@@ -11,6 +11,7 @@ from ..core.multimer import ASU, Monomer
 from ..core.space_group import SpaceGroup
 from ..core.sym_ops import SymOp
 from .disorder import (
+    DISORDER_POLICIES,
     FULL_OCCUPANCY,
     explicit_choices,
     normalize_tag,
@@ -28,18 +29,16 @@ _HM_FIELDS = (
     "_space_group_name_h-m_full",
 )
 _SYMOP_FIELDS = ("_symmetry_equiv_pos_as_xyz", "_space_group_symop_operation_xyz")
+
+# necessary cell parameters
 _CELL_LENGTH_FIELDS = ("_cell_length_a", "_cell_length_b", "_cell_length_c")
 _CELL_ANGLE_FIELDS = ("_cell_angle_alpha", "_cell_angle_beta", "_cell_angle_gamma")
 
 # lazily built map from a normalised Hermann-Mauguin symbol to its Hall symbol
 _HM_INDEX: dict[str, str] = {}
 
-# what `from_cif` may be told to do about partially occupied sites
-DISORDER_POLICIES = ("enumerate", "error", "ignore", "drop")
-
 # the trivial group that states with symmetry-generated disorder start from
 _P1 = SpaceGroup.from_sym_ops([SymOp.identity()], number=1)
-
 
 def _clean_block(block):
     """Strip standard-uncertainty parentheses and convert numeric fields to floats
@@ -48,6 +47,7 @@ def _clean_block(block):
     :returns: Plain dict with numbers converted and uncertainties removed
     """
     cleaned_block = {}
+
     # pycifrw partitions CIF into a dict of lists/strings/floats
     for key, value in block.items():
         # found a list, corresponds to a looped field
@@ -192,7 +192,7 @@ def _verify_against_listed_ops(space_group: SpaceGroup, listed, source: str) -> 
 
 
 def _resolve_space_group(block: dict) -> SpaceGroup:
-    """Determine the space group of one data block
+    """Determine the provided space group of one data block
 
     :param block: Cleaned data block
     :returns: Resolved :class:`SpaceGroup`
@@ -259,10 +259,16 @@ def _site_occupancies(block: dict, n_sites: int) -> NDArray[np.float64]:
     occupancies = np.array(
         [float(v) if not isinstance(v, str) else 1.0 for v in values], dtype=float
     )
+
+    # raise a warning and default to fully occupied if the field is the wrong length
     if len(occupancies) != n_sites:
-        return np.ones(
-            n_sites
-        )  # default to fully occupied if the field is present but has the wrong length
+        warnings.warn(
+            f"CIF block has {len(occupancies)} occupancies but {n_sites} sites; "
+            "ignoring the occupancies and assuming all sites are fully occupied.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+        return np.ones(n_sites)  
 
     return occupancies
 
@@ -432,7 +438,8 @@ def from_cif(
         ordered state, each with :attr:`Crystal.state` set; "error", "ignore" or "drop" yield one crystal
     :returns: Generator of ``(Crystal, Monomer)``, one per data block, or one per ordered state of a
         disordered block
-    :raises ValueError: If block information is generally inconsistent or uninterpretable
+    :raises ValueError: If block information is generally inconsistent or uninterpretable, or for a
+        ``disorder`` incompatibility
     """
     if disorder not in DISORDER_POLICIES:
         raise ValueError(
@@ -447,20 +454,13 @@ def from_cif(
     for block in blocks:
         block = _clean_block(block)
 
-        missing = [
-            f
-            for f in (*_CELL_LENGTH_FIELDS, *_CELL_ANGLE_FIELDS)
-            if _first(block, (f,)) is None
-        ]
+        # search for missing cell parameters, which are required to build a crystal
+        missing = [f for f in (*_CELL_LENGTH_FIELDS, *_CELL_ANGLE_FIELDS) if _first(block, (f,)) is None]
         if missing:
             raise ValueError(f"CIF block is missing cell parameters: {missing}")
 
-        a, b, c = (
-            float(_first(block, (f,))) for f in _CELL_LENGTH_FIELDS
-        )  # lattice lengths
-        alpha, beta, gamma = (
-            float(_first(block, (f,))) for f in _CELL_ANGLE_FIELDS
-        )  # lattice angles
+        a, b, c = (float(_first(block, (f,))) for f in _CELL_LENGTH_FIELDS)
+        alpha, beta, gamma = (float(_first(block, (f,))) for f in _CELL_ANGLE_FIELDS)
 
         # attempt to resolve the space group
         space_group = _resolve_space_group(block)

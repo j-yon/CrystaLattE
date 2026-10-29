@@ -1,14 +1,3 @@
-"""Enumerate the ordered states a disordered CIF block admits
-
-Two kinds of disorder are handled:
-
-* explicit groups (``_atom_site_disorder_assembly`` / ``_atom_site_disorder_group``): one group
-  is chosen per assembly, and the declared space group still holds
-* symmetry-generated disorder (untagged or negative-group partial sites): a subset of the partial
-  atoms of the full unit cell is chosen, and the result has no symmetry until
-  :meth:`~crystalatte.core.crystal.Crystal.detect_symmetry` recovers it
-"""
-
 import itertools
 from collections import Counter
 from typing import NamedTuple
@@ -19,6 +8,9 @@ from numpy.typing import NDArray
 
 from ..core.crystal import expand_cell
 from ..core.sym_ops import SymOp
+
+# what `from_cif` may be told to do about partially occupied sites
+DISORDER_POLICIES = ("enumerate", "error", "ignore", "drop")
 
 # occupancy at or above this counts as fully occupied
 FULL_OCCUPANCY = 0.999
