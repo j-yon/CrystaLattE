@@ -61,6 +61,13 @@ def generate(
 
     if detect_symmetry:
         crystal = crystal.detect_symmetry(symprec)
+    else:
+        warnings.warn(
+            "symmetry detection is off; multimers related by symmetry the declared "
+            "space group lacks are possibly not merged, so the result may contain duplicates",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     monomers = crystal.get_references()
 
     # check for linear monomers and warn
@@ -75,28 +82,15 @@ def generate(
                 stacklevel=2,
             )
 
-    # without detection, independent references can be symmetry copies the declared space group misses
-    compositions = [tuple(sorted(m.symbols)) for m in monomers]
-    if not detect_symmetry and len(set(compositions)) < len(compositions):
-        warnings.warn(
-            "symmetry detection is off and two references share an atomic composition; multimers related "
-            "by symmetry the declared space group lacks are not merged, so the result may contain duplicates",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-
-    d = np.linalg.norm(crystal.lattice_vectors, axis=0)
-
     # determine bounding box to fully contain all partners of all anchors
     radius = max(
         np.linalg.norm(m.cart_coords - m.centroid_cart, axis=1).max() for m in monomers
     )
     spacing = 1.0 / np.linalg.norm(np.linalg.inv(crystal.lattice_vectors), axis=1)
-    # reach considers the maximum distance from an anchor centroid to any atom in a monomer, plus the cutoff R
-    reach = (R + 2 * radius) / spacing
-    anchors = np.array([m.centroid_frac for m in monomers])
+    reach = (R + 2 * radius) / spacing # maximum fractional distance to reach any partner of any anchor
 
-    # generate all symmetry images of all monomer centroids to determine the bounding box of lattice translations
+    # generate full unit cell for comparison
+    anchors = np.array([m.centroid_frac for m in monomers])
     images = np.array(
         [
             op.apply(m.centroid_frac)
@@ -104,11 +98,15 @@ def generate(
             for op in crystal.space_group.sym_ops
         ]
     )
+
+    # add max distance between monomers in unit cell to reach to ensure all partners are included
+    # in BOTH directions
     lows = np.floor(anchors.min(axis=0) - images.max(axis=0) - reach)
     highs = np.ceil(anchors.max(axis=0) - images.min(axis=0) + reach)
     bounds = np.vstack((lows, highs)).T.astype(int)
 
     # convert symprec to fractional tolerance for site-symmetry tests
+    d = np.linalg.norm(crystal.lattice_vectors, axis=0)
     kwargs.setdefault("site_atol", max(SITE_ATOL, float(symprec) / float(d.min())))
 
     # generate and deduplicate all unique N-mers in the supercell defined by ``bounds``
