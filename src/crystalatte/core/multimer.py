@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass, field
-from functools import cached_property
 
 import numpy as np
 import qcelemental as qcel
 from numpy.typing import NDArray
 from scipy.spatial.distance import pdist
 
-from .point_group import PointGroup
 from .sym_ops import SymOp, SymOpList
 
 
@@ -89,22 +86,6 @@ class Monomer:
     @property
     def symop(self) -> SymOp | None:
         return self._symop
-
-    @cached_property
-    def point_group(self) -> PointGroup:
-        """The monomer's point group detected from only its coordinates
-
-        :returns: detected point group
-        """
-        return self.point_group_seeded(())
-
-    def point_group_seeded(self, seed: Sequence[NDArray]) -> PointGroup:
-        """The monomer's point group detected from its coordinates and known "seed" symmetries.
-
-        :param seed: Cartesian ``(3, 3)`` operations about the centroid that the caller knows to be exact symmetries
-        :returns: Detected :class:`PointGroup`
-        """
-        return PointGroup.detect(self._symbols, self._cart_coords, seed=seed)
 
     def to_molecule(self) -> qcel.models.Molecule:
         """Convert to a QCElemental :class:`qcelemental.models.Molecule`

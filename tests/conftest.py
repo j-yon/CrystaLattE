@@ -18,7 +18,6 @@ DISORDERED = {"ice": "ignore", "ritonavir_c2": "enumerate"}
 # mark tests that are slow on some fixtures, so they can be deselected with -m "not slow"
 _SLOW_CRYSTALS = frozenset({"hexamine"})
 _SLOW_TESTS = frozenset({
-    "test_full_congruence_check_is_unconditional",
     "test_generate_runs_on_high_symmetry_crystals",
     "test_get_unique_sym_ops_ambiguous_wyckoff_position",
 })

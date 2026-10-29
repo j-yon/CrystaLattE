@@ -13,6 +13,8 @@ Run with:
 See tests/README.md for the suite map.
 """
 
+from collections import Counter
+
 import pytest
 
 import crystalatte as cle
@@ -46,16 +48,11 @@ _ATOL = 1e-8
     ("imidazole",          15.0, 135),
     ("urea",                    15.0, 49),
     ("adamantane",        15.0, 17),
-    pytest.param(
-        "carbon_dioxide", 15.0, 36,
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason="linear monomer: deduplication is knowingly incomplete, so 3 "
-                   "duplicate pairs survive and 39 are returned. 36 is the "
-                   "correct answer and is kept here as the target; see the "
-                   "limitation note in crystalatte.work.dedup",
-        ),
-    ),
+    # Linear monomer: 39 were returned until the orbit key was dressed with the
+    # cell-symmetry self-isometries about the molecular axis (D3d on [111]),
+    # which merge the 3 surviving duplicate pairs. Linear dedup is still
+    # incomplete in general; see test_linear_monomer_dedup_is_complete.
+    ("carbon_dioxide", 15.0, 36),
     ("hexamine",            15.0, 9),
     pytest.param(
         "ice", 15.0, 208,
@@ -251,3 +248,30 @@ def test_dimer_count_decreases_with_tighter_R(name):
     assert counts == sorted(counts, reverse=True), (
         f"Dimer counts should be non-increasing as R decreases: {counts}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Extra molecular symmetry
+# ---------------------------------------------------------------------------
+
+# Molecular symmetry beyond the site symmetry. Recorded from the exact +
+# Cartesian-congruence pipeline (ddc4c41) before the congruence pass was folded
+# into the integer orbit key; the unique count, the total multiplicity and the
+# multiplicity histogram all survived that change, except for CO2 (below).
+@pytest.mark.parametrize("name,N,R,n_unique,total,histogram", [
+    ("triazine", 2, 20.0, 61, 418, {2: 5, 6: 44, 12: 12}),
+    pytest.param("triazine", 2, 35.0, 266, 2082, {2: 9, 6: 178, 12: 75, 24: 4},
+                 marks=pytest.mark.slow),
+    ("triazine", 3, 12.0, 123, 2103, {3: 1, 6: 2, 9: 14, 18: 103, 36: 3}),
+    ("ammonia", 2, 20.0, 183, 1075, {2: 2, 3: 5, 6: 176}),
+    ("benzene", 2, 20.0, 116, 366, {2: 49, 4: 67}),
+    # CO2 improved: 86 under the Cartesian pass, 81 now, every merge refereed.
+    # One duplicate pair survives (80 classes) -- a twist about the linear
+    # molecule's axis that is not a cell symmetry; see the linear-monomer note.
+    ("carbon_dioxide", 2, 20.0, 81, 832, {2: 2, 6: 20, 12: 59}),
+])
+def test_extra_symmetry_regression(name, N, R, n_unique, total, histogram):
+    mers = cle.generate(crystal(name), N, R, **GENERATE_KW)
+    assert len(mers) == n_unique
+    assert sum(m.multiplicity for m in mers) == total
+    assert dict(Counter(m.multiplicity for m in mers)) == histogram

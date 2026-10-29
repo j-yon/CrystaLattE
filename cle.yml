@@ -131,7 +131,6 @@ dependencies:
   - pydantic
   - pydantic-core
   - pygments
-  - pymatgen
   - pyparsing
   - pysocks
   - pytest

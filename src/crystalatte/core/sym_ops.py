@@ -201,8 +201,6 @@ class SymOpList:
     :param _ref_indices: Per-member base-reference index, defaults to all-zeros for single-reference clusters
     :ivar _rot_cache: Cached array of the rotational components of the symmetry operations
     :ivar _tr_cache: Cached array of the translational components of the symmetry operations
-    :ivar _rel_cache: Lazily cached ``(L, v)`` pairwise relative Cartesian transforms
-    :ivar _dist_fp_cache: Lazily cached ``(zz, distances)`` Z-tagged distance fingerprint
     """
 
     _sym_ops: list[SymOp] | None
@@ -210,23 +208,6 @@ class SymOpList:
     _ref_indices: NDArray | None = field(default=None, repr=False)
     _rot_cache: NDArray = field(init=False, repr=False)
     _tr_cache: NDArray = field(init=False, repr=False)
-
-    _rel_cache: tuple[NDArray, NDArray] | None = field(default=None, init=False, repr=False, compare=False)
-    _rel_int_cache: tuple[NDArray, NDArray] | None = field(default=None, init=False, repr=False, compare=False)
-    _dist_fp_cache: tuple[NDArray, NDArray] | None = field(default=None, init=False, repr=False, compare=False)
-
-    # lazily-derived geometry caches
-    _PICKLE_EXCLUDED = ("_rel_cache", "_rel_int_cache", "_dist_fp_cache")
-
-    def __getstate__(self):
-        """Drop the derived caches when pickling, rebuild on demand
-
-        :returns: The instance dict with the derived cache slots cleared
-        """
-        state = self.__dict__.copy()
-        for name in self._PICKLE_EXCLUDED:
-            state[name] = None
-        return state
 
     def __post_init__(self):
         """Constructor method to validate inputs and compute caches for the symmetry operations
@@ -333,10 +314,5 @@ class SymOpList:
         # set caches
         instance._rot_cache = rot
         instance._tr_cache = tr
-
-        # __new__ bypasses the dataclass __init__, so initialize lazily-populated geometry caches
-        instance._rel_cache = None
-        instance._rel_int_cache = None
-        instance._dist_fp_cache = None
 
         return instance
