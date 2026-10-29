@@ -407,5 +407,5 @@ def from_cif(
                 f"Calculated from primitive vectors: {crystal.volume:.2f} A^3"
             )
 
-        # since the CIF format allows multiple data blocks, yield each crystal and its reference monomer
-        yield crystal, crystal.get_reference()
+        # since the CIF format allows multiple data blocks, yield each crystal
+        yield crystal

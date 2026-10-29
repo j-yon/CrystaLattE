@@ -263,6 +263,7 @@ class Crystal:
 
         reps: dict[tuple, tuple[float, list]] = {}
 
+        # TODO: find why this is necessary
         # iterate over all complete molecules and find the representative of each symmetry orbit
         for comp in full:
             syms = [str(unique_symbols[j]) for j in comp]
@@ -288,14 +289,6 @@ class Crystal:
             self._build_monomer(c, unique_frac, unique_cart, unique_symbols)
             for c in ordered
         ]
-
-    def get_reference(self, tol: float = 1.2) -> Monomer:
-        """Return the single reference molecule closest to the origin
-
-        :param tol: Tolerance factor for determining bonding
-        :returns: :class:`Monomer` representing the reference molecule
-        """
-        return self.get_references(tol)[0]
 
     def detect_symmetry(self, symprec: float = 1e-3) -> Crystal:
         """Attempt to detect a higher space group with ``spglib``. CIFs often declare a lower symmetry 
@@ -356,7 +349,6 @@ class Crystal:
             )
             return self
 
-        # if detected symmetry is lower than declared, return with declared symmetry
         detected = [
             SymOp.from_components(
                 np.asarray(r, dtype=np.int16),
@@ -365,7 +357,10 @@ class Crystal:
             for r, t in zip(sym["rotations"], sym["translations"])
         ]
         declared = self._space_group.sym_ops
+
+        # if detected symmetry is <= declared, return with declared symmetry
         if len(detected) <= len(declared):
+            # if explicitly lower, warn so
             if len(detected) < len(declared):
                 warnings.warn(
                     "Symmetry detection found lower symmetry than declared, "
@@ -373,8 +368,10 @@ class Crystal:
                     RuntimeWarning,
                     stacklevel=2,
                 )
+
             return self
 
+        # higher symmetry found
         # check that each declared op appears in new detected symmetry
         def _same_op(a, b):
             return np.array_equal(a.rot, b.rot) and np.array_equal(
