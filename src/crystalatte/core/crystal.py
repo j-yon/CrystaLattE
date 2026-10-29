@@ -38,10 +38,13 @@ def expand_cell(
     :returns: Fractional coordinates wrapped into [0, 1), their symbols, and the ASU site each came from
     """
     frac, syms, site = [], [], []
+    # iterate over all atoms
     for i, (pos, sym) in enumerate(zip(positions, symbols)):
+        # iterate over all symmetry operations
         for op in sym_ops:
             r = op.apply(np.asarray(pos, dtype=float)) % 1.0
             r[r > 1.0 - 1e-6] = 0.0  # wrap 0.999999 -> 0
+            # always accept first atom
             if frac:
                 d = (np.asarray(frac) - r + 0.5) % 1.0 - 0.5  # periodic distance
                 if np.any(np.linalg.norm(d, axis=1) < 1e-3):
@@ -49,6 +52,7 @@ def expand_cell(
             frac.append(r)
             syms.append(sym)
             site.append(i)
+
     return np.array(frac), np.array(syms), np.array(site, dtype=np.intp)
 
 
@@ -68,12 +72,8 @@ class Crystal:
     _angles: tuple[float, float, float]
     _space_group: SpaceGroup
     _asu: ASU
-
-    # computed matrices for coordinate transformations
-    _frac_to_cart: NDArray[np.float64] = field(init=False, repr=False)
-
-    # which ordered state of a disordered CIF this is, if any
     _state: DisorderState | None = None
+    _frac_to_cart: NDArray[np.float64] = field(init=False, repr=False)
 
     def __post_init__(self):
         """Validate crystal attributes and initialize transformation matrices"""
