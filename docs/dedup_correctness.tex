@@ -413,6 +413,196 @@ $12$\,\AA), now in integer arithmetic. Computing $\Hgrp$ from the Bravais
 lattice instead of the box would lose them
 (\texttt{test\_cell\_symmetry\_is\_the\_box\_not\_the\_bravais\_lattice}).
 
+\section{Planned: a dot--product key for linear monomers}\label{sec:linear}
+
+\emph{Status: design, not implemented.} This section explains the fix planned
+for Caveat~\ref{cav:linear} in plain terms. It keeps the property the rest of
+this note relies on: every comparison is exact integer arithmetic, with no
+tolerance per cluster.
+
+\subsection{What goes wrong today}
+
+The orbit key looks at each cluster from one of its members (the anchor) and
+describes the partners in the anchor's own frame. A placement gives that frame
+a full 3D orientation. A linear molecule only has a direction, though: spinning
+it about its own axis (a \emph{twist}) moves no atom. So the anchor's frame
+contains a twist that has no physical meaning, and the key still compares it.
+
+The key can only absorb a twist that is one of the cell's own integer
+symmetries (Proposition~\ref{prop:reach}). Twists are a continuous family, and
+almost none of them are integer symmetries. The one carbon dioxide pair that
+survives at $R=20$ shows this. Both dimers have two parallel molecules along
+$[111]$; one has its centroids offset by $(-3,0,0)$, the other by $(-2,-2,1)$.
+The offsets have the same length ($9=4+4+1$ cell edges squared) and the same
+angle to the axis, so the dimers are identical (they agree to
+$3\times10^{-15}$\,\AA). The motion that relates them is a mirror containing the
+molecular axis, with fractional matrix
+$\tfrac13\begin{psmallmatrix}2&2&-1\\2&-1&2\\-1&2&2\end{psmallmatrix}$. It is not
+an integer matrix, so no finite dressing group can supply it.
+
+\paragraph{Only the anchor is the problem.} If the anchor has a full frame (a
+non-linear molecule), the motion between two matching clusters is pinned down,
+and every linear \emph{partner}'s twist then comes out as an integer operation.
+The existing dressing group already contains those operations. So:
+\begin{itemize}[leftmargin=2em]
+\item \textbf{Mixed clusters} (at least one non-linear member): always anchor
+  on a non-linear member. In \texttt{\_group\_keys} this just changes the order
+  references are sorted in, putting non-linear references first. The proof of
+  Theorem~\ref{thm:key} does not depend on that order.
+\item \textbf{All--linear clusters} (every member linear, or a single atom): no
+  member has a real frame. These need the new key below.
+\end{itemize}
+
+\subsection{The idea: describe the cluster by its dot products}
+
+Describe each linear member $a$ by two vectors:
+\begin{itemize}[leftmargin=2em]
+\item its centroid $p_a$;
+\item its axis vector $u_a$, for example the vector from one end atom to the
+  other. Every atom then sits at $p_a+\lambda_k u_a$ for fixed numbers
+  $\lambda_k$ that are the same for every copy of the molecule.
+\end{itemize}
+Neither vector has a twist, so the twist problem disappears.
+
+Now list the vectors that describe the shape of the cluster: the centroid
+offsets $p_1-p_0,\dots,p_{n-1}-p_0$ from member $0$, and the axes
+$u_0,\dots,u_{n-1}$. Write down the \emph{table of dot products} between every
+pair of them. This table records every distance and every angle in the cluster.
+
+\paragraph{The key fact.} Two lists of vectors have the same dot--product table
+exactly when one list is a rotation, possibly combined with a reflection, of the
+other. So two clusters (with members listed in matching order) are the same
+multimer exactly when their tables are equal. Reflections are included, as in
+Definition~\ref{def:same}, so mirror images merge. A single atom has no axis and
+contributes only its centroid, so the same method covers single--atom
+monomers, which have the same problem in every direction.
+
+\subsection{Making it exact: compare formulas, not numbers}
+
+Dot products are real numbers, and comparing real numbers needs a tolerance.
+The plan instead compares the \emph{formulas} that produce them. Three kinds of
+real number enter, and each one is kept as a named unknown:
+\begin{enumerate}[leftmargin=2em]
+\item \textbf{The cell shape.} In fractional coordinates a dot product is
+  $x\cdot y=x^{\mathsf T}Gy$, and the metric $G$ holds the edge lengths and
+  angles. The cell's symmetry forces some of these to be equal or zero, so
+  only a few independent numbers remain: one for a cubic cell ($a^2$), two
+  for tetragonal or hexagonal ($a^2$, $c^2$), three for orthorhombic, four for
+  monoclinic and six for triclinic. Call them $g_1,g_2,\dots$. Each dot product
+  is then a whole--number combination of the $g_k$, once fractions are cleared.
+  The split is computed automatically by averaging over the cell symmetry
+  $\Hgrp$, so it needs no per--crystal--system tables. This step is essential:
+  in a cubic cell $(3,0,0)$ and $(2,2,1)$ have equal length only because
+  $a=b=c$. If the edges were kept as separate unknowns, the formulas $9a^2$ and
+  $4a^2+4b^2+c^2$ would look different and the merge would be missed.
+\item \textbf{Where the molecule sits.} The site symmetry fixes some centroid
+  coordinates (CO$_2$'s centroid is exactly the origin) and leaves others free
+  (a molecule on a three--fold axis sits at $(x,x,x)$). The centroid is written
+  as a fixed part plus free unknowns $\xi$. The fixed part and the allowed
+  directions come from one requirement: every operation in the dressing group
+  must leave the centroid where it is. That is a small system of equations,
+  solved exactly with fractions.
+\item \textbf{Which way it points.} In the same way, every dressing must map
+  the axis onto itself, possibly flipped end to end. That leaves the axis free
+  in some directions, written with unknowns $\eta$. CO$_2$'s axis is
+  $\eta\,(1,1,1)$: one unknown, since only its length is free.
+\end{enumerate}
+A placement moves the centroid and axis by an integer rotation and a
+translation in twelfths. So every offset and axis in a cluster is a vector
+whose entries are whole--number combinations of these unknowns, and every dot
+product is a whole--number combination of a short list of terms: each $g_k$
+times $1$, $\xi_i$, $\xi_i\xi_j$, $\eta_j$, $\xi_i\eta_j$ or $\eta_i\eta_j$.
+Each table entry is therefore stored as a list of integer coefficients, and two
+entries are equal when their coefficient lists are equal. Nothing is rounded.
+
+\paragraph{What this guarantees.} If two formulas are identical, they give the
+same number for the real crystal, so a merge is always correct. The reverse can
+fail: two different formulas might happen to give the same number for this
+particular crystal's measured values. Such a pair is not merged. Nothing in the
+structure forces it, as in Caveat~\ref{cav:reach}, and like every missed merge
+it costs a redundant calculation, not accuracy.
+
+\subsection{Listing order and end--to--end flips}
+
+The table depends on the order the members are listed in and, for a molecule
+whose two ends are the same (CO$_2$, unlike HCN), on which end the axis points
+from. To remove both, the key tries every listing order (members of the same
+reference only, as with the existing key) and every end--to--end flip of
+symmetric molecules. A flip simply changes the sign of that axis's row and
+column. Each variant gives one flattened table, and the key is the
+\emph{smallest} of them in dictionary order, compared as packed integer codes
+with the existing \texttt{lex\_codes}. Two clusters get the same key exactly
+when some listing of one has the same table as some listing of the other. That
+is the same reasoning as Theorem~\ref{thm:key}. Whether a molecule's two ends
+are the same is decided once per reference, by checking whether inversion
+through its centroid maps it onto itself.
+
+\subsection{Worked example: the surviving CO$_2$ pair}
+
+Cubic cell, so one shape unknown $g=a^2$; centroid fixed at the origin; axis
+$\eta(1,1,1)$, and both molecules in each dimer point the same way. The table
+has six entries:
+\[
+\begin{array}{lcc}
+ & \text{offset }(-3,0,0) & \text{offset }(-2,-2,1)\\\midrule
+\text{offset}\cdot\text{offset} & 9g & 4g+4g+g=9g\\
+\text{offset}\cdot u_0,\ \text{offset}\cdot u_1 & -3\eta g & (-2-2+1)\eta g=-3\eta g\\
+u_0\cdot u_0,\ u_0\cdot u_1,\ u_1\cdot u_1 & 3\eta^2g & 3\eta^2g
+\end{array}
+\]
+The formulas agree term by term, so the pair merges, with no rounding. For
+contrast, offsets $(1,1,1)$ and $(1,1,-1)$ have equal length ($3g$), but the
+offset--axis entries are $3\eta g$ against $\eta g$. Those dimers really are
+different, and the key keeps them apart.
+
+\subsection{Where it runs}
+
+\begin{itemize}[leftmargin=2em]
+\item \texttt{context.bind} records, per reference: whether it is linear (the
+  existing rank test), whether its ends are the same, and the fixed parts and
+  free directions of its centroid and axis. Per crystal, it records the cell
+  shape pieces.
+\item \texttt{orbit\_labels} keeps the existing key for every cluster. For
+  reference groups whose members are all linear, it then computes the
+  dot--product key for one representative of each existing class and merges
+  classes whose representatives share it. Every merge the existing key makes is
+  also a match under the dot--product key: the dressings were used to set up
+  the unknowns, and every operation of $\Hgrp$ preserves each cell--shape piece.
+  Running the existing key first therefore changes only the cost, not the
+  answer.
+\item Representatives and multiplicities are handled by the existing
+  \texttt{equivalence.merge}, so the lattice sum is unchanged
+  (Proposition~\ref{prop:energy}).
+\end{itemize}
+
+\paragraph{Cost.} A cluster of $n$ symmetric linear molecules has at most
+$n!\,2^n$ variants: $8$ for dimers, $48$ for trimers, $384$ for tetramers. Each
+table entry has at most $168$ coefficients, and in practice far fewer, because
+most unknowns are absent (CO$_2$ has just $g$ and $\eta$). The key runs only on
+existing class representatives (81 for CO$_2$ dimers at $R=20$), in batches.
+
+\paragraph{Independent references.} With more than one linear reference
+($Z'>1$), each reference gets its own centroid and axis unknowns, and members
+are only reordered within a reference. As with the existing key, two
+independent references are never identified with each other
+(Caveat~\ref{cav:zprime}).
+
+\subsection{How it will be checked}
+
+\begin{itemize}[leftmargin=2em]
+\item CO$_2$ dimers: $R=15$ stays at $36$, and $R=20$ goes from $81$ to $80$,
+  matching the chemistry--class referee.
+\item CO$_2$ trimers at $R\approx10$: the result is complete and does not
+  over--merge, checked by both referees.
+\item Built--in crystals for cases the fixtures lack: a one--directional linear
+  molecule on a general position (no flips, all unknowns free), a mixed
+  cocrystal (checks the non--linear anchor rule), and a single--atom crystal.
+\item A floating--point dot--product table at tight tolerance, used only in the
+  tests as an independent check of every merge.
+\item The linear--molecule warning in \texttt{generate} is removed, and the two
+  strict \texttt{xfail}s are lifted.
+\end{itemize}
+
 \section{Caveats}\label{sec:caveats}
 
 Theorem~\ref{thm:key} is exact given the dressing groups. The following are the
@@ -471,7 +661,7 @@ dressing group, and every $\Dgrp_i$ is finite. Integral twists help: carbon
 dioxide ($Pa\bar3$, $|W|=6$, $|\Dgrp|=12$) now gives the correct $36$ dimers at
 $R=15$ and $81$ (from $86$) at $R=20$, every merge refereed, but one congruent
 pair of representatives remains at $R=20$. \texttt{generate} warns for linear
-monomers.
+monomers. Section~\ref{sec:linear} plans the fix.
 
 \item\label{cav:zprime}\textbf{Cross--reference congruence is left to symmetry
 detection.} $\pi$ must be reference--compatible, so two independent references
