@@ -7,7 +7,7 @@ from CifFile import ReadCif
 from numpy.typing import NDArray
 
 from ..core.crystal import Crystal, DisorderState
-from ..core.multimer import ASU, Monomer
+from ..core.multimer import ASU
 from ..core.space_group import SpaceGroup
 from ..core.sym_ops import SymOp
 from .disorder import (
@@ -426,8 +426,8 @@ def _ordered_states(
 
 def from_cif(
     cif_file: str, disorder: str = "enumerate"
-) -> Generator[tuple[Crystal, Monomer]]:
-    """Parse a CIF file into :class:`Crystal` / :class:`Monomer` pairs.
+) -> Generator[Crystal]:
+    """Parse a CIF file into :class:`Crystal` objects.
 
     .. note::
         The CIF format allows multiple data blocks per file, so this function yields instead
@@ -436,7 +436,7 @@ def from_cif(
     :param cif_file: Path to the CIF file
     :param disorder: Policy for partially occupied sites: "enumerate" (default) yields one crystal per
         ordered state, each with :attr:`Crystal.state` set; "error", "ignore" or "drop" yield one crystal
-    :returns: Generator of ``(Crystal, Monomer)``, one per data block, or one per ordered state of a
+    :returns: Generator of :class:`Crystal`, one per data block, or one per ordered state of a
         disordered block
     :raises ValueError: If block information is generally inconsistent or uninterpretable, or for a
         ``disorder`` incompatibility
@@ -504,4 +504,4 @@ def from_cif(
             )
 
         # since the CIF format allows multiple data blocks, yield each crystal
-        yield crystal
+        yield from (crystal for crystal in crystals)
