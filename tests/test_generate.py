@@ -34,10 +34,9 @@ _ATOL = 1e-8
 # crystal; each was additionally confirmed by explicit Kabsch congruence, so a
 # change here means the dedup changed, not that the reference drifted.
 #
-# Two rows moved since, both because the enumeration box grew to cover multimers
-# it used to miss (the candidate total rose with the count, so nothing merged
-# differently): uracil 111 -> 113 when ecdf36e sized the box by plane spacing,
-# and ice 205 -> 208 at the same commit.
+# One row moved since because the enumeration box grew to cover multimers it
+# used to miss (the candidate total rose with the count, so nothing merged
+# differently): uracil 111 -> 113 when ecdf36e sized the box by plane spacing.
 @pytest.mark.parametrize("name,R,expected", [
     ("benzene",              15.0, 52),
     ("uracil",               15.0, 113),
@@ -55,17 +54,15 @@ _ATOL = 1e-8
     # test_linear_monomer_dedup_is_complete_at_20.
     ("carbon_dioxide", 15.0, 36),
     ("hexamine",            15.0, 9),
-    pytest.param(
-        "ice", 15.0, 208,
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason="the exact orbit key (15e6e6f) over-merges proton-disordered "
-                   "ice: 208 -> 78 from the same 497 candidates, and "
-                   "test_no_over_merge_every_discarded_cluster_matches_a_survivor "
-                   "confirms a real over-merge. 208 is the count before it; how "
-                   "to resolve ice is an open decision",
-        ),
-    ),
+    # The published CIF rounds the 3-fold special position (1/3, 2/3, z) to
+    # 0.3333/0.6667. The exact orbit key (15e6e6f) merges by the space group, so
+    # it is blind to that and returns 78; the Cartesian dedup before it was not,
+    # and split equivalent dimers into 205 (208 once the box grew). With the
+    # thirds written out (ice_exact) both give 78.
+    ("ice",                      15.0, 78),
+    # Ordered Bernal-Fowler ice, P6_3cm, Z' = 2: the structure v1's ice value
+    # came from (see test_ice_bernal_fowler_matches_v1_at_30).
+    ("ice_bernal_fowler",  15.0, 267),
     # Z' = 3 (Pca2_1) -- three symmetry-independent molecules, so every dimer
     # here is drawn from a pair of possibly-different references. Lives under
     # other/ rather than x23/.
