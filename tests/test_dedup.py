@@ -389,20 +389,6 @@ def test_linear_monomer_dedup_is_complete_at_20():
     assert n_classes == len(mers)
 
 
-def test_linear_monomer_emits_a_warning():
-    # The one remaining linearity test in the codebase is purely diagnostic: it
-    # must warn, and must not change any result.
-    with pytest.warns(RuntimeWarning, match="linear molecule"):
-        crystal = load("carbon_dioxide")
-        generate.generate(crystal, 2, 6.0, **GENERATE_KW)
-
-
-def test_nonlinear_monomer_emits_no_warning(recwarn):
-    crystal = load("benzene")
-    generate.generate(crystal, 2, 6.0, **GENERATE_KW)
-    assert not [w for w in recwarn if "linear molecule" in str(w.message)]
-
-
 def test_special_position_tolerance_absorbs_cif_rounding():
     # Ice Ih's CIF writes the 3-fold special position (1/3, 2/3, z) as the
     # rounded decimals 0.3333 / 0.6667, putting the monomer centroid ~8.5e-5

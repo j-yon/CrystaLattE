@@ -50,8 +50,9 @@ _ATOL = 1e-8
     ("adamantane",        15.0, 17),
     # Linear monomer: 39 were returned until the orbit key was dressed with the
     # cell-symmetry self-isometries about the molecular axis (D3d on [111]),
-    # which merge the 3 surviving duplicate pairs. Linear dedup is still
-    # incomplete in general; see test_linear_monomer_dedup_is_complete.
+    # which merge the 3 surviving duplicate pairs. The remaining pair at larger
+    # R is merged by the dot-product key (dedup.dotkey); see
+    # test_linear_monomer_dedup_is_complete_at_20.
     ("carbon_dioxide", 15.0, 36),
     ("hexamine",            15.0, 9),
     pytest.param(

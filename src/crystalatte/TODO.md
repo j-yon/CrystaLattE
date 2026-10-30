@@ -7,7 +7,6 @@
 - slight cell size difference, comes from dropping uncertainty in CIF parsing (i think)
 - pyrazole, Z'>1 isnt handled correctly rn
 - ice, disordered water molecules
-- carbon dioxide, linear molecules dont work
 - adamantane and naphthalene? not sure
     - this one seems to be a problem with v1, not v2
 

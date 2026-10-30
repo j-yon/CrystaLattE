@@ -113,17 +113,17 @@ statements about ice.
 renamed, but if a fixture ever again fails to follow `<name>/<name>.cif`,
 `conftest.cif()` will refuse it with a message telling you to rename.
 
-## The four remaining xfails
+## The two remaining xfails
 
-All four are `strict=True`, so a fix surfaces as a failure rather than passing
-quietly. They are two known problems, each pinned from two sides:
+Both are `strict=True`, so a fix surfaces as a failure rather than passing
+quietly. They are one known problem (ice), pinned from two sides.
 
-- **Linear monomers.** `test_dedup.py::test_linear_monomer_dedup_is_complete`
-  and the `carbon_dioxide` row of `test_dimer_count`. A linear molecule's twist
-  about its own axis moves no atom, but a placement stores a full 3×3 rotation,
-  so that physically vacuous coordinate is still compared and two placements of
-  the same molecule fail to match — 39 dimers come back where 36 is correct.
-  Both hold 36 as the target. See the limitation note in `crystalatte.work.dedup`.
+Linear monomers (carbon dioxide) used to be listed here and are resolved:
+all-linear clusters are merged by an exact dot-product key (`dedup.dotkey`),
+which carries no twist about the molecular axis, and CO2 dimers at R = 20 give
+the referee's 80. `test_linear_monomer_dedup_is_complete_at_20` and the
+carbon_dioxide rows of `test_dimer_count` and the over-merge referee now pass.
+
 - **Ice over-merge.** The `ice` row of `test_dimer_count` and the `ice` row of
   `test_no_over_merge_every_discarded_cluster_matches_a_survivor`. The exact
   orbit key (`15e6e6f`) folds ice's 497 candidate dimers at R = 15 into 78 where

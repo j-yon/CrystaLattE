@@ -413,10 +413,11 @@ $12$\,\AA), now in integer arithmetic. Computing $\Hgrp$ from the Bravais
 lattice instead of the box would lose them
 (\texttt{test\_cell\_symmetry\_is\_the\_box\_not\_the\_bravais\_lattice}).
 
-\section{Planned: a dot--product key for linear monomers}\label{sec:linear}
+\section{A dot--product key for linear monomers}\label{sec:linear}
 
-\emph{Status: design, not implemented.} This section explains the fix planned
-for Caveat~\ref{cav:linear} in plain terms. It keeps the property the rest of
+\emph{Status: implemented} (modules \texttt{dedup.linear} and
+\texttt{dedup.dotkey}); CO$_2$ dimers at $R=20$ now give the referee's $80$.
+This section explains the fix for Caveat~\ref{cav:linear} in plain terms. It keeps the property the rest of
 this note relies on: every comparison is exact integer arithmetic, with no
 tolerance per cluster.
 
@@ -587,20 +588,21 @@ are only reordered within a reference. As with the existing key, two
 independent references are never identified with each other
 (Caveat~\ref{cav:zprime}).
 
-\subsection{How it will be checked}
+\subsection{How it is checked}
 
 \begin{itemize}[leftmargin=2em]
 \item CO$_2$ dimers: $R=15$ stays at $36$, and $R=20$ goes from $81$ to $80$,
   matching the chemistry--class referee.
-\item CO$_2$ trimers at $R\approx10$: the result is complete and does not
-  over--merge, checked by both referees.
-\item Built--in crystals for cases the fixtures lack: a one--directional linear
-  molecule on a general position (no flips, all unknowns free), a mixed
-  cocrystal (checks the non--linear anchor rule), and a single--atom crystal.
-\item A floating--point dot--product table at tight tolerance, used only in the
-  tests as an independent check of every merge.
-\item The linear--molecule warning in \texttt{generate} is removed, and the two
-  strict \texttt{xfail}s are lifted.
+\item CO$_2$ trimers at $R=10$ complete and are not over--merged, checked by
+  both referees.
+\item Built--in crystals for cases the fixtures lack: polar HCN on a general
+  position (no flips, all unknowns free), an HCN and water cocrystal tested in
+  both reference orders (checks the non--linear anchor rule), single--atom
+  argon, and CO$_2$ expanded to $P1$ with four independent references.
+\item The tests use the existing chemistry--class referee for independent
+  checking, not a floating--point dot--product table.
+\item The linear--molecule warning in \texttt{generate} is removed, and the
+  strict \texttt{xfail}s for carbon dioxide are lifted.
 \end{itemize}
 
 \section{Caveats}\label{sec:caveats}
@@ -653,15 +655,14 @@ fewer dressings, i.e.\ towards keeping duplicates. No fixture triggers any of
 them. The completeness of the $\{-1,0,1\}$ candidates rests on running the search
 in a Niggli--reduced basis.
 
-\item\label{cav:linear}\textbf{Linear monomers are incomplete by construction.}
-A placement fixes three rotational degrees of freedom, a linear molecule's
-orientation only two; the twist about the molecular axis moves no atom but is
-still compared in $L_{ab}$. Quotienting a continuous twist needs a continuous
-dressing group, and every $\Dgrp_i$ is finite. Integral twists help: carbon
-dioxide ($Pa\bar3$, $|W|=6$, $|\Dgrp|=12$) now gives the correct $36$ dimers at
-$R=15$ and $81$ (from $86$) at $R=20$, every merge refereed, but one congruent
-pair of representatives remains at $R=20$. \texttt{generate} warns for linear
-monomers. Section~\ref{sec:linear} plans the fix.
+\item\label{cav:linear}\textbf{Linear monomers: only parameter--specific
+coincidences are missed.} All--linear clusters are merged by the dot--product key
+(Section~\ref{sec:linear}), which ignores the twist about the molecular axis;
+mixed clusters anchor on a non--linear member. The only remaining misses are
+congruences that hold only at the crystal's particular parameter values rather
+than being forced by its structure. They cost duplicate calculations, never
+accuracy. If a reference's symmetry does not keep its axis, the setup falls back
+to the existing key for that reference, with a warning.
 
 \item\label{cav:zprime}\textbf{Cross--reference congruence is left to symmetry
 detection.} $\pi$ must be reference--compatible, so two independent references

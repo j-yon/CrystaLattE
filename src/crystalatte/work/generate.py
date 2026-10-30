@@ -45,12 +45,6 @@ def generate(
     :returns: List of unique multimers found in the crystal
     :raises ValueError: If ``N`` is not an integer ``>= 2``
 
-    .. warning::
-       Linear monomers are not currently supported. Linear molecules have only
-       two rotational degrees of freedom, but a placement is stored as a full 3x3 
-       rotation. The extra parameter is physically meaningless yet is still compared, 
-       so two placements of the identical molecule can disagree and their multimers fail
-       to merge
     """
     # check N validity
     if not isinstance(N, (int, np.integer)) or isinstance(N, bool) or N < 2:
@@ -69,18 +63,6 @@ def generate(
             stacklevel=2,
         )
     monomers = crystal.get_references()
-
-    # check for linear monomers and warn
-    for i, m in enumerate(monomers):
-        pos = np.asarray(m.cart_coords, dtype=float)
-        if np.linalg.matrix_rank(pos - pos.mean(axis=0), tol=1e-6) <= 1:
-            warnings.warn(
-                f"reference {i} is a linear molecule; multimer deduplication is "
-                "known to be incomplete for linear monomers and the result will "
-                "contain duplicates (see crystalatte.work.dedup)",
-                RuntimeWarning,
-                stacklevel=2,
-            )
 
     # determine bounding box to fully contain all partners of all anchors
     radius = max(
