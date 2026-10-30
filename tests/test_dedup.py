@@ -52,7 +52,8 @@ def _translate(dx12):
 def _same_label(G, H, W_by_ref, W_tr_by_ref=None):
     """Return whether ``orbit_labels`` puts ``G`` and ``H`` in one class under the given dressings
 
-    Binds only what the orbit key reads: each reference's stacked ``(W, W^-1, W_tr)``. The label
+    Binds only what the orbit key reads: each reference's stacked ``(W, W^-1, W_tr)`` and the
+    identity anchor rank (no reference is linear). The label
     is exact, so it decides the same matching condition the removed ``same_multimer_int`` did.
     """
     stacked = []
@@ -65,6 +66,7 @@ def _same_label(G, H, W_by_ref, W_tr_by_ref=None):
         )
         stacked.append((W, invariants.int_inv(W), tr))
     context.dress_stacked_by_ref = stacked
+    context.anchor_rank = np.arange(len(W_by_ref), dtype=np.int64)
     labels = invariants.orbit_labels([G, H])
     return bool(labels[0] == labels[1])
 

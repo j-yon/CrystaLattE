@@ -91,18 +91,20 @@ def _dressed_minima(D: NDArray, ref_a: int, ref_b: int) -> NDArray:
 
 
 def _group_keys(cands: list[SymOpList], refs: tuple[int, ...]) -> NDArray:
-    """Return the orbit keys of clusters that share one sorted base-reference tuple
+    """Return the orbit keys of clusters that share one ranked base-reference tuple
 
-    :param cands: clusters whose sorted ``ref_indices`` equal ``refs``
-    :param refs: the shared base references, ascending
+    :param cands: clusters whose ``ref_indices``, sorted by ``context.anchor_rank``, equal ``refs``
+    :param refs: the shared base references, sorted by ``context.anchor_rank`` (non-linear first)
     :returns: an ``(N, n - 1)`` int64 array; two clusters have equal keys iff their rows are equal
     """
     N, n = len(cands), len(refs)
     if n == 1:
         return np.zeros((N, 1), dtype=np.int64)
 
-    # sort members by base reference so every cluster's members line up; the key ignores member order
-    order = np.argsort(np.stack([g.ref_indices for g in cands]), axis=1, kind="stable")
+    # sort members by anchor rank so every cluster's members line up; the key ignores member order
+    order = np.argsort(
+        context.anchor_rank[np.stack([g.ref_indices for g in cands])], axis=1, kind="stable"
+    )
     R = np.take_along_axis(
         np.stack([g.rot_cache for g in cands]).astype(np.int64),
         order[..., None, None],
@@ -119,7 +121,7 @@ def _group_keys(cands: list[SymOpList], refs: tuple[int, ...]) -> NDArray:
         ..., 0
     ]  # (N, n, n, 3)
 
-    # an anchor's base reference leads its key, so only anchors of the smallest reference can win.
+    # an anchor's base reference leads its key, so only anchors of the lowest-ranked reference can win.
     # After sorting they are the first c members, and each sees its partners' references as refs[1:]
     c = refs.count(refs[0])
     partner_refs = refs[1:]
@@ -180,7 +182,7 @@ def orbit_labels(candidates: list[SymOpList]) -> NDArray:
     labels = np.empty(len(candidates), dtype=np.int64)
     groups: dict[tuple[int, ...], list[int]] = defaultdict(list)
     for i, g in enumerate(candidates):
-        groups[tuple(sorted(g.ref_indices.tolist()))].append(i)
+        groups[tuple(sorted(g.ref_indices.tolist(), key=context.anchor_rank.__getitem__))].append(i)
 
     n_labels = 0
     for refs, idx in groups.items():

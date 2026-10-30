@@ -125,3 +125,18 @@ def test_line_params_rejects_an_axis_the_dressings_do_not_keep():
                                   np.asarray(cry.lattice_vectors, float),
                                   np.concatenate((D, four)),
                                   np.concatenate((D_tr, np.zeros((1, 3), np.int64)))) is None
+
+
+def test_bind_records_linear_setup():
+    _ref_setup("carbon_dioxide")
+    assert context.linear_by_ref == [True] and context.line_by_ref[0].symmetric_ends
+    assert context.metric_pieces.shape == (1, 3, 3)
+    _ref_setup("benzene")
+    assert context.linear_by_ref == [False] and context.line_by_ref == [None]
+
+
+def test_anchor_rank_puts_nonlinear_first(mixed_crystal):
+    refs = mixed_crystal.get_references()[::-1]  # HCN first, so the rule must reorder
+    context.bind(mixed_crystal, refs)
+    assert context.linear_by_ref == [True, False]
+    assert context.anchor_rank.tolist() == [1, 0]
