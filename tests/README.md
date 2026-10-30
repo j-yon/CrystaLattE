@@ -68,8 +68,8 @@ no test needs to know which directory a crystal is in:
 ```python
 from conftest import GENERATE_KW, cif, crystal, load
 
-xtal = crystal("benzene")                  # just the Crystal
-xtal, reference = load("benzene")          # both halves of the first block
+xtal = crystal("benzene")                  # Crystal of the first block (same as load)
+reference = xtal.get_references()[0]       # first reference Monomer
 path = cif("fomepizole")                   # resolves under other/ too
 mers = cle.generate(xtal, 2, 8.0, **GENERATE_KW)
 ```

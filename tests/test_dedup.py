@@ -220,7 +220,7 @@ def test_orbit_label_draws_the_dressing_from_the_members_own_reference():
     ("fomepizole", 3, 7.0, FOMEPIZOLE_DIMERS_R7),
 ])
 def test_cross_reference_dimer_counts(name, zprime, R, expected):
-    crystal, _ = load(name)
+    crystal = load(name)
     # Assert the premise rather than trusting the fixture: if detection ever
     # collapsed these to Z' = 1 the test would still pass while testing nothing.
     assert len(crystal.detect_symmetry(1e-3).get_references()) == zprime, (
@@ -243,7 +243,7 @@ def test_cross_reference_dedup_stays_complete(name, N, R):
     # dressing groups at once, which is where a per-member indexing error would
     # show up and a dimer would not.
 
-    crystal, _ = load(name)
+    crystal = load(name)
     mers = generate.generate(crystal, N, R, **GENERATE_KW)
     n_classes, _ = count_chemistry_classes(mers, atol=1e-8)
     assert mers, f"{name} N={N}: nothing generated, test is vacuous"
@@ -251,7 +251,7 @@ def test_cross_reference_dedup_stays_complete(name, N, R):
 
 
 def test_bind_sets_site_symmetry():
-    crystal, monomer = load("benzene")
+    crystal = load("benzene")
     context.bind(crystal, crystal.get_references())
 
     # Benzene is on an inversion centre: identity + inversion in the dressing.
@@ -264,7 +264,7 @@ def test_bind_sets_site_symmetry():
 
 
 def test_generate_dimer_count_regression():
-    crystal, monomer = load("benzene")
+    crystal = load("benzene")
     mers = generate.generate(crystal, 2, 5.0, use_origin=True)
     assert len(mers) == BENZENE_DIMERS
 
@@ -282,7 +282,7 @@ UREA_DIMERS_R10 = 18  # urea, N=2, R=10.0, use_origin=True; verified against the
 
 
 def test_bind_sets_dressing_translations():
-    crystal, _ = load("urea")
+    crystal = load("urea")
     crystal = crystal.detect_symmetry(1e-3)
     context.bind(crystal, crystal.get_references())
 
@@ -305,7 +305,7 @@ def test_bind_sets_dressing_translations():
 def test_bind_dressing_translations_vanish_for_benzene():
     # Benzene's centroid is a fixed point of its point group, so every
     # dressing translation is zero and the pre-fix code was accidentally right.
-    crystal, _ = load("benzene")
+    crystal = load("benzene")
     context.bind(crystal, crystal.get_references())
     assert not np.any(context.dress_stacked_by_ref[0][2])
     assert all(not np.any(t) for t in _site(0)[1])
@@ -315,7 +315,7 @@ def test_orbit_label_needs_dressing_translation():
     # Two urea dimers related by a crystallographic isometry whose dressing
     # does not fix the centroid. They merge only when the dressing carries its
     # translation part; with W_tr zeroed the cosets cannot coincide.
-    crystal, _ = load("urea")
+    crystal = load("urea")
     crystal = crystal.detect_symmetry(1e-3)
     refs = crystal.get_references()
     context.bind(crystal, refs)
@@ -334,7 +334,7 @@ def test_orbit_label_needs_dressing_translation():
 
 def test_urea_dimer_count_regression():
 
-    crystal, _ = load("urea")
+    crystal = load("urea")
     mers = generate.generate(crystal, 2, 10.0, **GENERATE_KW)
     assert len(mers) == UREA_DIMERS_R10
     # dedup completeness: no two survivors share a chemistry class
@@ -350,7 +350,7 @@ def test_get_unique_sym_ops_ambiguous_wyckoff_position():
     # once (in SG 217: g/e/c all collapse onto [0,0,0] alongside the genuine
     # fixed position a). The multiplicity check must not fire on such an
     # ambiguous match -- the orbit size is fixed by orbit-stabilizer.
-    crystal, _ = load("hexamine")
+    crystal = load("hexamine")
     crystal = crystal.detect_symmetry(1e-3)
     sg = crystal.space_group
     centroid = crystal.get_references()[0].centroid_frac
@@ -363,7 +363,7 @@ def test_get_unique_sym_ops_ambiguous_wyckoff_position():
 def test_generate_runs_on_high_symmetry_crystals():
     # These three crash outright if the Wyckoff multiplicity check misfires.
     for name in ("adamantane", "carbon_dioxide", "hexamine"):
-        crystal, _ = load(name)
+        crystal = load(name)
         mers = generate.generate(crystal, 2, 6.0, **GENERATE_KW)
         assert len(mers) > 0
 
@@ -387,7 +387,7 @@ def test_linear_monomer_dedup_is_complete():
     # a cell symmetry is never a dressing, and one duplicate pair survives at
     # R = 20 -- but at this radius the result is complete, and this pins it.
 
-    crystal, _ = load("carbon_dioxide")
+    crystal = load("carbon_dioxide")
     mers = generate.generate(crystal, 2, 15.0, **GENERATE_KW)
     n_classes, _ = count_chemistry_classes(mers, atol=1e-8)
     assert n_classes == len(mers)
@@ -397,12 +397,12 @@ def test_linear_monomer_emits_a_warning():
     # The one remaining linearity test in the codebase is purely diagnostic: it
     # must warn, and must not change any result.
     with pytest.warns(RuntimeWarning, match="linear molecule"):
-        crystal, _ = load("carbon_dioxide")
+        crystal = load("carbon_dioxide")
         generate.generate(crystal, 2, 6.0, **GENERATE_KW)
 
 
 def test_nonlinear_monomer_emits_no_warning(recwarn):
-    crystal, _ = load("benzene")
+    crystal = load("benzene")
     generate.generate(crystal, 2, 6.0, **GENERATE_KW)
     assert not [w for w in recwarn if "linear molecule" in str(w.message)]
 
@@ -415,7 +415,7 @@ def test_special_position_tolerance_absorbs_cif_rounding():
     # molecule was replicated 3x essentially on top of itself, and the
     # resulting "dimers" had coincident atoms.
 
-    crystal, _ = load("ice")
+    crystal = load("ice")
     mers = generate.generate(crystal, 2, 8.0, **GENERATE_KW)
     assert mers
 
@@ -428,7 +428,7 @@ def test_special_position_tolerance_absorbs_cif_rounding():
 
 def test_ice_dedup_is_complete():
 
-    crystal, _ = load("ice")
+    crystal = load("ice")
     mers = generate.generate(crystal, 2, 8.0, **GENERATE_KW)
     n_classes, _ = count_chemistry_classes(mers, atol=1e-8)
     assert n_classes == len(mers)
@@ -561,7 +561,7 @@ def test_no_over_merge_every_discarded_cluster_matches_a_survivor(name, N, R, mo
     # out, and the wrapper is pure observation -- the real function still does
     # the work and its result is passed through untouched.
 
-    crystal, _ = load(name)
+    crystal = load(name)
     crystal = crystal.detect_symmetry(1e-3)
     refs = crystal.get_references()
     box = _REFEREE_BOX.get((name, N, R), 1)
@@ -612,7 +612,7 @@ def test_no_over_merge_multiplicity_is_conserved(monkeypatch):
     # every candidate is either a survivor or folded into one's multiplicity,
     # so the multiplicities must sum to the number of candidates enumerated.
 
-    crystal, _ = load("benzene")
+    crystal = load("benzene")
     crystal = crystal.detect_symmetry(1e-3)
     refs = crystal.get_references()
 
@@ -649,7 +649,7 @@ def test_every_dressing_is_a_symmetry_of_its_monomer(name):
     # dressings are accepted only when exact to 1e-6 A (dedup.dressing), so the
     # bound below holds for all of D.
 
-    crystal, _ = load(name)
+    crystal = load(name)
     crystal = crystal.detect_symmetry(1e-3)
     refs = crystal.get_references()
     context.bind(crystal, refs)
@@ -691,7 +691,7 @@ def test_bound_dressing_groups_satisfy_the_containment_theorem(name):
     # companion: that one checks no dressing is spurious (no over-detection),
     # this one checks no site operation is missing (no under-detection). The
     # first protects the lattice energy; the second against redundant QC jobs.
-    crystal, _ = load(name)
+    crystal = load(name)
     crystal = crystal.detect_symmetry(1e-3)
     refs = crystal.get_references()
     context.bind(crystal, refs)

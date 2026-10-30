@@ -17,7 +17,8 @@ from conftest import cif, load as parse_first
 # ---------------------------------------------------------------------------
 
 def test_ammonia_sg1_p1():
-    crystal, reference = parse_first("ammonia")
+    crystal = parse_first("ammonia")
+    reference = crystal.get_references()[0]
     (a, b, c), (alpha, beta, gamma) = crystal.lattice_parameters
     assert crystal.space_group.number == 1
     assert crystal.space_group.symbol["Hall"] == "P 1"
@@ -31,7 +32,8 @@ def test_ammonia_sg1_p1():
 # ---------------------------------------------------------------------------
 
 def test_ethyl_carbamate_sg2():
-    crystal, reference = parse_first("ethyl_carbamate")
+    crystal = parse_first("ethyl_carbamate")
+    reference = crystal.get_references()[0]
     (a, b, c), (alpha, beta, gamma) = crystal.lattice_parameters
     assert crystal.space_group.number == 2
     assert crystal.space_group.symbol["Hall"] == "-P 1"
@@ -45,7 +47,8 @@ def test_ethyl_carbamate_sg2():
 # ---------------------------------------------------------------------------
 
 def test_14_cyclohexanedione_sg4():
-    crystal, reference = parse_first("14_cyclohexanedione")
+    crystal = parse_first("14_cyclohexanedione")
+    reference = crystal.get_references()[0]
     (a, b, c), (alpha, beta, gamma) = crystal.lattice_parameters
     assert crystal.space_group.number == 4
     assert crystal.space_group.symbol["Hall"] == "P 2yb"
@@ -110,7 +113,8 @@ def test_14_cyclohexanedione_sg4():
     ),
 ])
 def test_sg14_setting(cif_rel, expected_hall, abc, angles, n_atoms):
-    crystal, reference = parse_first(cif_rel)
+    crystal = parse_first(cif_rel)
+    reference = crystal.get_references()[0]
     (a, b, c), (alpha, beta, gamma) = crystal.lattice_parameters
     assert crystal.space_group.number == 14
     assert crystal.space_group.symbol["Hall"] == expected_hall
@@ -125,7 +129,8 @@ def test_sg14_setting(cif_rel, expected_hall, abc, angles, n_atoms):
 # ---------------------------------------------------------------------------
 
 def test_cytosine_sg19():
-    crystal, reference = parse_first("cytosine")
+    crystal = parse_first("cytosine")
+    reference = crystal.get_references()[0]
     (a, b, c), (alpha, beta, gamma) = crystal.lattice_parameters
     assert crystal.space_group.number == 19
     assert crystal.space_group.symbol["Hall"] == "P 2ac 2ab"
@@ -140,7 +145,8 @@ def test_cytosine_sg19():
 
 def test_fomepizole_sg29_no_hall():
     """CIF lacks a Hall symbol — code falls back to the standard setting for SG 29."""
-    crystal, reference = parse_first("fomepizole")
+    crystal = parse_first("fomepizole")
+    reference = crystal.get_references()[0]
     (a, b, c), (alpha, beta, gamma) = crystal.lattice_parameters
     assert crystal.space_group.number == 29
     assert (a, b, c) == pytest.approx((14.831, 16.848, 5.4962), abs=1e-3)
@@ -167,7 +173,8 @@ def test_fomepizole_sg29_no_hall():
     ),
 ])
 def test_sg33_setting(cif_rel, expected_hall, abc, n_atoms):
-    crystal, reference = parse_first(cif_rel)
+    crystal = parse_first(cif_rel)
+    reference = crystal.get_references()[0]
     (a, b, c), (alpha, beta, gamma) = crystal.lattice_parameters
     assert crystal.space_group.number == 33
     assert crystal.space_group.symbol["Hall"] == expected_hall
@@ -181,7 +188,8 @@ def test_sg33_setting(cif_rel, expected_hall, abc, n_atoms):
 # ---------------------------------------------------------------------------
 
 def test_pyrazine_sg58():
-    crystal, reference = parse_first("pyrazine")
+    crystal = parse_first("pyrazine")
+    reference = crystal.get_references()[0]
     (a, b, c), (alpha, beta, gamma) = crystal.lattice_parameters
     assert crystal.space_group.number == 58
     assert crystal.space_group.symbol["Hall"] == "-P 2n 2"
@@ -215,7 +223,8 @@ def test_pyrazine_sg58():
     ),
 ])
 def test_sg61_setting(cif_rel, expected_hall, abc, n_atoms):
-    crystal, reference = parse_first(cif_rel)
+    crystal = parse_first(cif_rel)
+    reference = crystal.get_references()[0]
     (a, b, c), (alpha, beta, gamma) = crystal.lattice_parameters
     assert crystal.space_group.number == 61
     assert crystal.space_group.symbol["Hall"] == expected_hall
@@ -230,7 +239,8 @@ def test_sg61_setting(cif_rel, expected_hall, abc, n_atoms):
 # ---------------------------------------------------------------------------
 
 def test_urea_sg113():
-    crystal, reference = parse_first("urea")
+    crystal = parse_first("urea")
+    reference = crystal.get_references()[0]
     (a, b, c), (alpha, beta, gamma) = crystal.lattice_parameters
     assert crystal.space_group.number == 113
     assert crystal.space_group.symbol["Hall"] == "P -4 2ab"
@@ -240,7 +250,8 @@ def test_urea_sg113():
 
 
 def test_adamantane_sg114():
-    crystal, reference = parse_first("adamantane")
+    crystal = parse_first("adamantane")
+    reference = crystal.get_references()[0]
     (a, b, c), (alpha, beta, gamma) = crystal.lattice_parameters
     assert crystal.space_group.number == 114
     assert crystal.space_group.symbol["Hall"] == "P -4 2n"
@@ -254,7 +265,8 @@ def test_adamantane_sg114():
 # ---------------------------------------------------------------------------
 
 def test_trioxane_sg161():
-    crystal, reference = parse_first("trioxane")
+    crystal = parse_first("trioxane")
+    reference = crystal.get_references()[0]
     (a, b, c), (alpha, beta, gamma) = crystal.lattice_parameters
     assert crystal.space_group.number == 161
     assert crystal.space_group.symbol["Hall"] == 'R 3 -2"c'
@@ -264,7 +276,8 @@ def test_trioxane_sg161():
 
 
 def test_triazine_sg167():
-    crystal, reference = parse_first("triazine")
+    crystal = parse_first("triazine")
+    reference = crystal.get_references()[0]
     (a, b, c), (alpha, beta, gamma) = crystal.lattice_parameters
     assert crystal.space_group.number == 167
     assert crystal.space_group.symbol["Hall"] == '-R 3 2"c'
@@ -280,7 +293,8 @@ def test_triazine_sg167():
 # ---------------------------------------------------------------------------
 
 def test_ice_sg194():
-    crystal, reference = parse_first("ice")
+    crystal = parse_first("ice")
+    reference = crystal.get_references()[0]
     (a, b, c), (alpha, beta, gamma) = crystal.lattice_parameters
     assert crystal.space_group.number == 194
     assert crystal.space_group.symbol["Hall"] == "-P 6c 2c"
@@ -295,7 +309,8 @@ def test_ice_sg194():
 # ---------------------------------------------------------------------------
 
 def test_carbon_dioxide_sg205():
-    crystal, reference = parse_first("carbon_dioxide")
+    crystal = parse_first("carbon_dioxide")
+    reference = crystal.get_references()[0]
     (a, b, c), (alpha, beta, gamma) = crystal.lattice_parameters
     assert crystal.space_group.number == 205
     assert crystal.space_group.symbol["Hall"] == "-P 2ac 2ab 3"
@@ -305,7 +320,8 @@ def test_carbon_dioxide_sg205():
 
 
 def test_hexamine_sg217():
-    crystal, reference = parse_first("hexamine")
+    crystal = parse_first("hexamine")
+    reference = crystal.get_references()[0]
     (a, b, c), (alpha, beta, gamma) = crystal.lattice_parameters
     assert crystal.space_group.number == 217
     assert crystal.space_group.symbol["Hall"] == "I -4 2 3"
@@ -329,7 +345,8 @@ def test_naphthalene_no_number_field():
     # alone would pass just as happily against the STANDARD setting -- which is
     # P2_1/c, and wrong for this file. The Hall symbol and the operations are
     # what pin it down.
-    crystal, reference = parse_first("naphthalene")
+    crystal = parse_first("naphthalene")
+    reference = crystal.get_references()[0]
     assert crystal.space_group.number == 14
     assert crystal.space_group.symbol["Hall"] == "-P 2yab"
     assert crystal.space_group.symbol["short"] == "P21/a"
@@ -374,7 +391,7 @@ def _write_cif(tmp_path, symmetry: str, name: str = "probe"):
 
 
 def test_accepts_cif1_symmetry_field_names(tmp_path):
-    crystal, _ = next(cle.from_cif(_write_cif(tmp_path, """
+    crystal = next(cle.from_cif(_write_cif(tmp_path, """
 _symmetry_int_tables_number       19
 _symmetry_space_group_name_Hall   'P 2ac 2ab'
 """)))
@@ -383,7 +400,7 @@ _symmetry_space_group_name_Hall   'P 2ac 2ab'
 
 def test_accepts_cif2_symmetry_field_names(tmp_path):
     # Same group, 2012 spellings throughout.
-    crystal, _ = next(cle.from_cif(_write_cif(tmp_path, """
+    crystal = next(cle.from_cif(_write_cif(tmp_path, """
 _space_group_IT_number      19
 _space_group_name_Hall      'P 2ac 2ab'
 """)))
@@ -393,7 +410,7 @@ _space_group_name_Hall      'P 2ac 2ab'
 def test_hall_symbol_alone_is_enough(tmp_path):
     # No number anywhere: the Hall symbol names the setting and the number is
     # recovered from it.
-    crystal, _ = next(cle.from_cif(_write_cif(tmp_path, """
+    crystal = next(cle.from_cif(_write_cif(tmp_path, """
 _space_group_name_Hall  '-P 2yab'
 """)))
     assert crystal.space_group.number == 14
@@ -404,7 +421,7 @@ _space_group_name_Hall  '-P 2yab'
 def test_hermann_mauguin_symbol_is_matched_regardless_of_punctuation(tmp_path, written):
     # Depositors punctuate H-M symbols freely and inconsistently. All four of
     # these name the same setting and must resolve to it.
-    crystal, _ = next(cle.from_cif(_write_cif(tmp_path, f"""
+    crystal = next(cle.from_cif(_write_cif(tmp_path, f"""
 _symmetry_space_group_name_H-M  '{written}'
 """)))
     assert crystal.space_group.symbol["Hall"] == "-P 2yab"
@@ -415,10 +432,10 @@ def test_hermann_mauguin_resolves_the_setting_not_just_the_number(tmp_path):
     # both space group 14; resolving "P21/a" to the number alone would hand back
     # the STANDARD setting, whose operations are different and wrong for a file
     # that said P2_1/a.
-    a_setting, _ = next(cle.from_cif(_write_cif(tmp_path, """
+    a_setting = next(cle.from_cif(_write_cif(tmp_path, """
 _symmetry_space_group_name_H-M  'P 21/a'
 """, name="a_setting")))
-    c_setting, _ = next(cle.from_cif(_write_cif(tmp_path, """
+    c_setting = next(cle.from_cif(_write_cif(tmp_path, """
 _symmetry_space_group_name_H-M  'P 21/c'
 """, name="c_setting")))
 
@@ -433,7 +450,7 @@ _symmetry_space_group_name_H-M  'P 21/c'
 def test_explicit_operation_list_alone_is_enough(tmp_path):
     # Nothing names the group -- no number, no Hall, no H-M -- but the file
     # spells the operations out. That is exact for this cell.
-    crystal, _ = next(cle.from_cif(_write_cif(tmp_path, """
+    crystal = next(cle.from_cif(_write_cif(tmp_path, """
 loop_
 _space_group_symop_operation_xyz
 'x, y, z'
@@ -463,7 +480,7 @@ _symmetry_equiv_pos_as_xyz
 'x, y, z'
 """)
     with pytest.warns(RuntimeWarning, match="do not match"):
-        crystal, _ = next(cle.from_cif(path))
+        crystal = next(cle.from_cif(path))
     assert len(crystal.space_group.sym_ops) == 1, "the listed operations must win"
 
 
@@ -480,7 +497,7 @@ _symmetry_equiv_pos_as_xyz
 '-x, -y, -z'
 'x-1/2, -y-1/2, z'
 """)
-    crystal, _ = next(cle.from_cif(path))
+    crystal = next(cle.from_cif(path))
     assert crystal.space_group.symbol["Hall"] == "-P 2yab"
     assert not [w for w in recwarn if issubclass(w.category, RuntimeWarning)], \
         "differing coset representatives were mistaken for a disagreement"
@@ -488,7 +505,7 @@ _symmetry_equiv_pos_as_xyz
 
 def test_missing_cell_volume_is_not_an_error(tmp_path):
     # _cell_volume is a cross-check, not an input. Plenty of valid CIFs omit it.
-    crystal, _ = next(cle.from_cif(_write_cif(tmp_path, """
+    crystal = next(cle.from_cif(_write_cif(tmp_path, """
 _symmetry_int_tables_number  1
 """)))
     assert crystal.volume == pytest.approx(5.0 * 6.0 * 7.0)
@@ -565,13 +582,13 @@ def test_partial_occupancy_error_names_the_offending_sites(disordered):
 
 def test_disorder_ignore_keeps_every_site_and_warns(disordered):
     with pytest.warns(RuntimeWarning, match="partially occupied"):
-        crystal, _ = next(cle.from_cif(disordered, disorder="ignore"))
+        crystal = next(cle.from_cif(disordered, disorder="ignore"))
     assert sorted(crystal._asu.atoms) == ["H", "H", "O"]
 
 
 def test_disorder_drop_keeps_only_full_sites_and_warns(disordered):
     with pytest.warns(RuntimeWarning, match="dropping them"):
-        crystal, _ = next(cle.from_cif(disordered, disorder="drop"))
+        crystal = next(cle.from_cif(disordered, disorder="drop"))
     assert crystal._asu.atoms == ["O"], "the half-occupied hydrogens must be gone"
     assert len(crystal._asu.positions) == 1, "coordinates must be dropped in step"
 
@@ -580,7 +597,8 @@ def test_ordered_crystals_are_unaffected_by_the_default():
     # The guard must not cost anything for the 25 fixtures that are fully
     # ordered, including those that declare _atom_site_occupancy as all 1.0.
     for name in ("benzene", "urea", "naphthalene", "fomepizole", "succinic_acid"):
-        crystal, reference = parse_first(name)
+        crystal = parse_first(name)
+        reference = crystal.get_references()[0]
         assert len(reference.symbols) > 0
 
 
@@ -601,7 +619,8 @@ def test_ice_is_the_real_motivating_case():
         next(cle.from_cif(cif("ice"), disorder="error"))
 
     with pytest.warns(RuntimeWarning):
-        crystal, reference = next(cle.from_cif(cif("ice"), disorder="ignore"))
+        crystal = next(cle.from_cif(cif("ice"), disorder="ignore"))
+        reference = crystal.get_references()[0]
     assert reference.symbols.count("H") == 4, (
         "if this is no longer 4, the unphysical reading has changed and the "
         "disorder guard may no longer be guarding anything"

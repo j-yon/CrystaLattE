@@ -78,7 +78,7 @@ def reference_orbit_key(g_N):
 
 
 def run(name, N, R):
-    crystal, _ = load(name)
+    crystal = load(name)
     cands = []
     real = neighbors.deduplicate_bucket
     neighbors.deduplicate_bucket = lambda bucket: (cands.extend(bucket), real(bucket))[1]

@@ -49,11 +49,11 @@ def cif(name: str) -> str:
     )
 
 def load(name: str, disorder: str | None = None):
-    """Parse a fixture and return its first ``(crystal, reference)`` block
+    """Parse a fixture and return the :class:`Crystal` of its first block
 
     :param name: crystal directory name, e.g. "benzene"
     :param disorder: policy for partially occupied sites
-    :returns: ``(Crystal, Monomer)`` pair for the file's first block
+    :returns: :class:`Crystal` for the file's first block
     """
     if disorder is None:
         # if known to be disordered, ignore the warning; otherwise, raise it as an error
@@ -71,7 +71,7 @@ def crystal(name: str, disorder: str | None = None):
     :param disorder: passed through to :func:`load`
     :returns: the parsed :class:`~crystalatte.core.crystal.Crystal`
     """
-    return load(name, disorder)[0]
+    return load(name, disorder)
 
 
 @pytest.fixture

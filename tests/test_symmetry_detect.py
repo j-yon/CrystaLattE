@@ -49,7 +49,7 @@ def test_get_unique_sym_ops_db_behavior_preserved():
 
 
 def test_detect_symmetry_ammonia_p1_to_p213():
-    crystal, _ = load("ammonia")
+    crystal = load("ammonia")
     assert len(crystal.space_group.sym_ops) == 1          # declared P1
     detected = crystal.detect_symmetry()
     assert len(detected.space_group.sym_ops) == 12        # P2_13
@@ -59,7 +59,7 @@ def test_detect_symmetry_ammonia_p1_to_p213():
 
 
 def test_detect_symmetry_benzene_no_change():
-    crystal, _ = load("benzene")
+    crystal = load("benzene")
     detected = crystal.detect_symmetry()
     # benzene's declared SG 61 is already correct -> not strictly higher -> self
     assert detected is crystal
@@ -67,7 +67,7 @@ def test_detect_symmetry_benzene_no_change():
 
 def test_detect_symmetry_graceful_on_failure(monkeypatch):
     import spglib
-    crystal, _ = load("ammonia")
+    crystal = load("ammonia")
     monkeypatch.setattr(spglib, "get_symmetry", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     assert crystal.detect_symmetry() is crystal            # falls back, no raise
 
@@ -76,7 +76,7 @@ def test_detect_symmetry_benzene_full_cell_expansion():
     # Benzene is non-P1 (SG 61, Z=4); detection must expand ASU to full cell
     # before passing to spglib. Verify it works (returns self, no raise/warning).
     import warnings
-    crystal, _ = load("benzene")
+    crystal = load("benzene")
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         detected = crystal.detect_symmetry()
@@ -93,7 +93,7 @@ def test_generate_detection_preserves_multiplicity_ammonia():
     # Without detection ammonia stays P1 with Z'=4, and dimers related by the missed symmetry are
     # not merged. The duplicates split the multiplicity, so the multiplicity per reference (what
     # the lattice sum weights) must not change.
-    crystal, _ = load("ammonia")
+    crystal = load("ammonia")
     z_on, z_off = len(crystal.detect_symmetry().get_references()), len(crystal.get_references())
     for kw in (dict(use_origin=True), dict()):  # use_origin and default conventions
         on = generate.generate(crystal, 2, 5.0, detect_symmetry=True, **kw)
@@ -107,11 +107,11 @@ def test_generate_detection_preserves_multiplicity_ammonia():
 def test_generate_detection_uses_single_reference_path_ammonia():
     # With detection, ammonia collapses to Z'=1 (one reference), so the integer
     # matcher (not the float cloud congruence) handles it.
-    crystal, _ = load("ammonia")
+    crystal = load("ammonia")
     detected = crystal.detect_symmetry()
     assert len(detected.get_references()) == 1
 
 
 def test_generate_benzene_regression_with_detection():
-    crystal, _ = load("benzene")
+    crystal = load("benzene")
     assert len(generate.generate(crystal, 2, 5.0, use_origin=True)) == 3

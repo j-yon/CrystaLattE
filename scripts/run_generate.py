@@ -40,8 +40,7 @@ def main() -> None:
     args = parser.parse_args()
 
     # a CIF may hold several data blocks; take the first
-    block = next(cle.from_cif(args.cif, disorder=args.disorder))
-    crystal = block[0] if isinstance(block, tuple) else block  # older versions yield (Crystal, Monomer)
+    crystal = next(cle.from_cif(args.cif, disorder=args.disorder))
     print(crystal)
 
     kwargs = {
