@@ -14,7 +14,8 @@ from numpy.typing import NDArray
 
 from .dressing import EXACT_ATOL
 
-#: relative tolerance on a dressing keeping the molecular axis
+#: coarse pre-filter on a dressing keeping the molecular axis; it only gives a
+#: more specific fallback message, the SELF_CHECK_ATOL self-check is binding
 AXIS_RTOL = 1e-3
 
 #: largest least-squares residual, in fractional units, of the self-check

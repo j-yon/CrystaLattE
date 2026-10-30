@@ -10,7 +10,7 @@ from crystalatte.core.sym_ops import SymOp, SymOpList
 from crystalatte.work import generate, neighbors
 from crystalatte.work.dedup import context, dotkey, dressing, invariants, linear
 from crystalatte.work.validate import count_chemistry_classes
-from conftest import GENERATE_KW, crystal, load
+from conftest import GENERATE_KW, crystal
 
 _CELL = ((6.0, 7.0, 10.0), (90, 100, 90))
 
@@ -286,12 +286,12 @@ def test_co2_trimers_are_complete():
     assert count_chemistry_classes(mers, atol=1e-8)[0] == len(mers)
 
 
-def test_general_position_polar_linear_is_sound(hcn_crystal):
+def test_general_position_polar_linear_is_complete(hcn_crystal):
     mers = generate.generate(hcn_crystal, 2, 9.0, detect_symmetry=False, **GENERATE_KW)
     assert count_chemistry_classes(mers, atol=1e-8)[0] == len(mers)
 
 
-def test_mixed_cocrystal_is_complete_and_sound(mixed_crystal, monkeypatch):
+def test_mixed_cocrystal_is_complete(mixed_crystal, monkeypatch):
     mers = generate.generate(mixed_crystal, 2, 9.0, detect_symmetry=False, **GENERATE_KW)
     assert count_chemistry_classes(mers, atol=1e-8)[0] == len(mers)
 

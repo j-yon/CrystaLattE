@@ -504,6 +504,7 @@ _REFEREE_BOX = {
     ("carbon_dioxide", 2, 15.0): 2,
     ("carbon_dioxide", 2, 20.0): 4,
     ("carbon_dioxide", 3, 10.0): 2,
+    ("carbon_dioxide", 3, 13.0): 3,
 }
 
 
@@ -536,6 +537,7 @@ _REFEREE_BOX = {
     # all-linear clusters, merged by the dot-product key (dedup.dotkey)
     pytest.param("carbon_dioxide", 2, 20.0, marks=pytest.mark.slow),
     ("carbon_dioxide", 3, 10.0),
+    pytest.param("carbon_dioxide", 3, 13.0, marks=pytest.mark.slow),
 ])
 def test_no_over_merge_every_discarded_cluster_matches_a_survivor(name, N, R, monkeypatch):
     # Direct over-merge test. Every cluster the deduper THREW AWAY must be
