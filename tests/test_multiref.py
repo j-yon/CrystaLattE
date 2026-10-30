@@ -4,6 +4,8 @@ Covers reference discovery, per-member `ref_indices` plumbing, per-reference
 binding, and the physical dimers of a Z' = 4 cell. See tests/README.md.
 """
 
+from collections import Counter
+
 import numpy as np
 
 from crystalatte.core.sym_ops import SymOp, SymOpList
@@ -96,3 +98,31 @@ def test_ammonia_physical_dimers_default_convention():
     assert len(mers) == AMMONIA_DIMERS_DEFAULT
     assert AMMONIA_DIMERS_DEFAULT > 2
     assert all(len(m.monomers) == 2 for m in mers)
+
+
+def test_ice_bernal_fowler_matches_v1_at_30(monkeypatch):
+    # Bernal-Fowler ice (P6_3cm, Z' = 2) is the ordered structure v1's X23 ice
+    # value was generated from. v1 anchored only reference 0, so it counted the
+    # (0, 0) and (0, 1) dimers -- 489 + 995 = 1484 -- and never the 493 (1, 1)
+    # dimers that v2 also forms. Grouping the survivors by reference pair recovers
+    # v1's number from the full set.
+    #
+    # The survivors are observed one layer down, where they still carry their
+    # `ref_indices`; the wrapper passes `generate_neighbors`' result through
+    # untouched.
+    seen = []
+    real = generate.generate_neighbors
+
+    def _capture(*args, **kwargs):
+        unique = real(*args, **kwargs)
+        seen.extend(unique)
+        return unique
+
+    monkeypatch.setattr(generate, "generate_neighbors", _capture)
+    crystal = load("ice_bernal_fowler")
+    mers = generate.generate(crystal, 2, 30.0, verbose=0)  # default closest-contact, as v1
+
+    pairs = Counter(tuple(sorted(g.ref_indices)) for g in seen)
+    assert len(mers) == 1977
+    assert pairs == {(0, 0): 489, (0, 1): 995, (1, 1): 493}
+    assert pairs[(0, 0)] + pairs[(0, 1)] == 1484
