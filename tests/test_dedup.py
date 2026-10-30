@@ -66,6 +66,7 @@ def _same_label(G, H, W_by_ref, W_tr_by_ref=None):
         )
         stacked.append((W, invariants.int_inv(W), tr))
     context.dress_stacked_by_ref = stacked
+    context.linear_by_ref = [False] * len(W_by_ref)
     context.anchor_rank = np.arange(len(W_by_ref), dtype=np.int64)
     labels = invariants.orbit_labels([G, H])
     return bool(labels[0] == labels[1])
@@ -370,27 +371,20 @@ def test_generate_runs_on_high_symmetry_crystals():
         assert len(mers) > 0
 
 
-def test_linear_monomer_dedup_is_complete():
+def test_linear_monomer_dedup_is_complete_at_20():
     # CO2 is linear, so every atom lies ON the molecular axis and a twist about
     # that axis moves nothing. But a placement stores a full 3x3 rotation, so
-    # that physically meaningless twist is still compared, and two placements of
-    # the identical molecule can fail to match.
+    # that physically meaningless twist is still compared by the orbit key.
     #
-    # This used to be absorbed by the tolerant Cartesian matcher, dressed by a
-    # finite SAMPLE of CO2's continuous point group. That was removed: the
-    # dressings did no physical work (one displaced no atom by more than 0.000
-    # A) and it only worked when the needed twist fell inside the sample.
-    #
-    # That left 3 duplicate pairs surviving at R = 15 (n_classes 36 < 39). They
-    # are merged now by the dressing group: CO2 lies on the cubic cell's [111]
-    # axis, so the 12 cell-symmetry operations fixing that axis are exact
-    # self-isometries and the orbit key uses them (see dedup.dressing). Linear
-    # dedup is still incomplete in general -- a twist about the axis that is not
-    # a cell symmetry is never a dressing, and one duplicate pair survives at
-    # R = 20 -- but at this radius the result is complete, and this pins it.
+    # The orbit key's dressing group absorbs only the twists that are cell
+    # symmetries (the 12 operations fixing the cubic cell's [111] axis), which
+    # left one duplicate pair at R = 20. Clusters whose members are all linear
+    # are now keyed instead by exact dot products of centroid offsets and axes
+    # (see dedup.dotkey), which carry no twist, and this pins completeness at
+    # the radius where the orbit key fell short.
 
     crystal = load("carbon_dioxide")
-    mers = generate.generate(crystal, 2, 15.0, **GENERATE_KW)
+    mers = generate.generate(crystal, 2, 20.0, **GENERATE_KW)
     n_classes, _ = count_chemistry_classes(mers, atol=1e-8)
     assert n_classes == len(mers)
 
@@ -520,7 +514,11 @@ def test_chsev_separates_a_homometric_pair_that_nre_cannot():
 
 
 #: enumeration box half-width (cells) for referee rows whose merges sit beyond one cell
-_REFEREE_BOX = {("carbon_dioxide", 2, 15.0): 2}
+_REFEREE_BOX = {
+    ("carbon_dioxide", 2, 15.0): 2,
+    ("carbon_dioxide", 2, 20.0): 4,
+    ("carbon_dioxide", 3, 10.0): 2,
+}
 
 
 # Parametrized over ORDER as well as crystal. The direct over-merge check used
@@ -549,6 +547,9 @@ _REFEREE_BOX = {("carbon_dioxide", 2, 15.0): 2}
     # extra dressings beyond the site symmetry: each row has merges that only the
     # exact cell-symmetry self-isometries make (triazine's sigma_h, CO2's D3d)
     ("triazine", 3, 10.0), ("carbon_dioxide", 2, 15.0),
+    # all-linear clusters, merged by the dot-product key (dedup.dotkey)
+    pytest.param("carbon_dioxide", 2, 20.0, marks=pytest.mark.slow),
+    ("carbon_dioxide", 3, 10.0),
 ])
 def test_no_over_merge_every_discarded_cluster_matches_a_survivor(name, N, R, monkeypatch):
     # Direct over-merge test. Every cluster the deduper THREW AWAY must be

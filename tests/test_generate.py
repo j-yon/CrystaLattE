@@ -265,10 +265,10 @@ def test_dimer_count_decreases_with_tighter_R(name):
     ("triazine", 3, 12.0, 123, 2103, {3: 1, 6: 2, 9: 14, 18: 103, 36: 3}),
     ("ammonia", 2, 20.0, 183, 1075, {2: 2, 3: 5, 6: 176}),
     ("benzene", 2, 20.0, 116, 366, {2: 49, 4: 67}),
-    # CO2 improved: 86 under the Cartesian pass, 81 now, every merge refereed.
-    # One duplicate pair survives (80 classes) -- a twist about the linear
-    # molecule's axis that is not a cell symmetry; see the linear-monomer note.
-    ("carbon_dioxide", 2, 20.0, 81, 832, {2: 2, 6: 20, 12: 59}),
+    # CO2: 86 under the Cartesian pass, 81 under the orbit key, 80 now. The
+    # last duplicate pair was a twist about the linear axis that is not a cell
+    # symmetry; the dot-product key (dedup.dotkey) merges it exactly.
+    ("carbon_dioxide", 2, 20.0, 80, 832, {2: 2, 6: 18, 12: 60}),
 ])
 def test_extra_symmetry_regression(name, N, R, n_unique, total, histogram):
     mers = cle.generate(crystal(name), N, R, **GENERATE_KW)

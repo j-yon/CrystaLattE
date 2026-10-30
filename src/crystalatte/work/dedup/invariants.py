@@ -1,3 +1,4 @@
+import warnings
 from collections import defaultdict
 from typing import Final
 
@@ -5,7 +6,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ...core.sym_ops import SymOpList
-from . import context
+from . import context, dotkey
 
 
 def int_inv(M: NDArray) -> NDArray:
@@ -176,6 +177,9 @@ def orbit_labels(candidates: list[SymOpList]) -> NDArray:
     All clusters are keyed in one batch: each distinct relative transform is dressed once
     (:func:`_dressed_minima`) and rows are compared as packed int64 codes (:func:`lex_codes`).
 
+    A group whose members are all linear is then merged further by the exact dot-product key
+    (:mod:`.dotkey`), which also absorbs twists about a molecular axis that no dressing contains.
+
     :param candidates: clusters to label; the dedup context must be bound
     :returns: an ``(N,)`` int64 array of labels
     """
@@ -186,9 +190,36 @@ def orbit_labels(candidates: list[SymOpList]) -> NDArray:
 
     n_labels = 0
     for refs, idx in groups.items():
-        _, inverse = np.unique(
-            _group_keys([candidates[i] for i in idx], refs), axis=0, return_inverse=True
-        )
-        labels[idx] = inverse.ravel() + n_labels
+        group = [candidates[i] for i in idx]
+        _, inverse = np.unique(_group_keys(group, refs), axis=0, return_inverse=True)
+        inverse = inverse.ravel()
+        if all(context.linear_by_ref[r] for r in refs):
+            inverse = _merge_by_dot_key(group, refs, inverse)
+        labels[idx] = inverse + n_labels
         n_labels += int(inverse.max()) + 1
     return labels
+
+
+def _merge_by_dot_key(group: list[SymOpList], refs: tuple[int, ...], frame: NDArray) -> NDArray:
+    """Coarsen the frame labels of an all-linear group to its dot-key classes
+
+    Every frame class is one multimer, so only its first cluster is keyed (:func:`.dotkey.dot_keys`).
+    If the key could overflow int64, the frame labels are kept and a :class:`RuntimeWarning` is raised.
+
+    :param group: clusters that share ``refs``
+    :param refs: their base references sorted by ``context.anchor_rank``, every one linear
+    :param frame: ``(N,)`` frame labels of ``group``, numbered ``0..m-1``
+    :returns: ``(N,)`` labels numbered ``0..k-1``, ``k <= m``
+    """
+    _, first = np.unique(frame, return_index=True)
+    try:
+        keys = dotkey.dot_keys([group[i] for i in first], refs)
+    except OverflowError as err:
+        warnings.warn(
+            f"{err} for references {refs}; keeping their frame key, which may leave duplicates",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+        return frame
+    _, merged = np.unique(keys, axis=0, return_inverse=True)
+    return merged.ravel()[frame]
