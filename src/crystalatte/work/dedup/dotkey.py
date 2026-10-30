@@ -72,6 +72,34 @@ def _forms(rot: NDArray, tr: NDArray, refs: tuple[int, ...]) -> tuple[NDArray, N
     return P, U, has_axis
 
 
+def _check_overflow(rot: NDArray, tr: NDArray, refs: tuple[int, ...], G: NDArray) -> None:
+    """Raise if building the forms or their dot-product tables could leave int64
+
+    The bound is taken in Python integers before any form is built, so a wrapped intermediate cannot hide.
+    Entries stay below ``2**62`` so that :func:`~.invariants.lex_codes` can subtract any two of them.
+
+    :param rot: ``(N, n, 3, 3)`` member rotations
+    :param tr: ``(N, n, 3)`` member translations, in twelfths
+    :param refs: each member's reference index
+    :param G: ``(k, 3, 3)`` metric pieces
+    :raises OverflowError: if any form or table entry could reach ``2**62``
+    """
+    line = [context.line_by_ref[i] for i in dict.fromkeys(refs)]
+    S = 12 * lcm(*(p.q for p in line))
+    r, t = int(np.abs(rot).max(initial=0)), int(np.abs(tr).max(initial=0))
+    big = 0
+    for p in line:
+        big = max(
+            big,
+            3 * r * (S // p.q) * int(np.abs(p.c0).max(initial=0)) + (S // 12) * t,
+            3 * r * S * int(np.abs(p.B).max(initial=0)),
+            0 if p.U is None else 3 * r * int(np.abs(p.U).max(initial=0)),
+        )
+    # each entry sums at most 9 products per form, doubled by the collapse and four-fold by the offsets
+    if 72 * big * big * int(np.abs(G).max(initial=0)) >= 2**62 or big >= 2**62:
+        raise OverflowError("dot-product formulas would overflow int64")
+
+
 def _relabellings(refs: tuple[int, ...], has_axis: list[bool]) -> list[tuple[NDArray, NDArray]]:
     """Return every listing order within reference blocks and every end-to-end flip of symmetric members
 
@@ -161,6 +189,7 @@ def dot_keys(cands: list[SymOpList], refs: tuple[int, ...]) -> NDArray:
         rot, tr = np.zeros((0, n, 3, 3), np.int64), np.zeros((0, n, 3), np.int64)
 
     G = context.metric_pieces
+    _check_overflow(rot, tr, refs, G)
     P, U, has_axis = _forms(rot, tr, refs)
     variants = _relabellings(refs, has_axis)
     axis_pos = np.flatnonzero(has_axis)
@@ -172,11 +201,6 @@ def dot_keys(cands: list[SymOpList], refs: tuple[int, ...]) -> NDArray:
     )
     if width == 0:
         return np.zeros((len(cands), 0), dtype=np.int64)
-
-    # each entry sums at most 9 products per form, doubled by the collapse and four-fold by the offsets
-    big = max(int(np.abs(P).max(initial=0)), int(np.abs(U).max(initial=0)))
-    if 72 * big * big * int(np.abs(G).max(initial=0)) >= 2**63:
-        raise OverflowError("dot-product formulas would overflow int64")
 
     step = max(1, DOT_CHUNK_ENTRIES // (len(variants) * width))
     out = np.empty((len(cands), width), dtype=np.int64)

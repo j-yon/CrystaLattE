@@ -1,3 +1,5 @@
+import dataclasses
+
 import numpy as np
 import pytest
 import qcelemental as qcel
@@ -201,3 +203,12 @@ def test_dot_key_single_atoms(argon_crystal):
     k = dotkey.dot_keys([_dimer((6, 6, 0)), _dimer((0, 6, 6)), _dimer((12, 0, 0))], (0, 0))
     assert k.shape[1] == 1                      # one o·o entry, no axis rows
     assert np.array_equal(k[0], k[1]) and not np.array_equal(k[0], k[2])
+
+
+def test_dot_key_guards_the_form_construction(monkeypatch):
+    # S * c0 = 12 * 2**62 wraps to 0 in int64, so only a bound taken before the forms are built sees it
+    _ref_setup("carbon_dioxide")
+    huge = dataclasses.replace(context.line_by_ref[0], c0=np.array([2**62, 0, 0], dtype=np.int64))
+    monkeypatch.setattr(context, "line_by_ref", [huge])
+    with pytest.raises(OverflowError):
+        dotkey.dot_keys([_dimer((12, 0, 0))], (0, 0))
