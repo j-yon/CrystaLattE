@@ -4,7 +4,9 @@ import qcelemental as qcel
 from crystalatte.core.crystal import Crystal
 from crystalatte.core.multimer import ASU
 from crystalatte.core.space_group import SpaceGroup
-from crystalatte.work.dedup import context, dressing, linear
+from crystalatte.core.sym_ops import SymOpList
+from crystalatte.work import neighbors
+from crystalatte.work.dedup import context, dotkey, dressing, invariants, linear
 from conftest import GENERATE_KW, crystal, load
 
 _CELL = ((6.0, 7.0, 10.0), (90, 100, 90))
@@ -53,6 +55,11 @@ def hcn_crystal():
 @pytest.fixture
 def mixed_crystal():
     return _p21c((_hcn_cart, (0.23, 0.31, 0.17)), (_water_cart, (0.71, 0.62, 0.58)))
+
+
+@pytest.fixture
+def argon_crystal():
+    return Crystal((5.26,) * 3, (90,) * 3, SpaceGroup(225), ASU(["Ar"], np.zeros((1, 3))))
 
 
 def _H(cry):
@@ -140,3 +147,57 @@ def test_anchor_rank_puts_nonlinear_first(mixed_crystal):
     context.bind(mixed_crystal, refs)
     assert context.linear_by_ref == [True, False]
     assert context.anchor_rank.tolist() == [1, 0]
+
+
+def _dimer(t1_twelfths, rot1=np.eye(3, dtype=np.int16)):
+    return SymOpList.from_components(
+        np.stack([np.eye(3, dtype=np.int16), rot1]),
+        np.stack([np.zeros(3, np.int16), np.array(t1_twelfths, np.int16)]), 1, np.zeros(2, np.int64))
+
+
+def _candidates(cry, refs, R, monkeypatch):
+    """Return every candidate cluster ``generate_neighbors`` hands to ``orbit_labels``"""
+    seen = []
+
+    def _record(cands):
+        seen.extend(cands)
+        return np.arange(len(cands))
+
+    monkeypatch.setattr(neighbors, "orbit_labels", _record)
+    neighbors.generate_neighbors(cry, refs, np.array([[-2, 2]] * 3), R, 2, **GENERATE_KW)
+    return seen
+
+def test_dot_key_merges_the_surviving_co2_pair():
+    _ref_setup("carbon_dioxide")
+    k = dotkey.dot_keys([_dimer((-36, 0, 0)), _dimer((-24, -24, 12))], (0, 0))
+    assert np.array_equal(k[0], k[1])
+
+def test_dot_key_separates_equal_length_offsets_at_different_angles():
+    _ref_setup("carbon_dioxide")
+    k = dotkey.dot_keys([_dimer((12, 12, 12)), _dimer((12, 12, -12))], (0, 0))
+    assert not np.array_equal(k[0], k[1])
+
+def test_dot_key_ignores_member_order_and_inversion():
+    _ref_setup("carbon_dioxide")
+    a = _dimer((-36, 0, 0))
+    swapped = SymOpList.from_components(a.rot_cache[::-1].copy(), a.tr_cache[::-1].copy(), 1, a.ref_indices)
+    inverted = _dimer((-36, 0, 0), -np.eye(3, dtype=np.int16))    # second molecule flipped end to end
+    k = dotkey.dot_keys([a, swapped, inverted], (0, 0))
+    assert np.array_equal(k[0], k[1]) and np.array_equal(k[0], k[2])
+
+def test_dot_key_agrees_with_every_existing_merge(monkeypatch):
+    # each existing-key class must have one dot key: the spec's consistency argument
+    cry = crystal("carbon_dioxide").detect_symmetry(1e-3)
+    refs = cry.get_references()
+    cands = _candidates(cry, refs, 15.0, monkeypatch)
+    frame = invariants.orbit_labels(cands)
+    dk = dotkey.dot_keys(cands, (0, 0))
+    for lab in np.unique(frame):
+        rows = dk[frame == lab]
+        assert (rows == rows[0]).all()
+
+def test_dot_key_single_atoms(argon_crystal):
+    context.bind(argon_crystal, argon_crystal.get_references())
+    k = dotkey.dot_keys([_dimer((6, 6, 0)), _dimer((0, 6, 6)), _dimer((12, 0, 0))], (0, 0))
+    assert k.shape[1] == 1                      # one o·o entry, no axis rows
+    assert np.array_equal(k[0], k[1]) and not np.array_equal(k[0], k[2])
