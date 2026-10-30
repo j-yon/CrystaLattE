@@ -12,8 +12,9 @@ GENERATE_KW = {"use_origin": True, "verbose": 0}
 
 # disordered fixtures and the policy `load` reads them with
 # ice is proton disordered (4 sites with 1/2 occupancy each); its legacy tests expect the
-# unphysical 'ignore' reading. ritonavir_c2 has explicit groups; load its first ordered state
-DISORDERED = {"ice": "ignore", "ritonavir_c2": "enumerate"}
+# unphysical 'ignore' reading, as does ice_exact (the same file with its thirds written out).
+# ritonavir_c2 has explicit groups; load its first ordered state
+DISORDERED = {"ice": "ignore", "ice_exact": "ignore", "ritonavir_c2": "enumerate"}
 
 # mark tests that are slow on some fixtures, so they can be deselected with -m "not slow"
 _SLOW_CRYSTALS = frozenset({"hexamine"})
