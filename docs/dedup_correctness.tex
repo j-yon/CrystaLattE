@@ -477,6 +477,7 @@ multimer exactly when their tables are equal. Reflections are included, as in
 Definition~\ref{def:same}, so mirror images merge. A single atom has no axis and
 contributes only its centroid, so the same method covers single--atom
 monomers, which have the same problem in every direction.
+Lemma~\ref{lem:gram} proves the key fact.
 
 \subsection{Making it exact: compare formulas, not numbers}
 
@@ -522,6 +523,8 @@ fail: two different formulas might happen to give the same number for this
 particular crystal's measured values. Such a pair is not merged. Nothing in the
 structure forces it, as in Caveat~\ref{cav:reach}, and like every missed merge
 it costs a redundant calculation, not accuracy.
+Theorems~\ref{thm:dotsound} and~\ref{thm:dotcomplete} state both directions
+precisely.
 
 \subsection{Listing order and end--to--end flips}
 
@@ -533,8 +536,8 @@ symmetric molecules. A flip simply changes the sign of that axis's row and
 column. Each variant gives one flattened table, and the key is the
 \emph{smallest} of them in dictionary order, compared as packed integer codes
 with the existing \texttt{lex\_codes}. Two clusters get the same key exactly
-when some listing of one has the same table as some listing of the other. That
-is the same reasoning as Theorem~\ref{thm:key}. Whether a molecule's two ends
+when some listing of one has the same table as some listing of the other
+(Lemma~\ref{lem:orbitmin}). Whether a molecule's two ends
 are the same is decided once per reference, by checking whether inversion
 through its centroid maps it onto itself.
 
@@ -556,6 +559,158 @@ contrast, offsets $(1,1,1)$ and $(1,1,-1)$ have equal length ($3g$), but the
 offset--axis entries are $3\eta g$ against $\eta g$. Those dimers really are
 different, and the key keeps them apart.
 
+\subsection{Correctness of the dot--product key}\label{sec:linear-proof}
+
+This subsection proves the claims above. Clusters are written $X$ and $Y$ here,
+because $G$ denotes the metric.
+
+\paragraph{Setup.} Fix a tuple of references, all linear or single atoms.
+Reference $i$ has centroid $c_i=c_{0,i}/q_i+B_i\xi_i$ and axis $u_i=U_i\eta_i$
+(no axis for a single atom), with integer $c_{0,i},q_i,B_i,U_i$ solving
+$(I-h)c_i=d_h$ and $hu_i=\pm u_i$ for every $h\in\Dgrp_i$. The metric is
+$G=\sum_kg_kG_k$, where the integer matrices $G_k$ span the metrics that every
+element of $\Hgrp$ preserves. Collect the unknowns as
+$\theta=(g,\xi,\eta)$, and let $\Theta$ be the set of $\theta$ for which $G$
+is positive definite and every $u_i\neq0$. $\Theta$ is a non--empty open set,
+and the real crystal is one point $\theta^\ast\in\Theta$:
+\texttt{context.bind} checks that its centroids and axes have this form, and
+$\Hgrp$ preserves its metric.
+
+Member $b$ of a cluster $X$ has placement $(R_b,t_b)$, centroid
+$p_b=R_bc+t_b$ and axis $u_b=R_bu$, and its atoms sit at $p_b+\lambda_ku_b$,
+with numbers $\lambda_k$ fixed by its reference. Its \emph{table}
+$\mathcal T(X)$ is the matrix of dot products $x^{\mathsf T}Gy$ between the
+vectors
+\begin{equation}\label{eq:linvectors}
+  o_1,\dots,o_{n-1}\ (o_b=p_b-p_0),\qquad u_0,\dots,u_{n-1}.
+\end{equation}
+Each entry is a polynomial in $\theta$ with integer coefficients, stored as its
+coefficient vector. The code scales offsets by a positive constant $S$ that
+depends only on the reference tuple, which multiplies each entry position by
+the same constant for every cluster and changes no comparison below.
+
+\paragraph{Relabellings.} A relabelling $\gamma=(\pi,\varepsilon)$ permutes
+members within each reference ($\pi$) and multiplies the axis of each member
+with identical ends by $\varepsilon_b=\pm1$. Write $\gamma X$ for the
+relabelled cluster. Relabellings form a finite group $\Gamma$ with
+$\gamma'(\gamma X)=(\gamma'\gamma)X$. The key is
+\[
+  \kappa(X)=\lexmin_{\gamma\in\Gamma}\mathcal T(\gamma X).
+\]
+Relabelling changes the table by a fixed linear map: the new offsets are
+$o'_b=o_{\pi(b)}-o_{\pi(0)}$ (with $o_0=0$) and the new axes are
+$\varepsilon_bu_{\pi(b)}$, so every entry of $\mathcal T(\gamma X)$ is a fixed
+integer combination of entries of $\mathcal T(X)$. Write
+$\mathcal T(\gamma X)=\Phi_\gamma(\mathcal T(X))$.
+
+\begin{lemma}[The minimum is a canonical form]\label{lem:orbitmin}
+$\kappa(X)=\kappa(Y)$ iff $\mathcal T(\gamma X)=\mathcal T(Y)$ for some
+$\gamma\in\Gamma$, as polynomials.
+\end{lemma}
+
+\begin{proof}
+($\Leftarrow$) Then $\mathcal T(\gamma'Y)=\Phi_{\gamma'}(\mathcal T(\gamma X))
+=\mathcal T(\gamma'\gamma X)$ for every $\gamma'$, and $\gamma'\mapsto\gamma'\gamma$
+is a bijection of $\Gamma$, so the two sets of tables, and their minima,
+coincide. ($\Rightarrow$) Equal minima give $\gamma_1,\gamma_2$ with
+$\mathcal T(\gamma_1X)=\mathcal T(\gamma_2Y)$. Applying $\Phi_{\gamma_2^{-1}}$
+gives $\mathcal T(\gamma_2^{-1}\gamma_1X)=\mathcal T(Y)$.
+\end{proof}
+
+\begin{lemma}[Dot products determine vectors up to rotation]\label{lem:gram}
+If $x_1,\dots,x_m$ and $y_1,\dots,y_m$ in $\mathbb R^3$ satisfy
+$x_i\cdot x_j=y_i\cdot y_j$ for all $i,j$, then some orthogonal $Q$, proper or
+improper, has $Qx_i=y_i$ for all $i$.
+\end{lemma}
+
+\begin{proof}
+A linear relation $\sum_ia_ix_i=0$ holds iff $\lVert\sum_ia_ix_i\rVert^2=0$,
+which depends only on the dot products, so the $x_i$ and $y_i$ satisfy the
+same linear relations. Choose indices $I$ with $\{x_i\}_{i\in I}$ a basis of
+$\operatorname{span}\{x_i\}$; then $\{y_i\}_{i\in I}$ is a basis of
+$\operatorname{span}\{y_i\}$. The linear map $x_i\mapsto y_i$ ($i\in I$)
+preserves dot products, so it is an isometry between the spans, and it
+extends to an orthogonal $Q$ of $\mathbb R^3$ by any isometry of the
+orthogonal complements. Every other $x_j$ is the combination of the basis with
+the same coefficients as $y_j$, so $Qx_j=y_j$.
+\end{proof}
+
+\begin{theorem}[Soundness]\label{thm:dotsound}
+If $\kappa(X)=\kappa(Y)$, then $X\sim Y$ in the sense of
+Definition~\ref{def:same}.
+\end{theorem}
+
+\begin{proof}
+By Lemma~\ref{lem:orbitmin}, $\mathcal T(\gamma X)=\mathcal T(Y)$ as
+polynomials for some $\gamma=(\pi,\varepsilon)$, so the two tables agree at
+$\theta^\ast$. At $\theta^\ast$, $x^{\mathsf T}Gy$ is the Cartesian dot product
+of $Ax$ and $Ay$, so Lemma~\ref{lem:gram} applied to the Cartesian vectors
+\eqref{eq:linvectors} of $\gamma X$ and $Y$ gives an orthogonal $Q$ with
+$Q\,o^X_{\pi(b)}-Q\,o^X_{\pi(0)}=o^Y_b$ and
+$\varepsilon_bQ\,u^X_{\pi(b)}=u^Y_b$. The rigid motion
+$M(r)=Q(r-p^X_{\pi(0)})+p^Y_0$ then sends each centroid $p^X_{\pi(b)}$ to
+$p^Y_b$ and each axis $u^X_{\pi(b)}$ to $\varepsilon_bu^Y_b$, so it sends atom
+$p^X_{\pi(b)}+\lambda_ku^X_{\pi(b)}$ to $p^Y_b+\varepsilon_b\lambda_ku^Y_b$.
+Since $\pi$ pairs members of the same reference, the $\lambda_k$ and atomic
+numbers agree on both sides. If $\varepsilon_b=1$ this is atom $k$ of member
+$b$ of $Y$. If $\varepsilon_b=-1$, the reference has identical ends, meaning
+inversion through its centroid maps it onto itself, so $\lambda\mapsto-\lambda$
+permutes its atoms and preserves atomic numbers. Either way $M$ carries the
+atoms of $X$ onto those of $Y$ with atomic numbers preserved, which is
+congruence of the labelled nuclear clouds and, by
+Proposition~\ref{prop:energy}, leaves the energy unchanged. A single atom is
+the same argument with no axis.
+\end{proof}
+
+Call $X$ and $Y$ \emph{structurally equivalent} if they are congruent at
+every $\theta\in\Theta$: for every allowed cell shape and every value of the
+free coordinates.
+
+\begin{theorem}[Completeness for structural equivalences]\label{thm:dotcomplete}
+$\kappa(X)=\kappa(Y)$ iff $X$ and $Y$ are structurally equivalent.
+\end{theorem}
+
+\begin{proof}
+($\Rightarrow$) The proof of Theorem~\ref{thm:dotsound} holds at any
+$\theta\in\Theta$, not just $\theta^\ast$. ($\Leftarrow$) At each
+$\theta\in\Theta$ a congruence pairs members of the same reference and maps
+each axis to plus or minus the image axis. The sign is $+1$ for a member whose
+ends differ, since the motion preserves atomic numbers. So it defines a
+$\gamma\in\Gamma$, and since rigid motions preserve dot products,
+$\mathcal T(\gamma X)(\theta)=\mathcal T(Y)(\theta)$. Hence $\Theta$ is
+covered by the finitely many sets
+$Z_\gamma=\{\theta:\mathcal T(\gamma X)(\theta)=\mathcal T(Y)(\theta)\}$.
+If $\mathcal T(\gamma X)\neq\mathcal T(Y)$ as polynomials, some entry differs
+by a non--zero polynomial, and $Z_\gamma$ lies in its zero set, which has
+empty interior. A finite union of such sets cannot cover a non--empty open
+set, so some $\gamma$ has $\mathcal T(\gamma X)=\mathcal T(Y)$ as polynomials,
+and $\kappa(X)=\kappa(Y)$ by Lemma~\ref{lem:orbitmin}.
+\end{proof}
+
+\begin{corollary}[Keying representatives is enough]\label{cor:dotreps}
+If the orbit key merges $X$ and $Y$, then $\kappa(X)=\kappa(Y)$. Hence keying
+one representative per orbit--key class gives the same classes as keying every
+cluster.
+\end{corollary}
+
+\begin{proof}
+An orbit--key merge is \eqref{eq:star} with dressings $\sigma_a\in\Dgrp$ and a
+motion $M$ whose linear part lies in $\Hgrp$ (Proposition~\ref{prop:reach}).
+Each $\sigma_a$ satisfies the equations that define $c$ and $u$, so it fixes
+the centroid and maps the axis to $\pm$ itself at every $\theta\in\Theta$.
+Every element of $\Hgrp$ preserves each $G_k$, so $M$ is an isometry at every
+$\theta$. Hence $X$ and $Y$ are congruent throughout $\Theta$, and
+Theorem~\ref{thm:dotcomplete} gives $\kappa(X)=\kappa(Y)$.
+\end{proof}
+
+\begin{remark}[What is missed]
+Theorems~\ref{thm:dotsound} and~\ref{thm:dotcomplete} make the key exact for
+structural equivalence. The only congruences it misses are those that hold at
+the measured $\theta^\ast$ but not throughout $\Theta$, i.e.\ coincidences of
+particular cell lengths or free coordinates. As with Caveat~\ref{cav:reach},
+a missed merge costs a redundant calculation, never accuracy.
+\end{remark}
+
 \subsection{Where it runs}
 
 \begin{itemize}[leftmargin=2em]
@@ -570,7 +725,7 @@ different, and the key keeps them apart.
   also a match under the dot--product key: the dressings were used to set up
   the unknowns, and every operation of $\Hgrp$ preserves each cell--shape piece.
   Running the existing key first therefore changes only the cost, not the
-  answer.
+  answer (Corollary~\ref{cor:dotreps}).
 \item Representatives and multiplicities are handled by the existing
   \texttt{equivalence.merge}, so the lattice sum is unchanged
   (Proposition~\ref{prop:energy}).
