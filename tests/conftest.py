@@ -89,6 +89,7 @@ def pytest_configure(config):
         "fast run that still covers every module.",
     )
     config.addinivalue_line("markers", "psi4: needs a working Psi4 install")
+    config.addinivalue_line("markers", "fractal: needs qcfractal + Postgres (FractalSnowflake)")
 
 
 def pytest_collection_modifyitems(config, items):

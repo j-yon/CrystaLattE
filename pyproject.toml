@@ -35,6 +35,7 @@ tests = [
     "pytest",
 ]
 local = ["qcengine>=0.52.0", "qcmanybody>=0.8.0"]
+fractal = ["qcportal>=0.71"]
 
 [project.urls]
 "Homepage" = "https://github.com/j-yon/CrystaLattE"
