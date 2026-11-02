@@ -6,13 +6,15 @@
 
 **Architecture:** `generate` attaches stable IDs, per-formula-unit weights and generation settings to every `Multimer`. A `ComputeSpec` describes the model chemistry once; `LocalBackend` (QCManyBody `ManyBodyCore` + `qcengine.compute`), `FractalBackend` (one `ManybodyDataset` per N in the user's `PortalClient`) and `InputFileBackend` (existing writers) all implement `submit`/`status`/`collect`. One `assemble()` turns per-multimer nonadditive energies into a `Results` object.
 
-**Tech Stack:** Python ≥3.13, numpy, qcelemental ≥0.50,<0.70, qcmanybody ≥0.8.0, qcengine ≥0.52.0, qcportal ≥0.71, pytest.
+**Tech Stack:** Python ≥3.13, numpy, pydantic ≥2, qcelemental ≥0.50,<0.70, qcmanybody ≥0.8.0, qcengine ≥0.52.0, qcportal ≥0.71, pytest.
 
 **Spec:** `docs/superpowers/specs/2026-11-02-compute-backends-design.md`
 
 ## Global Constraints
 
 - Core dependency: `qcelemental>=0.50,<0.70` (forced by qcengine 0.52 / qcmanybody 0.8 / qcportal 0.71).
+- Core dependency: `pydantic>=2` (imported directly; do not rely on it arriving via qcelemental).
+- Model style (user decision): pydantic v2 `BaseModel` with `model_config = ConfigDict(frozen=True, extra="forbid")` only for persisted boundary objects (`ComputeSpec`, `GenerationInfo`); everything else (`Row`, `Status`, core classes) stays a standard-library dataclass. Serialize with `model_dump(mode="json")`, load with `model_validate(...)`; no hand-written `to_dict`/`from_dict`.
 - Optional extras: `crystalatte[local]` = `qcengine>=0.52.0`, `qcmanybody>=0.8.0`; `crystalatte[fractal]` = `qcportal>=0.71`. Backends import them lazily and raise `ImportError` containing `pip install "crystalatte[local]"` / `pip install "crystalatte[fractal]"`.
 - No `.cle` files, no CLI; everything is the Python API exported from `crystalatte/__init__.py`.
 - `ManyBodyCore` levels must be contiguous: `{1: mc, ..., N: mc}`.
@@ -38,7 +40,7 @@
 - Modify: `pyproject.toml:11`
 - Modify: `devtools/conda-envs/test_env.yaml`
 
-- [ ] **Step 1:** Set `"qcelemental>=0.50,<0.70"` in `pyproject.toml` dependencies and add `qcelemental >=0.50,<0.70` to `test_env.yaml`.
+- [ ] **Step 1:** Set `"qcelemental>=0.50,<0.70"` and add `"pydantic>=2"` in `pyproject.toml` dependencies (with a trailing comment like the others); add `qcelemental >=0.50,<0.70` and `pydantic >=2` to `test_env.yaml`.
 - [ ] **Step 2:** Upgrade the dev env: `pip install "qcelemental>=0.50,<0.70"`; confirm `python -c "import qcelemental; print(qcelemental.__version__)"` prints ≥0.50.
 - [ ] **Step 3:** Run `pytest -m "not slow" -q`. Expected: same pass/xfail counts as on `v2` before the bump. If `Monomer.to_molecule()` / `Multimer.to_molecule()` break (pydantic v2 / `qcelemental.models` v1–v2 split), fix them to construct `qcelemental.models.Molecule` (the QCSchema v1 model, which is what qcengine 0.52 `compute` and `ManyBodyCore` accept) and keep their docstrings.
 - [ ] **Step 4:** Run full `pytest -q`; expected green bar same as before.
@@ -95,7 +97,7 @@ def test_generate_anchor_counts_sum_to_multiplicity(cif):
 **Interfaces:**
 - Produces:
   - `order_name(N: int) -> str` in `core/multimer.py` (moved verbatim from `work/setup.py::_order_name`, incl. `_NAMES`).
-  - `@dataclass(frozen=True) GenerationInfo` in `core/generation.py` with fields `N: int`, `R: float`, `symprec: float`, `detect_symmetry: bool`, `options: tuple[tuple[str, object], ...]` (sorted distance-mode kwargs: `use_origin`, `use_com`), `crystal_fingerprint: str`, `site_counts: tuple[int, ...]` (n_r per reference), `species: tuple[str, ...]` (Hill formula per reference), `z_fu: int`; methods `to_dict() -> dict` and `from_dict(d) -> GenerationInfo` (JSON-safe round trip).
+  - `class GenerationInfo(BaseModel)` (frozen, extra forbid) in `core/generation.py` with fields `N: int`, `R: float`, `symprec: float`, `detect_symmetry: bool`, `options: dict[str, bool]` (distance-mode kwargs `use_origin`, `use_com`), `crystal_fingerprint: str`, `site_counts: tuple[int, ...]` (n_r per reference), `species: tuple[str, ...]` (Hill formula per reference), `z_fu: int`. Validators: `N >= 2`, `z_fu >= 1`, `len(site_counts) == len(species)`. JSON round trip via `model_dump(mode="json")` / `model_validate`.
   - `crystal_fingerprint(crystal: Crystal) -> str`: sha256 hex of canonical JSON of lattice parameters (rounded to 1e-6), space-group operations (sorted string forms), ASU symbols and fractional coordinates (rounded to 1e-6), and disorder state label (or `None`).
   - `Multimer.generation -> GenerationInfo | None` (new optional init field `_generation`, default `None`).
   - `Multimer.id -> str`: `f"{order_name(len(monomers))}-{self.to_molecule().get_hash()[:16]}"`, cached.
@@ -118,7 +120,9 @@ def test_weight_is_multiplicity_over_N_for_single_reference(benzene):
 
 def test_generation_info_round_trips(benzene):
     g = cle.generate(benzene, N=2, R=8.0, verbose=0)[0].generation
-    assert GenerationInfo.from_dict(json.loads(json.dumps(g.to_dict()))) == g
+    assert GenerationInfo.model_validate(json.loads(json.dumps(g.model_dump(mode="json")))) == g
+    with pytest.raises(pydantic.ValidationError):
+        GenerationInfo.model_validate({**g.model_dump(mode="json"), "z_fu": 0})
     assert (g.N, g.R, g.z_fu) == (2, 8.0, 4)
 
 def test_cocrystal_z_fu_and_species(salicylic_hydroxybenzamide):
@@ -195,46 +199,58 @@ For the mixed-site-symmetry row: scan `tests/x23` and `tests/other` for a crysta
 - Test: `tests/compute/test_spec.py`
 
 **Interfaces:**
-- Produces: `@dataclass(frozen=True) ComputeSpec(program: str, method: str, basis: str, keywords: Mapping = {}, bsse: str = "cp", use_defaults: bool = True)` with
+- Produces: `class ComputeSpec(BaseModel)` (frozen, extra forbid) with fields `program: str`, `method: str`, `basis: str`, `keywords: dict[str, Any] = {}`, `bsse: Literal["cp", "nocp", "vmfc"] = "cp"`, `use_defaults: bool = True`; positional construction is not supported by pydantic, so tests and docs use keywords: `ComputeSpec(program="psi4", method="mp2", basis="aug-cc-pvdz")`. Methods:
   - `final_keywords -> dict` (defaults for `program.lower()` from `DEFAULT_KEYWORDS: dict[str, dict]`, overlaid by `keywords`; `{}` defaults plus a one-time `UserWarning` recommending tight convergence for programs absent from `DEFAULT_KEYWORDS`),
   - `atomic_template() -> dict` (`{"driver": "energy", "model": {"method", "basis"}, "keywords": final_keywords}`),
   - `manybody_kwargs(N: int) -> dict` (`molecule` excluded; `bsse_type=[bsse]`, `levels={k: "crystalatte" for k in 1..N}`, `return_total_data=False`, `supersystem_ie_only=False`, `embedding_charges={}`),
   - `to_portal(N: int)` → `qcportal.manybody.ManybodySpecification(program="qcmanybody", levels={k: QCSpecification(program, driver="energy", method, basis, keywords=final_keywords) for k in 1..N}, bsse_correction=[bsse])` (lazy import),
-  - `to_dict()` / `from_dict()` and `fingerprint() -> str` (sha256 of canonical `to_dict()` JSON).
-  - `bsse` validated against `{"cp", "nocp", "vmfc"}`; program/method/basis lowercased.
+  - `fingerprint() -> str`: sha256 of `json.dumps(self.model_dump(mode="json"), sort_keys=True)` (sorting makes keyword order irrelevant).
+  - `bsse` validated by its `Literal` type (accept any case via a `mode="before"` validator that lowercases); a `field_validator` lowercases program/method/basis.
 
 - [ ] **Step 1: Write failing tests**
 
 ```python
 def test_psi4_defaults_merged_user_wins():
-    s = ComputeSpec("psi4", "mp2", "aug-cc-pvdz", keywords={"scf_type": "pk"})
+    s = ComputeSpec(program="psi4", method="mp2", basis="aug-cc-pvdz", keywords={"scf_type": "pk"})
     assert s.final_keywords == {"e_convergence": 10, "d_convergence": 10, "scf_type": "pk",
                                 "mp2_type": "df", "cc_type": "df", "freeze_core": "true"}
 
 def test_use_defaults_false():
-    assert ComputeSpec("psi4", "hf", "sto-3g", use_defaults=False).final_keywords == {}
+    assert ComputeSpec(program="psi4", method="hf", basis="sto-3g", use_defaults=False).final_keywords == {}
 
 def test_unknown_program_warns():
     with pytest.warns(UserWarning, match="convergence"):
-        ComputeSpec("nwchem", "hf", "sto-3g").final_keywords
+        ComputeSpec(program="nwchem", method="hf", basis="sto-3g").final_keywords
 
 def test_levels_contiguous():
-    assert ComputeSpec("psi4", "hf", "sto-3g").manybody_kwargs(3)["levels"] == {1: "crystalatte", 2: "crystalatte", 3: "crystalatte"}
+    assert ComputeSpec(program="psi4", method="hf", basis="sto-3g").manybody_kwargs(3)["levels"] == {1: "crystalatte", 2: "crystalatte", 3: "crystalatte"}
 
 def test_bad_bsse_rejected():
-    with pytest.raises(ValueError): ComputeSpec("psi4", "hf", "sto-3g", bsse="ssfc")
+    with pytest.raises(pydantic.ValidationError): ComputeSpec(program="psi4", method="hf", basis="sto-3g", bsse="ssfc")
 
 def test_round_trip_and_fingerprint():
-    s = ComputeSpec("psi4", "mp2", "cc-pvdz")
-    assert ComputeSpec.from_dict(s.to_dict()) == s and s.fingerprint() == ComputeSpec.from_dict(s.to_dict()).fingerprint()
+    s = ComputeSpec(program="psi4", method="mp2", basis="cc-pvdz")
+    t = ComputeSpec.model_validate(s.model_dump(mode="json"))
+    assert t == s and t.fingerprint() == s.fingerprint()
+    assert ComputeSpec(program="psi4", method="mp2", basis="cc-pvdz", keywords={"a": 1, "b": 2}).fingerprint() \
+        == ComputeSpec(program="psi4", method="mp2", basis="cc-pvdz", keywords={"b": 2, "a": 1}).fingerprint()
+
+def test_unknown_field_rejected():
+    with pytest.raises(pydantic.ValidationError):
+        ComputeSpec(program="psi4", method="hf", basis="sto-3g", basiss="oops")
+
+def test_frozen():
+    s = ComputeSpec(program="psi4", method="hf", basis="sto-3g")
+    with pytest.raises(pydantic.ValidationError):
+        s.basis = "cc-pvdz"
 
 def test_to_portal(qcportal = pytest.importorskip("qcportal")):
-    p = ComputeSpec("psi4", "hf", "sto-3g").to_portal(2)
+    p = ComputeSpec(program="psi4", method="hf", basis="sto-3g").to_portal(2)
     assert sorted(p.levels) == [1, 2] and p.bsse_correction == ["cp"]
 ```
 
 - [ ] **Step 2:** Run `pytest tests/compute/test_spec.py -v`; expected FAIL.
-- [ ] **Step 3:** Implement as specified (store `keywords` as a sorted tuple of items internally so the dataclass stays hashable/frozen).
+- [ ] **Step 3:** Implement as specified. `final_keywords` is a method-like property computed on access (frozen models cannot cache by assignment; use `functools.cached_property` only if it works with the frozen config, else recompute). Add `pydantic>=2` import at module top.
 - [ ] **Step 4:** Run; expected PASS (portal test skipped if qcportal absent).
 - [ ] **Step 5:** Commit `feat(compute): add ComputeSpec`.
 
@@ -315,16 +331,16 @@ def test_select_active_ignores_stale_and_marks_unknown_pending():
 ```python
 def test_submit_rejects_multimers_without_generation(tmp_path, hand_built_dimer):
     with pytest.raises(ValueError, match="crystalatte.generate"):
-        InputFileBackend(tmp_path).submit([hand_built_dimer], ComputeSpec("psi4", "hf", "sto-3g"))
+        InputFileBackend(tmp_path).submit([hand_built_dimer], ComputeSpec(program="psi4", method="hf", basis="sto-3g"))
 
 def test_submit_rejects_mixed_crystals(tmp_path, benzene, ammonia):
     ms = cle.generate(benzene, N=2, R=5.0, verbose=0)[:1] + cle.generate(ammonia, N=2, R=5.0, verbose=0)[:1]
     with pytest.raises(ValueError, match="fingerprint"):
-        InputFileBackend(tmp_path).submit(ms, ComputeSpec("psi4", "hf", "sto-3g"))
+        InputFileBackend(tmp_path).submit(ms, ComputeSpec(program="psi4", method="hf", basis="sto-3g"))
 
 def test_input_backend_writes_by_id(tmp_path, benzene):
     ms = cle.generate(benzene, N=2, R=6.0, verbose=0)
-    InputFileBackend(tmp_path).submit(ms, ComputeSpec("psi4", "hf", "sto-3g"))
+    InputFileBackend(tmp_path).submit(ms, ComputeSpec(program="psi4", method="hf", basis="sto-3g"))
     assert sorted(p.stem for p in (tmp_path / "dimers").glob("*.in")) == sorted(m.id for m in ms)
 
 def test_input_backend_status_collect_not_implemented(tmp_path):
@@ -361,7 +377,7 @@ Hand-built multimers for writer unit tests: attach a `GenerationInfo` built in a
   - Module-level `_run_task(atomic_input: dict, program: str, task_config: dict) -> dict` wraps `qcengine.compute(..., raise_error=False)` and returns `{"success": bool, "energy": float | None, "error": str | None}` — the single seam tests monkeypatch.
 
 Scratch layout (all JSON):
-- `scratch/manifest.json`: `{"spec": spec.to_dict(), "spec_fingerprint", "crystal_fingerprint", "generation": {N: GenerationInfo.to_dict()}, "active": {N: [ids]}, "multimers": {id: {"N", "multiplicity", "weight", "molecule": to_molecule().dict()}}}`. Written atomically (write tmp + `os.replace`).
+- `scratch/manifest.json`: `{"spec": spec.model_dump(mode="json"), "spec_fingerprint", "crystal_fingerprint", "generation": {N: info.model_dump(mode="json")}, "active": {N: [ids]}, "multimers": {id: {"N", "multiplicity", "weight", "molecule": to_molecule().dict()}}}`. Written atomically (write tmp + `os.replace`).
 - `scratch/tasks/<multimer id>/<sha256(label)[:16]>.json`: `{"label", "success", "energy", "error"}`, written as each task finishes.
 
 Behaviour:
@@ -432,7 +448,7 @@ def test_cp_dimer_matches_direct_psi4(tmp_path, ammonia):
 Behaviour:
 - Dataset per N: `f"{name}-{order_name(N)}s"`, created with `client.add_dataset("manybody", ...)` or fetched with `client.get_dataset("manybody", ...)`.
 - One specification per dataset, named `"crystalatte"`. Decision for the spec's open point: a different `ComputeSpec` under an existing name raises `ValueError` (compare `spec_fingerprint` in extras); users pick a new `name` for a new model chemistry.
-- Dataset extras: `{"crystalatte": {"spec": ..., "spec_fingerprint", "crystal_fingerprint", "generation": GenerationInfo.to_dict(), "active": [ids]}}` via `dataset.set_extras` (merge, don't clobber other keys). Crystal fingerprint mismatch → `ValueError`.
+- Dataset extras: `{"crystalatte": {"spec": ..., "spec_fingerprint", "crystal_fingerprint", "generation": info.model_dump(mode="json"), "active": [ids]}}`; load back with `ComputeSpec.model_validate` / `GenerationInfo.model_validate` so a corrupted manifest or extras raises `pydantic.ValidationError` via `dataset.set_extras` (merge, don't clobber other keys). Crystal fingerprint mismatch → `ValueError`.
 - Entries: `name=multimer.id`, `initial_molecule=multimer.to_molecule()`, `attributes={"N", "multiplicity", "weight", "crystal_fingerprint"}`; only names not in `dataset.entry_names` are added.
 - `submit`: then `dataset.submit(specification_names="crystalatte", tag=tag, priority=priority)`; returns immediately.
 - `status()` / `collect()`: for each dataset `f"{name}-*s"` that exists, read extras `active`, `iterate_records(specification_names="crystalatte")`; status `complete` → energy from `record.properties[f"{bsse}_corrected_{N}_body_contribution_to_energy"]` (verify the exact key on the first Snowflake run and pin it in a constant), `error` → `failed` with the record's error message, anything else → `pending`; weights/multiplicities from entry attributes; rows via `select_active`.

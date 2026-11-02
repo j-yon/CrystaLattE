@@ -109,7 +109,8 @@ src/crystalatte/compute/
 
 ### `ComputeSpec`
 
-A frozen dataclass (or pydantic model, builder's call) holding the model
+A frozen pydantic v2 model (user decision: pydantic for persisted boundary
+objects `ComputeSpec` and `GenerationInfo`; dataclasses elsewhere) holding the model
 chemistry only — never the execution path or resources:
 
 - `program`, `method`, `basis`, `keywords: dict`, `bsse` (default `"cp"`;
