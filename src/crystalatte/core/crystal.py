@@ -259,9 +259,17 @@ class Crystal:
         # determine connected components using BFS
         components = self._bfs(unique_cart, unique_symbols, tol)
 
-        # find the largest component(s) to identify complete molecules
-        mol_len = max(len(c) for c in components)
-        full = [c for c in components if len(c) == mol_len]
+        # key each atom by its unit-cell site, so all periodic images of an atom share a key
+        wrapped = unique_frac % 1.0
+        wrapped[wrapped > 1.0 - 1e-3] -= 1.0  # wrap 0.999... -> ~0
+        site = [tuple(r) for r in np.round(wrapped, 3)]
+
+        # a site's molecule size is its largest image; edge fragments are strictly smaller
+        site_len: dict[tuple, int] = {}
+        for c in components:
+            for i in c:
+                site_len[site[i]] = max(site_len.get(site[i], 0), len(c))
+        full = [c for c in components if len(c) == site_len[site[c[0]]]]
         return unique_frac, unique_cart, unique_symbols, full
 
     def _build_monomer(

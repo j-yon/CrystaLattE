@@ -29,6 +29,18 @@ def test_get_references_z4_ammonia_p1():
     assert len({tuple(np.round(c, 3)) for c in cens}) == 4
 
 
+def test_get_references_cocrystal_keeps_smaller_molecule():
+    # salicylic acid (C7H6O3, 16 atoms) with 4-hydroxybenzamide (C7H7NO2, 17 atoms),
+    # CSD 1403606: the smaller molecule must not be mistaken for an edge fragment
+    crystal = load("salicylic_hydroxybenzamide")
+    refs = crystal.get_references()
+    assert sorted(len(r.symbols) for r in refs) == [16, 17]
+    assert sorted("".join(sorted(r.symbols)) for r in refs) == [
+        "CCCCCCCHHHHHHHNOO",
+        "CCCCCCCHHHHHHOOO",
+    ]
+
+
 def test_symoplist_ref_indices_default_zeros():
     s = SymOpList([SymOp.identity(), SymOp.identity()], 1)
     assert list(s.ref_indices) == [0, 0]
