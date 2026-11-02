@@ -27,10 +27,10 @@ quick signal; run the full suite before merging.
 
 | Module | Cases | What it holds you to |
 | --- | ---: | --- |
-| `test_dedup.py` | 73 | The deduplication core. Exact orbit-key correctness, written as the specification the removed integer matcher was held to: translation swaps, inversion needing `W`, dressing translations, reference-compatibility of the permutation, and dressings drawn from each member's own reference. Cross-reference counts at `Z′ = 2` and `Z′ = 3`; every dressing a real symmetry and `W ⊆ D`; over-merge and multiplicity conservation across `N = 2…5`, including rows where only the extra dressings merge (triazine, CO₂). |
+| `test_dedup.py` | 75 | The deduplication core. Exact orbit-key correctness, written as the specification the removed integer matcher was held to: translation swaps, inversion needing `W`, dressing translations, reference-compatibility of the permutation, and dressings drawn from each member's own reference. Cross-reference counts at `Z′ = 2` and `Z′ = 3`; every dressing a real symmetry and `W ⊆ D`; over-merge and multiplicity conservation across `N = 2…5`, including rows where only the extra dressings merge (triazine, CO₂). |
 | `test_dressing.py` | 56 | The dressing group `D`: the cell's integer symmetry `H` per fixture (crystal-family orders, lookup on an inconsistent cell, metric test on a cell more symmetric than its group, and the hexagonal box rather than the R lattice for triazine), then `D = W ∪ {exact cell-symmetry self-isometries}`: `W` kept even when inexact (ice), extra operations exact and in twelfths, closure, and approximate symmetry rejected (benzene). |
-| `test_generate.py` | 41 | End-to-end regression counts at four orders — 14 dimer, 3 trimer, 4 tetramer, 3 pentamer rows — each also asserting the chemistry oracle agrees. Plus extra-symmetry rows (triazine, ammonia, benzene, CO₂) pinning count, total multiplicity and multiplicity histogram, count monotonicity in `R`, and the `N ≥ 2` input gate. |
-| `test_sym_ops.py` | 32 | `SymOp` xyz strings: formatting from `rot`/`tr` round-trips every table operation under lattice shifts and every generated monomer op across all fixtures, and a shifted op never keeps its source string. |
+| `test_generate.py` | 42 | End-to-end regression counts at four orders — 14 dimer, 3 trimer, 4 tetramer, 3 pentamer rows — each also asserting the chemistry oracle agrees. Plus extra-symmetry rows (triazine, ammonia, benzene, CO₂) pinning count, total multiplicity and multiplicity histogram, count monotonicity in `R`, and the `N ≥ 2` input gate. |
+| `test_sym_ops.py` | 35 | `SymOp` xyz strings: formatting from `rot`/`tr` round-trips every table operation under lattice shifts and every generated monomer op across all fixtures, and a shifted op never keeps its source string. |
 | `test_cif_parsing.py` | 47 | CIF ingestion across 13 space groups spanning every crystal system, several in more than one setting. Space-group number, Hall symbol, lattice parameters, ASU atom count. Plus field-name flexibility: CIF1 vs CIF2 spellings, Hall-only, H-M-only (with punctuation variants), operation-list-only, and a listed-operations-vs-declared-symbol contradiction. Plus the partial-occupancy guard and its three policies. |
 | `test_writers.py` | 25 | QC input generation: writer registry, the full Psi4 deck (fragments, charge/multiplicity, geometry, options, BSSE), and `write_inputs` directory layout and naming. |
 | `test_validate.py` | 14 | The chemistry oracle itself — see below. |
@@ -109,23 +109,36 @@ it exercises is orthogonal to whether its monomer is chemically real. Its dimer
 counts are **disorder-averaged, not physical water dimers** — do not read them as
 statements about ice.
 
+Ice has three fixtures:
+
+- `x23/ice` is the published Goto (1990) CIF, kept verbatim. It writes the
+  3-fold special position (1/3, 2/3, z) as 0.3333/0.6667, ~4e-4 Å off the axis,
+  which is what `test_special_position_tolerance_absorbs_cif_rounding` needs.
+  The exact orbit key merges by the space group and does not see the rounding
+  (78 dimers at R = 15). The Cartesian dedup before it did, and split
+  equivalent dimers into 205, which is where the old expectation of 208 came
+  from.
+- `other/ice_exact` is the same file with the thirds written out. The
+  over-merge referee runs on it rather than on `ice`, because the rounding moves
+  the NRE of space-group-equivalent clusters by up to 2.7e-3, far above the
+  referee's 1e-6. Both files give 78.
+- `other/ice_bernal_fowler` is the ordered Bernal-Fowler (1933) model, P6₃cm,
+  Z′ = 2, with no disorder. It is the structure v1's X23 ice value came from.
+  At R = 30, v2 gives 1977 dimers = (0,0) 489 + (0,1) 995 + (1,1) 493. v1
+  anchored only reference 0, so it reported 489 + 995 = 1484.
+
 **succinic_acid's CIF is named `succinic_Acid.cif`** — no longer true, it was
 renamed, but if a fixture ever again fails to follow `<name>/<name>.cif`,
 `conftest.cif()` will refuse it with a message telling you to rename.
 
-## The two remaining xfails
+## Former xfails
 
-Both are `strict=True`, so a fix surfaces as a failure rather than passing
-quietly. They are one known problem (ice), pinned from two sides.
+The suite has no xfails. Two problems used to be pinned here with
+`strict=True`:
 
-Linear monomers (carbon dioxide) used to be listed here and are resolved:
-all-linear clusters are merged by an exact dot-product key (`dedup.dotkey`),
-which carries no twist about the molecular axis, and CO2 dimers at R = 20 give
-the referee's 80. `test_linear_monomer_dedup_is_complete_at_20` and the
-carbon_dioxide rows of `test_dimer_count` and the over-merge referee now pass.
-
-- **Ice over-merge.** The `ice` row of `test_dimer_count` and the `ice` row of
-  `test_no_over_merge_every_discarded_cluster_matches_a_survivor`. The exact
-  orbit key (`15e6e6f`) folds ice's 497 candidate dimers at R = 15 into 78 where
-  208 is correct, and the over-merge referee confirms distinct dimers are being
-  deleted. How to resolve it is an open decision; the row holds 208.
+- **Linear monomers (carbon dioxide).** All-linear clusters are now merged by
+  an exact dot-product key (`dedup.dotkey`), which carries no twist about the
+  molecular axis, and CO2 dimers at R = 20 give the referee's 80.
+- **Ice "over-merge".** This was CIF rounding, not a dedup fault; see the ice
+  fixtures above. The `ice` count is 78, and the referee row runs on
+  `ice_exact`.

@@ -518,14 +518,10 @@ _REFEREE_BOX = {
 # must lie within R (2242715); at the old 5.5 no pentamer qualifies at all.
 @pytest.mark.parametrize("name,N,R", [
     ("benzene", 2, 8.0), ("urea", 2, 8.0),
-    pytest.param(
-        "ice", 2, 7.0,
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason="the exact orbit key over-merges proton-disordered ice "
-                   "(see the ice row in test_generate.py); open decision",
-        ),
-    ),
+    # ice_exact, not ice: the published 0.3333/0.6667 put ice's 3-fold site
+    # ~4e-4 A off the axis, so clusters the space group makes equivalent differ
+    # in NRE by up to 2.7e-3 -- far above this referee's 1e-6
+    ("ice_exact", 2, 7.0), ("ice_bernal_fowler", 2, 7.0),
     ("adamantane", 2, 8.0), ("hexamine", 2, 9.0), ("ammonia", 2, 7.0),
     ("benzene", 3, 7.0), ("urea", 3, 7.0), ("pyrazole", 3, 6.0),
     ("benzene", 4, 6.0), ("ammonia", 4, 5.0),
