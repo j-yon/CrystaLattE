@@ -88,6 +88,7 @@ def pytest_configure(config):
         "slow: takes roughly a second or more. Deselect with -m 'not slow' for a "
         "fast run that still covers every module.",
     )
+    config.addinivalue_line("markers", "psi4: needs a working Psi4 install")
 
 
 def pytest_collection_modifyitems(config, items):
