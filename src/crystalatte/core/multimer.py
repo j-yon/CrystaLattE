@@ -1,13 +1,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import cached_property
 
 import numpy as np
 import qcelemental as qcel
 from numpy.typing import NDArray
 from scipy.spatial.distance import pdist
 
+from .generation import GenerationInfo
 from .sym_ops import SymOp, SymOpList
+
+# past 6 who really cares about names
+_NAMES = {1: "monomer", 2: "dimer", 3: "trimer", 4: "tetramer", 5: "pentamer", 6: "hexamer"}
+
+
+def order_name(N: int) -> str:
+    """Get explicit multimer name for a given order N"""
+    return _NAMES.get(N, f"{N}mer")
 
 
 @dataclass
@@ -105,12 +115,14 @@ class Multimer:
     :param _monomers: :class:`Monomer` instances making up this multimer
     :param _sym_ops: :class:`SymOp` instances that generate this multimer
     :param _multiplicity: How many times this multimer occurs in the crystal by symmetry
+    :param _generation: :class:`GenerationInfo` of the run that produced it, ``None`` if built by hand
     :ivar _geometric_mean: Geometric mean of the inter-monomer centroid distances
     """
 
     _monomers: list[Monomer]
     _sym_ops: SymOpList
     _multiplicity: int = 1
+    _generation: GenerationInfo | None = None
     _geometric_mean: float = field(init=False)
 
     def __post_init__(self):
@@ -156,6 +168,38 @@ class Multimer:
     @property
     def geometric_mean(self) -> float:
         return self._geometric_mean
+
+    @property
+    def generation(self) -> GenerationInfo | None:
+        return self._generation
+
+    @cached_property
+    def id(self) -> str:
+        """Stable identifier from the order name and the hash of the multimer geometry"""
+        return f"{order_name(len(self._monomers))}-{self.to_molecule().get_hash()[:16]}"
+
+    @property
+    def weight(self) -> float:
+        """Contribution of this multimer's interaction energy to the lattice energy per formula unit
+
+        The energy per cell is ``(1/N) sum_r n_r sum_{C containing r} dE_C``, with ``n_r`` the
+        molecules per cell generated from reference ``r``. Candidates anchored on reference ``r``
+        enumerate exactly the clusters containing ``r``, so ``a_r`` (:attr:`SymOpList.anchor_counts`)
+        counts them per orbit. Dividing by ``Z_fu`` (gcd over species of ``sum_{r in species} n_r``)
+        gives the energy per formula unit:
+
+            weight = sum_r n_r * a_r / (N * Z_fu)
+
+        For ``Z' = 1`` single-component crystals this reduces to ``multiplicity / N`` (v1's replicas/N).
+
+        :returns: Weight to multiply this multimer's interaction energy by
+        :raises ValueError: If the multimer was not produced by :func:`~crystalatte.generate`
+        """
+        g = self._generation
+        if g is None:
+            raise ValueError("weight needs generation info; build multimers with generate()")
+        total = sum(g.site_counts[r] * a for r, a in self._sym_ops.anchor_counts.items())
+        return total / (g.N * g.z_fu)
 
     def to_molecule(self) -> qcel.models.Molecule:
         """Convert to a single QCElemental :class:`qcelemental.models.Molecule` with fragments"""

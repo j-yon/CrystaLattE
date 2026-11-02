@@ -1,9 +1,13 @@
 import warnings
+from collections import defaultdict
+from math import gcd
 
 import numpy as np
+from qcelemental.molutil import molecular_formula_from_symbols
 from tqdm import tqdm
 
 from ..core.crystal import Crystal
+from ..core.generation import GenerationInfo, crystal_fingerprint
 from ..core.multimer import Monomer, Multimer
 from ..core.space_group import SITE_ATOL
 from ..core.sym_ops import SymOpList
@@ -11,10 +15,11 @@ from .dedup import context
 from .neighbors import generate_neighbors
 
 
-def _process_multimer(g_N: SymOpList) -> Multimer:
+def _process_multimer(g_N: SymOpList, generation: GenerationInfo) -> Multimer:
     """Construct a :class:`Multimer` from a deduped candidate cluster
 
     :param g_N: Deduplicated cluster to materialize
+    :param generation: Provenance of the run, shared by every multimer
     :returns: Constructed :class:`~crystalatte.core.multimer.Multimer`
     """
     refs = g_N.ref_indices
@@ -28,7 +33,7 @@ def _process_multimer(g_N: SymOpList) -> Multimer:
         com_frac = g.apply(base.centroid_frac)
         com_cart = context.active_crystal.to_cartesian(com_frac)
         mons.append(Monomer(base.symbols, mon_frac, mon_cart, com_frac, com_cart, g))
-    return Multimer(mons, g_N, g_N.multiplicity)
+    return Multimer(mons, g_N, g_N.multiplicity, generation)
 
 
 def generate(
@@ -53,6 +58,7 @@ def generate(
             f"use Crystal.get_references() directly."
         )
 
+    fingerprint = crystal_fingerprint(crystal)
     if detect_symmetry:
         crystal = crystal.detect_symmetry(symprec)
     else:
@@ -91,12 +97,33 @@ def generate(
     d = np.linalg.norm(crystal.lattice_vectors, axis=0)
     kwargs.setdefault("site_atol", max(SITE_ATOL, float(symprec) / float(d.min())))
 
+    # molecules per cell from each reference, and formula units per cell
+    site_counts = tuple(
+        len(crystal.space_group.get_unique_sym_ops(m.centroid_frac, atol=kwargs["site_atol"]))
+        for m in monomers
+    )
+    species = tuple(molecular_formula_from_symbols(m.symbols, order="hill") for m in monomers)
+    per_species: dict[str, int] = defaultdict(int)
+    for formula, n in zip(species, site_counts):
+        per_species[formula] += n
+    generation = GenerationInfo(
+        N=int(N),
+        R=float(R),
+        symprec=float(symprec),
+        detect_symmetry=bool(detect_symmetry),
+        options={k: bool(kwargs.get(k, False)) for k in ("use_origin", "use_com")},
+        crystal_fingerprint=fingerprint,
+        site_counts=site_counts,
+        species=species,
+        z_fu=gcd(*per_species.values()),
+    )
+
     # generate and deduplicate all unique N-mers in the supercell defined by ``bounds``
     unique_neighbors = generate_neighbors(crystal, monomers, bounds, R, N, **kwargs)
 
     # process each unique multimer into a Multimer object
     return [
-        _process_multimer(g_N)
+        _process_multimer(g_N, generation)
         for g_N in tqdm(
             unique_neighbors,
             total=len(unique_neighbors),

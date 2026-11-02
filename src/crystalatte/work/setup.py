@@ -1,16 +1,8 @@
 from collections import defaultdict
 from pathlib import Path
 
-from ..core.multimer import Multimer
+from ..core.multimer import Multimer, order_name
 from ..io.writers import get_writer
-
-# past 6 who really cares about names
-_NAMES = {1: "monomer", 2: "dimer", 3: "trimer", 4: "tetramer", 5: "pentamer", 6: "hexamer"}
-
-
-def _order_name(N: int) -> str:
-    """Get explicit multimer name for a given order N"""
-    return _NAMES.get(N, f"{N}mer")
 
 
 def write_inputs(
@@ -29,8 +21,8 @@ def write_inputs(
         by_order[len(m.monomers)].append(m)
 
     for N, group in sorted(by_order.items()):
-        order_dir = output_dir / f"{_order_name(N)}s"
+        order_dir = output_dir / f"{order_name(N)}s"
         order_dir.mkdir(parents=True, exist_ok=True)
         for idx, multimer in enumerate(group, start=1):
-            path = order_dir / f"{_order_name(N)}_{idx:03d}.in"
+            path = order_dir / f"{order_name(N)}_{idx:03d}.in"
             writer.write(path, multimer.monomers, config)
