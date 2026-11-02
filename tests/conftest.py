@@ -99,3 +99,27 @@ def pytest_collection_modifyitems(config, items):
         original = getattr(item, "originalname", None) or item.name
         if original in _SLOW_TESTS or any(c in item.name for c in _SLOW_CRYSTALS):
             item.add_marker(pytest.mark.slow)
+
+
+@pytest.fixture(scope="session")
+def benzene():
+    return crystal("benzene")
+
+
+@pytest.fixture(scope="session")
+def ammonia():
+    return crystal("ammonia")
+
+
+@pytest.fixture
+def make_generation():
+    """build a :class:`GenerationInfo` for hand-built multimers of order ``N``"""
+    from crystalatte.core.generation import GenerationInfo
+
+    def _make(N: int, fingerprint: str = "hand-built") -> GenerationInfo:
+        return GenerationInfo(
+            N=N, R=10.0, symprec=1e-3, detect_symmetry=False, options={},
+            crystal_fingerprint=fingerprint, site_counts=(1,), species=("H2",), z_fu=1,
+        )
+
+    return _make

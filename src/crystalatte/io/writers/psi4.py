@@ -1,9 +1,8 @@
 from pathlib import Path
 
 from ...core.multimer import Monomer
+from ...compute.spec import ComputeSpec
 from .base import QCWriter
-
-_TOP_LEVEL_KEYS = {"method", "bsse_type", "charge", "multiplicity", "memory", "basis"}
 
 
 class Psi4Writer(QCWriter):
@@ -13,17 +12,24 @@ class Psi4Writer(QCWriter):
     def name(cls) -> str:
         return "psi4"
 
-    def write(self, path: Path, monomers: list[Monomer], config: dict) -> None:
-        # basic input necessities
-        method = config.get("method", "hf")
-        basis = config["basis"]
-        bsse_type = config.get("bsse_type", "cp")
-        charge = config.get("charge", 0)
-        multiplicity = config.get("multiplicity", 1)
-        memory = config.get("memory")
+    @classmethod
+    def extension(cls) -> str:
+        return "in"
 
-        # any other options that are not top-level keys will be passed to psi4.set_options
-        set_extras = {k: v for k, v in config.items() if k not in _TOP_LEVEL_KEYS}
+    def write(
+        self,
+        path: Path,
+        monomers: list[Monomer],
+        spec: ComputeSpec,
+        *,
+        memory: str | None = None,
+    ) -> None:
+        method = spec.method
+        basis = spec.basis
+        bsse_type = spec.bsse
+        charge = 0
+        multiplicity = 1
+        set_extras = spec.final_keywords
 
         # begin constructing the input file
         lines: list[str] = ["import psi4", ""]
