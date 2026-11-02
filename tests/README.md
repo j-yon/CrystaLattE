@@ -34,7 +34,7 @@ quick signal; run the full suite before merging.
 | `test_cif_parsing.py` | 47 | CIF ingestion across 13 space groups spanning every crystal system, several in more than one setting. Space-group number, Hall symbol, lattice parameters, ASU atom count. Plus field-name flexibility: CIF1 vs CIF2 spellings, Hall-only, H-M-only (with punctuation variants), operation-list-only, and a listed-operations-vs-declared-symbol contradiction. Plus the partial-occupancy guard and its three policies. |
 | `test_writers.py` | 25 | QC input generation: writer registry, the full Psi4 deck (fragments, charge/multiplicity, geometry, options, BSSE), and `write_inputs` directory layout and naming. |
 | `test_validate.py` | 14 | The chemistry oracle itself — see below. |
-| `test_multiref.py` | 9 | Multi-reference enumeration: `get_references` at `Z′ = 1` and `Z′ = 4`, per-member `ref_indices`, per-reference binding, and the physical ammonia dimers under two distance conventions. |
+| `test_multiref.py` | 10 | Multi-reference enumeration: `get_references` at `Z′ = 1` and `Z′ = 4` and on a two-component cocrystal (the smaller molecule must not be taken for an edge fragment), per-member `ref_indices`, per-reference binding, and the physical ammonia dimers under two distance conventions. |
 | `test_symmetry_detect.py` | 11 | spglib detection: P1 → P2₁3 promotion, no-change for benzene, graceful degradation on failure, pickling of detected groups, and that detection does not move the generated counts. |
 
 ## Two things worth knowing before you edit
