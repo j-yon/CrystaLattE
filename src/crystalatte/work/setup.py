@@ -4,7 +4,8 @@ from pathlib import Path
 from ..core.multimer import Multimer
 from ..io.writers import get_writer
 
-_NAMES = {1: "monomer", 2: "dimer", 3: "trimer", 4: "tetramer", 5: "pentamer"}
+# past 6 who really cares about names
+_NAMES = {1: "monomer", 2: "dimer", 3: "trimer", 4: "tetramer", 5: "pentamer", 6: "hexamer"}
 
 
 def _order_name(N: int) -> str:
