@@ -165,3 +165,47 @@ Copyright (c) 2020, Carlos H. Borca
  
 Project based on the 
 [Computational Molecular Science Python Cookiecutter](https://github.com/molssi/cookiecutter-cms) version 1.0.
+
+## Computing lattice energies
+
+The `crystalatte` package generates the unique multimers of a crystal and assembles a lattice energy from their many-body energies. Three backends run the calculations; install the extra each one needs:
+
+| Backend | Purpose | Extra |
+|---------|---------|-------|
+| `LocalBackend` | run every calculation on this machine through QCEngine and QCManyBody | `pip install "crystalatte[local]"` (`qcengine`, `qcmanybody`) |
+| `FractalBackend` | submit to a QCFractal server and collect from it | `pip install "crystalatte[fractal]"` (`qcportal`) |
+| `InputFileBackend` | only write input files to run yourself (no results) | none |
+
+QC programs such as Psi4 are not installed by these extras; installing them is up to you.
+
+```python
+import crystalatte as cle
+
+crystal = next(cle.from_cif("benzene.cif"))
+multimers = cle.generate(crystal, 2, 10.0) + cle.generate(crystal, 3, 8.0)
+
+spec = cle.ComputeSpec(
+    program="psi4", method="mp2", basis="aug-cc-pvdz", bsse="cp",
+    keywords={"scf_type": "df"},
+)
+
+backend = cle.LocalBackend("bz_run/", ncores=8)
+# backend = cle.FractalBackend(client, "benzene", tag="bigmem", priority="high")
+# backend = cle.InputFileBackend("inputs/")
+
+backend.submit(multimers, spec)
+print(backend.status())
+results = backend.collect()    # raises IncompleteResultsError if anything is missing
+
+print(results.lattice_energy)  # kJ/mol per formula unit
+print(results.by_order)        # {2: ..., 3: ...}
+results.table                  # per-multimer rows
+```
+
+A complete command-line version is in `scripts/run_lattice_energy.py`.
+
+- **Definition.** The lattice energy is per formula unit, in kJ/mol: `E_latt = (1/Z_fu) Σ_N Σ_orbits (copies per cell) ΔE^(N-body)`. It is comparable to a periodic-DFT `E(bulk)/Z − E(A) − E(B)`. The energy of deforming or relaxing the monomers from their gas-phase geometries is not included.
+- **Incomplete data.** `collect()` refuses to assemble a lattice energy from missing or failed calculations. `collect(partial=True)` returns the rows that exist, so you can inspect per-multimer status and energies.
+- **Defaults.** `ComputeSpec` applies tight, v1-style Psi4 keywords (convergence thresholds, density fitting, frozen core) under your `keywords`; yours win. Pass `use_defaults=False` to turn this off.
+- **Known gap.** Monomers are always written and computed with charge 0 and multiplicity 1.
+- **Scripts and parallelism.** `LocalBackend` runs calculations in worker processes. On macOS and Windows put the code that calls it under `if __name__ == "__main__":`, as `scripts/run_lattice_energy.py` does.
