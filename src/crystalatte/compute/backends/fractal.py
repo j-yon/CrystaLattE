@@ -17,6 +17,8 @@ _EXTRAS_KEY = "crystalatte"
 # verified against QCFractal 0.71 + QCManyBody 0.8 on a FractalSnowflake run
 _RESULTS_KEY = "results"
 _ENERGY_KEY = "{bsse}_corrected_{N}_body_contribution_to_energy"
+# record statuses that may still finish; every other non-complete status is reported as failed
+_PENDING = frozenset({"waiting", "running"})
 
 
 def _require_extras() -> None:
@@ -44,6 +46,9 @@ class FractalBackend(Backend):
     :param name: prefix of the dataset names; one name holds one model chemistry and one crystal
     :param tag: compute tag for submitted records; defaults to the dataset's default tag
     :param priority: compute priority for submitted records; defaults to the dataset's default
+
+    Running a ``FractalSnowflake`` from a process that has already imported psi4 can make its
+    workers' energies differ at the ~1e-6 kJ/mol level from separately run calculations.
     """
 
     def __init__(self, client, name: str, *, tag: str | None = None, priority: str | None = None):
@@ -134,6 +139,8 @@ class FractalBackend(Backend):
             ds.submit(specification_names=_SPEC_NAME, compute_tag=self.tag, compute_priority=self.priority)
 
     def _rows(self) -> list[Row]:
+        from qcportal.record_models import RecordStatusEnum
+
         datasets = self._datasets()
         if not datasets:
             raise ValueError(f"no submission named {self.name!r} found on the server; call submit() first")
@@ -151,12 +158,15 @@ class FractalBackend(Backend):
                 )
             for entry_name, _, record in ds.iterate_records(specification_names=_SPEC_NAME):
                 row = known[entry_name]
-                if record.status == "complete":
+                if record.status == RecordStatusEnum.complete:
                     energy = float(record.properties[_RESULTS_KEY][key])
                     known[entry_name] = Row(row.id, N, row.multiplicity, row.weight, energy, "complete")
-                elif record.status == "error":
-                    error = record.error or {}
-                    message = error.get("error_message") if isinstance(error, dict) else str(error)
+                elif record.status not in _PENDING:
+                    if record.status == RecordStatusEnum.error:
+                        error = record.error or {}
+                        message = error.get("error_message") if isinstance(error, dict) else str(error)
+                    else:  # cancelled, invalid or deleted: terminal, never runs again on its own
+                        message = f"record {record.status.value}"
                     known[entry_name] = Row(
                         row.id, N, row.multiplicity, row.weight, None, "failed", message or "unknown error"
                     )
@@ -174,6 +184,9 @@ class FractalBackend(Backend):
 
     def resubmit_errors(self) -> int:
         """Reset errored records so the server runs them again
+
+        Only records in the ``error`` state are reset; cancelled, invalid and deleted records
+        are left alone (use the dataset's ``uncancel_records`` and similar for those).
 
         :returns: number of records reset
         """

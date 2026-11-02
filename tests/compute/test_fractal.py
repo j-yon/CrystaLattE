@@ -25,7 +25,13 @@ TIMEOUT = 600.0
 
 
 @pytest.fixture(scope="module")
-def snowflake_client():
+def psi4_preloaded() -> bool:
+    """Whether psi4 was imported in this process before the Snowflake forked its workers"""
+    return "psi4" in sys.modules
+
+
+@pytest.fixture(scope="module")
+def snowflake_client(psi4_preloaded):
     """A throwaway QCFractal server with Psi4 workers, shared by the module"""
     pytest.importorskip("qcfractal")
     if importlib.util.find_spec("psi4") is None:
@@ -97,7 +103,12 @@ def test_resubmit_is_idempotent(snowflake_client, ammonia):
 
 
 @pytest.mark.fractal
-def test_collect_matches_local(snowflake_client, tmp_path, ammonia):
+def test_collect_matches_local(snowflake_client, psi4_preloaded, tmp_path, ammonia):
+    if psi4_preloaded:
+        pytest.skip(
+            "psi4 already imported in this process; forked Snowflake workers inherit its state "
+            "- run tests/compute/test_fractal.py on its own"
+        )
     ms = dimers(ammonia)
     fractal = FractalBackend(snowflake_client, "nh3")
     fractal.submit(ms, SPEC)
@@ -168,6 +179,26 @@ def test_failures_reported_and_reset(snowflake_client, ammonia):
         b.collect()
 
     assert b.resubmit_errors() == 1
+
+
+@pytest.mark.fractal
+def test_cancelled_record_is_failed(snowflake_client, ammonia):
+    ms = dimers(ammonia)[:1]
+    b = FractalBackend(snowflake_client, "cancelled", priority="low")
+    # a spec no other test uses, so the server cannot reuse an already-finished record
+    b.submit(ms, SPEC.model_copy(update={"keywords": {**SPEC.keywords, "maxiter": 77}}))
+    snowflake_client.get_dataset("manybody", "cancelled-dimers").cancel_records(
+        specification_names="crystalatte"
+    )
+
+    rows = b.collect(partial=True).rows
+    assert [r.status for r in rows] == ["failed"]
+    assert "cancelled" in rows[0].error
+    assert b.status().counts[2] == {"complete": 0, "pending": 0, "failed": 1}
+    with pytest.raises(cle.IncompleteResultsError) as excinfo:
+        b.collect()
+    assert excinfo.value.missing == {2: {"failed": [ms[0].id], "pending": []}}
+    assert b.resubmit_errors() == 0
 
 
 @pytest.mark.fractal
