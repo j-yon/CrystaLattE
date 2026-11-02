@@ -6,6 +6,7 @@ import warnings
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic_core import to_jsonable_python
 
 LEVEL_LABEL = "crystalatte"
 
@@ -97,5 +98,13 @@ class ComputeSpec(BaseModel):
         )
 
     def fingerprint(self) -> str:
-        payload = json.dumps(self.model_dump(mode="json"), sort_keys=True)
+        """Hash of what is sent to the program, so a change in the defaults changes it too"""
+        sent = {
+            "program": self.program,
+            "method": self.method,
+            "basis": self.basis,
+            "bsse": self.bsse,
+            "final_keywords": self.final_keywords,
+        }
+        payload = json.dumps(to_jsonable_python(sent), sort_keys=True)
         return hashlib.sha256(payload.encode()).hexdigest()

@@ -93,3 +93,16 @@ def test_to_portal():
     pytest.importorskip("qcportal")
     p = ComputeSpec(**PSI4).to_portal(2)
     assert sorted(p.levels) == [1, 2] and p.bsse_correction == ["cp"]
+
+
+def test_fingerprint_hashes_resolved_keywords():
+    explicit = ComputeSpec(**PSI4, keywords=dict(spec_module.DEFAULT_KEYWORDS["psi4"]), use_defaults=False)
+    assert explicit.fingerprint() == ComputeSpec(**PSI4).fingerprint()
+    assert ComputeSpec(**PSI4, keywords={"scf_type": "df"}).fingerprint() == ComputeSpec(**PSI4).fingerprint()
+
+
+def test_fingerprint_tracks_default_keywords(monkeypatch):
+    before = ComputeSpec(**PSI4).fingerprint()
+    defaults = {**spec_module.DEFAULT_KEYWORDS["psi4"], "maxiter": 5}
+    monkeypatch.setitem(spec_module.DEFAULT_KEYWORDS, "psi4", defaults)
+    assert ComputeSpec(**PSI4).fingerprint() != before
