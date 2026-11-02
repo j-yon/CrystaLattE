@@ -8,7 +8,8 @@ dynamic = ["version"]
 dependencies = [
     "numpy",
     "pycifrw",              # CIF parsing (io/cif.py)
-    "qcelemental",          # element data and Molecule export
+    "pydantic>=2",          # ComputeSpec / GenerationInfo models
+    "qcelemental>=0.50,<0.70",  # element data and Molecule export
     "scipy",                # spatial.distance, spatial.cKDTree
     "spglib",               # crystal symmetry detection and Niggli reduction
     "tqdm",                 # progress bars in generate/neighbors
