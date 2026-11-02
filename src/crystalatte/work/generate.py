@@ -37,7 +37,14 @@ def _process_multimer(g_N: SymOpList, generation: GenerationInfo) -> Multimer:
 
 
 def generate(
-    crystal: Crystal, N: int, R: float, *, detect_symmetry=True, symprec=1e-3, **kwargs
+    crystal: Crystal,
+    N: int,
+    R: float,
+    *,
+    detect_symmetry=True,
+    symprec=1e-3,
+    z_fu: int | None = None,
+    **kwargs,
 ) -> list[Multimer]:
     """Generate unique multimers of every reference molecule in the crystal
 
@@ -46,9 +53,15 @@ def generate(
     :param R: Cutoff in Angstroms that every pair of monomers must satisfy
     :param detect_symmetry: If True, automatically detect and apply full symmetry
     :param symprec: ``spglib`` symmetry detection tolerance in Angstroms
+    :param z_fu: Formula units per unit cell, overriding the default: the gcd over chemical
+        species of the molecules per cell, where species are told apart by Hill formula. Set it
+        when that guess is wrong, e.g. a cocrystal of two different molecules with the same
+        formula (they collapse into one species) or a formula unit you define differently.
+        Must divide the molecules per cell of every Hill formula.
     :param kwargs: Additional options forwarded to :func:`generate_neighbors`.
     :returns: List of unique multimers found in the crystal
-    :raises ValueError: If ``N`` is not an integer ``>= 2``
+    :raises ValueError: If ``N`` is not an integer ``>= 2`` or ``z_fu`` is not a positive
+        integer dividing the molecules per cell of every Hill formula
 
     """
     # check N validity
@@ -106,6 +119,18 @@ def generate(
     per_species: dict[str, int] = defaultdict(int)
     for formula, n in zip(species, site_counts):
         per_species[formula] += n
+    if z_fu is None:
+        z_fu = gcd(*per_species.values())
+    elif (
+        not isinstance(z_fu, (int, np.integer))
+        or isinstance(z_fu, bool)
+        or z_fu < 1
+        or any(n % z_fu for n in per_species.values())
+    ):
+        raise ValueError(
+            f"z_fu must be a positive integer dividing the molecules per cell of every "
+            f"formula {dict(per_species)}; got {z_fu!r}"
+        )
     generation = GenerationInfo(
         N=int(N),
         R=float(R),
@@ -115,7 +140,7 @@ def generate(
         crystal_fingerprint=fingerprint,
         site_counts=site_counts,
         species=species,
-        z_fu=gcd(*per_species.values()),
+        z_fu=int(z_fu),
     )
 
     # generate and deduplicate all unique N-mers in the supercell defined by ``bounds``

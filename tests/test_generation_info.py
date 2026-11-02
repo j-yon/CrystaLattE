@@ -120,3 +120,19 @@ def test_weight_without_generation_raises():
     assert Multimer(mons, ops, 1).generation is None
     with pytest.raises(ValueError, match="generate"):
         Multimer(mons, ops, 1).weight
+
+
+def test_z_fu_override_scales_weights(benzene):
+    auto = {m.id: m for m in cle.generate(benzene, N=2, R=6.0, verbose=0)}
+    over = cle.generate(benzene, N=2, R=6.0, z_fu=2, verbose=0)
+    assert over[0].generation.z_fu == 2 and auto[over[0].id].generation.z_fu == 4
+    assert {m.id for m in over} == set(auto)
+    for m in over:
+        assert m.weight == pytest.approx(2 * auto[m.id].weight)
+
+
+@pytest.mark.parametrize("z_fu", [0, -4, 3, 8, 2.0, True])
+def test_z_fu_override_rejects_bad_values(benzene, z_fu):
+    # benzene has 4 C6H6 per cell, so only 1, 2 and 4 are valid formula-unit counts
+    with pytest.raises(ValueError, match="z_fu"):
+        cle.generate(benzene, N=2, R=6.0, z_fu=z_fu, verbose=0)
