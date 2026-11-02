@@ -7,7 +7,7 @@ from ...core.generation import GenerationInfo
 from ...core.multimer import Multimer, order_name
 from ..results import Results, Row, Status, assemble, select_active
 from ..spec import ComputeSpec
-from .base import Backend
+from .base import Backend, crystalatte_version
 
 _INSTALL_HINT = "FractalBackend needs qcportal; install it with: pip install 'crystalatte[fractal]'"
 _DATASET_TYPE = "manybody"
@@ -92,7 +92,7 @@ class FractalBackend(Backend):
         by_order = self._validate(multimers)
         crystal_fp = multimers[0].generation.crystal_fingerprint
         existing = self._datasets()
-        for ds in existing.values():
+        for N, ds in existing.items():
             meta = self._meta(ds)
             if meta["spec_fingerprint"] != spec.fingerprint():
                 raise ValueError(
@@ -104,9 +104,16 @@ class FractalBackend(Backend):
                     f"crystal fingerprint differs from the one used in dataset {ds.name!r} "
                     f"({meta['crystal_fingerprint'][:12]} vs {crystal_fp[:12]}); use a new name"
                 )
+            stored = ds.specifications.get(_SPEC_NAME)
+            if stored is not None and stored.specification != spec.to_portal(N):
+                raise ValueError(
+                    f"dataset {ds.name!r} holds a specification {_SPEC_NAME!r} that differs from "
+                    f"what {spec!r} sends; use a new name"
+                )
 
         from qcportal.manybody import ManybodyDatasetNewEntry
 
+        version = crystalatte_version()
         for N, group in by_order.items():
             ds = existing.get(N) or self.client.add_dataset(_DATASET_TYPE, self._dataset_name(N))
             if _SPEC_NAME not in ds.specification_names:
@@ -121,6 +128,7 @@ class FractalBackend(Backend):
                         "multiplicity": m.multiplicity,
                         "weight": m.weight,
                         "crystal_fingerprint": crystal_fp,
+                        "crystalatte_version": version,
                     },
                 )
                 for m in group
@@ -134,6 +142,9 @@ class FractalBackend(Backend):
                 "crystal_fingerprint": crystal_fp,
                 "generation": group[0].generation.model_dump(mode="json"),
                 "active": [m.id for m in group],
+                # read by collect; entry attributes keep the values of the submit that added them
+                "multimers": {m.id: {"multiplicity": m.multiplicity, "weight": m.weight} for m in group},
+                "crystalatte_version": version,
             }
             ds.set_extras({**(ds.extras or {}), _EXTRAS_KEY: meta})
             ds.submit(specification_names=_SPEC_NAME, compute_tag=self.tag, compute_priority=self.priority)
@@ -151,16 +162,23 @@ class FractalBackend(Backend):
             spec = ComputeSpec.model_validate(meta["spec"])
             active[N] = meta["active"]
             key = _ENERGY_KEY.format(bsse=spec.bsse, N=N)
+            current = meta["multimers"]
             for entry in ds.iterate_entries():
-                attrs = entry.attributes
+                attrs = current.get(entry.name, entry.attributes)
                 known[entry.name] = Row(
                     entry.name, N, attrs["multiplicity"], attrs["weight"], None, "pending"
                 )
             for entry_name, _, record in ds.iterate_records(specification_names=_SPEC_NAME):
                 row = known[entry_name]
                 if record.status == RecordStatusEnum.complete:
-                    energy = float(record.properties[_RESULTS_KEY][key])
-                    known[entry_name] = Row(row.id, N, row.multiplicity, row.weight, energy, "complete")
+                    energy = ((record.properties or {}).get(_RESULTS_KEY) or {}).get(key)
+                    if energy is None:
+                        known[entry_name] = Row(
+                            row.id, N, row.multiplicity, row.weight, None, "failed",
+                            f"record complete but its results are missing {key!r}",
+                        )
+                    else:
+                        known[entry_name] = Row(row.id, N, row.multiplicity, row.weight, float(energy), "complete")
                 elif record.status not in _PENDING:
                     if record.status == RecordStatusEnum.error:
                         error = record.error or {}

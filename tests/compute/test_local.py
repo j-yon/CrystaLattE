@@ -123,6 +123,35 @@ def test_failure_reported_not_raised(tmp_path, failing_engine, benzene):
     assert b.collect(partial=True).missing[2]["failed"]
 
 
+def test_analysis_error_marks_failed_and_retries(tmp_path, fake_engine, ammonia):
+    ms = cle.generate(ammonia, N=2, R=4.0, verbose=0)
+    b = LocalBackend(tmp_path, ncores=1)
+
+    def broken(self, *args, **kwargs):
+        raise RuntimeError("analysis exploded")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(ManyBodyCore, "analyze", broken)
+        b.submit(ms, SPEC)
+        b.submit(ms, SPEC)
+    assert b.status().counts[2] == {"complete": 0, "pending": 0, "failed": len(ms)}
+    with pytest.raises(IncompleteResultsError, match="analysis exploded"):
+        b.collect()
+
+    calls = fake_engine.calls
+    b.submit(ms, SPEC)
+    assert fake_engine.calls == calls
+    assert b.collect().complete
+
+
+def test_manifest_records_crystalatte_version(tmp_path, fake_engine, ammonia):
+    from importlib.metadata import version
+
+    LocalBackend(tmp_path, ncores=1).submit(cle.generate(ammonia, N=2, R=4.0, verbose=0), SPEC)
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert manifest["crystalatte_version"] == {"2": version("crystalatte")}
+
+
 def test_status_counts_complete(tmp_path, fake_engine, benzene):
     ms = cle.generate(benzene, N=2, R=5.0, verbose=0)
     b = LocalBackend(tmp_path, ncores=1)

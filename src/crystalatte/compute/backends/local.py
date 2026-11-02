@@ -10,7 +10,7 @@ from pathlib import Path
 from ...core.multimer import Multimer
 from ..results import Results, Row, Status, assemble, select_active
 from ..spec import ComputeSpec
-from .base import Backend
+from .base import Backend, crystalatte_version
 
 _INSTALL_HINT = "LocalBackend needs qcengine and qcmanybody; install them with: pip install 'crystalatte[local]'"
 _RESULT = "result.json"
@@ -83,8 +83,13 @@ class _Job:
             self.finish()
 
     def finish(self) -> None:
-        results = self.core.analyze({label: {"energy": e} for label, e in self.energies.items()})
-        _write_json(self.task_dir / _RESULT, {"energy": float(results["results"][self.key])})
+        """Assemble the many-body energy; an analysis error is recorded, never raised, and retried on resubmit"""
+        try:
+            results = self.core.analyze({label: {"energy": e} for label, e in self.energies.items()})
+            outcome = {"success": True, "energy": float(results["results"][self.key])}
+        except Exception as exc:
+            outcome = {"success": False, "error": f"many-body analysis failed: {type(exc).__name__}: {exc}"}
+        _write_json(self.task_dir / _RESULT, outcome)
 
 
 class LocalBackend(Backend):
@@ -157,6 +162,7 @@ class LocalBackend(Backend):
 
         for N, group in by_order.items():
             manifest["generation"][str(N)] = group[0].generation.model_dump(mode="json")
+            manifest.setdefault("crystalatte_version", {})[str(N)] = crystalatte_version()
             manifest["active"][str(N)] = [m.id for m in group]
             for m in group:
                 manifest["multimers"][m.id] = {
@@ -172,7 +178,8 @@ class LocalBackend(Backend):
         for group in by_order.values():
             for m in group:
                 task_dir = self._task_dir(m.id)
-                if (task_dir / _RESULT).exists():
+                result = task_dir / _RESULT
+                if result.exists() and _read_json(result)["success"]:
                     continue
                 task_dir.mkdir(parents=True, exist_ok=True)
                 job = _Job(m, spec, task_dir)
@@ -220,7 +227,10 @@ class LocalBackend(Backend):
         common = {"id": id_, "N": info["N"], "multiplicity": info["multiplicity"], "weight": info["weight"]}
         result = task_dir / _RESULT
         if result.exists():
-            return Row(**common, energy=_read_json(result)["energy"], status="complete")
+            done = _read_json(result)
+            if done["success"]:
+                return Row(**common, energy=done["energy"], status="complete")
+            return Row(**common, energy=None, status="failed", error=done["error"])
         if task_dir.is_dir():
             for path in sorted(task_dir.glob("*.json")):
                 task = _read_json(path)

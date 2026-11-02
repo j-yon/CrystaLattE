@@ -2,7 +2,9 @@ import importlib.util
 import os
 import sys
 import time
+from importlib.metadata import version
 from pathlib import Path
+from types import SimpleNamespace
 
 import pydantic
 import pytest
@@ -10,7 +12,7 @@ import pytest
 import crystalatte as cle
 from crystalatte.compute import ComputeSpec
 from crystalatte.compute.backends import FractalBackend, LocalBackend
-from crystalatte.core.multimer import order_name
+from crystalatte.core.multimer import Multimer, order_name
 
 # tight SCF so Local and Fractal agree to ~1e-11 Eh per dimer; at Psi4's default convergence
 # repeated runs of the same dimer drift by ~1e-9 Eh, i.e. ~1e-6 kJ/mol in the lattice energy
@@ -73,6 +75,8 @@ def test_submit_creates_one_dataset_per_order(snowflake_client, ammonia):
         assert ds.specification_names == ["crystalatte"]
         meta = ds.extras["crystalatte"]
         assert meta["active"] == [m.id for m in ms]
+        assert meta["multimers"] == {m.id: {"multiplicity": m.multiplicity, "weight": m.weight} for m in ms}
+        assert meta["crystalatte_version"] == version("crystalatte")
         assert meta["spec_fingerprint"] == SPEC.fingerprint()
         assert meta["crystal_fingerprint"] == ms[0].generation.crystal_fingerprint
         assert ComputeSpec.model_validate(meta["spec"]) == SPEC
@@ -82,6 +86,7 @@ def test_submit_creates_one_dataset_per_order(snowflake_client, ammonia):
             "multiplicity": ms[0].multiplicity,
             "weight": ms[0].weight,
             "crystal_fingerprint": ms[0].generation.crystal_fingerprint,
+            "crystalatte_version": version("crystalatte"),
         }
 
 
@@ -153,6 +158,38 @@ def test_spec_and_crystal_mismatch_raise(snowflake_client, ammonia, benzene):
 
 
 @pytest.mark.fractal
+def test_resubmit_uses_new_weights(snowflake_client, ammonia):
+    ms = dimers(ammonia)
+    b = FractalBackend(snowflake_client, "reweight", priority="low")
+    b.submit(ms, SPEC)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Multimer, "weight", property(lambda self: 0.125))
+        b.submit(ms, SPEC)
+    assert {r.weight for r in b.collect(partial=True).rows} == {0.125}
+    fresh = FractalBackend(snowflake_client, "reweight").collect(partial=True)
+    assert {r.id: r.weight for r in fresh.rows} == {m.id: 0.125 for m in ms}
+
+
+@pytest.mark.fractal
+def test_stored_specification_mismatch_raises(snowflake_client, ammonia):
+    ms = dimers(ammonia)
+    b = FractalBackend(snowflake_client, "stored", priority="low")
+    b.submit(ms, SPEC)
+    # extras that agree with another spec, as if written by a CrystaLattE with other defaults
+    other = SPEC.model_copy(update={"keywords": {**SPEC.keywords, "maxiter": 33}})
+    ds = snowflake_client.get_dataset("manybody", "stored-dimers")
+    meta = ds.extras["crystalatte"]
+    ds.set_extras(
+        {
+            **ds.extras,
+            "crystalatte": {**meta, "spec": other.model_dump(mode="json"), "spec_fingerprint": other.fingerprint()},
+        }
+    )
+    with pytest.raises(ValueError, match="specification 'crystalatte'"):
+        b.submit(ms, other)
+
+
+@pytest.mark.fractal
 def test_corrupted_extras_raise_validation_error(snowflake_client, ammonia):
     b = FractalBackend(snowflake_client, "corrupt", priority="low")
     b.submit(dimers(ammonia), SPEC)
@@ -205,6 +242,50 @@ def test_cancelled_record_is_failed(snowflake_client, ammonia):
 def test_collect_before_submit_raises(snowflake_client):
     with pytest.raises(ValueError, match="submit"):
         FractalBackend(snowflake_client, "never").collect()
+
+
+class _FakeDataset:
+    """Stands in for a ManybodyDataset whose one record completed without the expected energy"""
+
+    def __init__(self, m):
+        from qcportal.record_models import RecordStatusEnum
+
+        self.name = "fake-dimers"
+        self.extras = {
+            "crystalatte": {
+                "spec": SPEC.model_dump(mode="json"),
+                "spec_fingerprint": SPEC.fingerprint(),
+                "crystal_fingerprint": m.generation.crystal_fingerprint,
+                "generation": m.generation.model_dump(mode="json"),
+                "active": [m.id],
+                "multimers": {m.id: {"multiplicity": m.multiplicity, "weight": m.weight}},
+            }
+        }
+        self._entry = SimpleNamespace(name=m.id, attributes={"multiplicity": m.multiplicity, "weight": m.weight})
+        self._record = SimpleNamespace(status=RecordStatusEnum.complete, properties={"results": {}})
+
+    def iterate_entries(self):
+        yield self._entry
+
+    def iterate_records(self, specification_names=None):
+        yield self._entry.name, specification_names, self._record
+
+
+def test_complete_record_without_energy_is_failed(ammonia):
+    pytest.importorskip("qcportal")
+    m = dimers(ammonia)[0]
+    ds = _FakeDataset(m)
+    client = SimpleNamespace(
+        list_datasets=lambda: [{"dataset_name": ds.name, "dataset_type": "manybody"}],
+        get_dataset=lambda kind, name: ds,
+    )
+    b = FractalBackend(client, "fake")
+    rows = b.collect(partial=True).rows
+    assert [r.status for r in rows] == ["failed"]
+    assert "cp_corrected_2_body_contribution_to_energy" in rows[0].error
+    assert b.status().counts[2] == {"complete": 0, "pending": 0, "failed": 1}
+    with pytest.raises(cle.IncompleteResultsError, match="missing"):
+        b.collect()
 
 
 def test_missing_extra_gives_install_hint(monkeypatch):

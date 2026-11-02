@@ -1,9 +1,18 @@
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from importlib.metadata import PackageNotFoundError, version
 
 from ...core.multimer import Multimer
 from ..results import Results, Status
 from ..spec import ComputeSpec
+
+
+def crystalatte_version() -> str:
+    """Installed CrystaLattE version, recorded with every submission"""
+    try:
+        return version("crystalatte")
+    except PackageNotFoundError:
+        return "unknown"
 
 
 class Backend(ABC):
