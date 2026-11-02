@@ -175,7 +175,13 @@ class Multimer:
 
     @cached_property
     def id(self) -> str:
-        """Stable identifier from the order name and the hash of the multimer geometry"""
+        """Identifier from the order name and the hash of the multimer geometry
+
+        The hash is of the representative's absolute Cartesian geometry, so it depends on the
+        frame. Ids are stable for the same code, CIF and settings, but change if deduplication
+        picks a different representative of the orbit. That fails safe: backends redo the work
+        under the new id and never assign a result to the wrong multimer.
+        """
         return f"{order_name(len(self._monomers))}-{self.to_molecule().get_hash()[:16]}"
 
     @property

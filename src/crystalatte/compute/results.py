@@ -69,6 +69,15 @@ def _error_for(rows: list[Row]) -> IncompleteResultsError:
 
 
 class Results:
+    """Per-multimer rows and the lattice energy assembled from them
+
+    ``lattice_energy`` and ``by_order`` are in kJ/mol per formula unit:
+    ``sum(weight * energy)`` over the rows, where each weight already divides by ``N`` and
+    ``Z_fu`` (see :attr:`~crystalatte.core.multimer.Multimer.weight`). Each row's ``energy`` is
+    the multimer's nonadditive N-body interaction energy in hartree. The energy of deforming or
+    relaxing the monomers from their gas-phase geometries is not included.
+    """
+
     def __init__(self, rows: list[Row]):
         self.rows = list(rows)
 

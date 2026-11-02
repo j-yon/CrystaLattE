@@ -156,17 +156,7 @@ Finally, to execute the code:
 
 Precision issues may arise when computing a large number of structures at default energy and density convergence criteria if using Psi4 1.3.2 and newer versions. Although the default energy and density convergence criteria for Psi4 calculations has been increased in CrystaLattE, the user should be careful.
 
-#### Copyright
-
-Copyright (c) 2020, Carlos H. Borca
-
-
-#### Acknowledgements
- 
-Project based on the 
-[Computational Molecular Science Python Cookiecutter](https://github.com/molssi/cookiecutter-cms) version 1.0.
-
-## Computing lattice energies
+#### Computing lattice energies
 
 The `crystalatte` package generates the unique multimers of a crystal and assembles a lattice energy from their many-body energies. Three backends run the calculations; install the extra each one needs:
 
@@ -207,5 +197,15 @@ A complete command-line version is in `scripts/run_lattice_energy.py`.
 - **Definition.** The lattice energy is per formula unit, in kJ/mol: `E_latt = (1/Z_fu) Σ_N Σ_orbits (copies per cell) ΔE^(N-body)`. It is comparable to a periodic-DFT `E(bulk)/Z − E(A) − E(B)`. The energy of deforming or relaxing the monomers from their gas-phase geometries is not included.
 - **Incomplete data.** `collect()` refuses to assemble a lattice energy from missing or failed calculations. `collect(partial=True)` returns the rows that exist, so you can inspect per-multimer status and energies.
 - **Defaults.** `ComputeSpec` applies tight, v1-style Psi4 keywords (convergence thresholds, density fitting, frozen core) under your `keywords`; yours win. Pass `use_defaults=False` to turn this off.
-- **Known gap.** Monomers are always written and computed with charge 0 and multiplicity 1.
+- **Known gap.** Charge and spin cannot be set yet; every monomer is treated as neutral. `InputFileBackend` writes each monomer with charge 0 and multiplicity 1. `LocalBackend` and `FractalBackend` build their molecules through QCElemental, which gives each fragment charge 0 and the lowest multiplicity its electron count allows (1 for an even count, 2 for an odd one).
 - **Scripts and parallelism.** `LocalBackend` runs calculations in worker processes. On macOS and Windows put the code that calls it under `if __name__ == "__main__":`, as `scripts/run_lattice_energy.py` does.
+
+#### Copyright
+
+Copyright (c) 2020, Carlos H. Borca
+
+
+#### Acknowledgements
+ 
+Project based on the 
+[Computational Molecular Science Python Cookiecutter](https://github.com/molssi/cookiecutter-cms) version 1.0.
