@@ -690,3 +690,39 @@ def test_bound_dressing_groups_satisfy_the_containment_theorem(name):
                 f"{name}: reference {i} has a site operation absent from D. "
                 "Any merge that needs it as a dressing is lost."
             )
+
+
+def test_anchor_counts_default_is_own_anchor():
+    g = SymOpList.from_components(
+        np.stack([np.eye(3, dtype=np.int16)] * 2),
+        np.zeros((2, 3), dtype=np.int16),
+        3,
+        np.array([1, 0]),
+    )
+    assert g.anchor_counts == {1: 3}
+
+
+def test_merge_sums_anchor_counts():
+    from crystalatte.work.dedup.equivalence import merge
+
+    def one(mult, ref):
+        return SymOpList.from_components(
+            np.stack([np.eye(3, dtype=np.int16)]),
+            np.zeros((1, 3), dtype=np.int16),
+            mult,
+            np.array([ref]),
+        )
+
+    rep, _ = merge([one(1, 0), one(2, 1)])
+    assert rep.anchor_counts == {0: 1, 1: 2}
+    assert sum(rep.anchor_counts.values()) == rep.multiplicity == 3
+
+
+@pytest.mark.parametrize(
+    "name", ["pyrazole", "salicylic_hydroxybenzamide", "benzene"]
+)
+def test_generate_anchor_counts_sum_to_multiplicity(name):
+    mers = generate.generate(load(name), 2, 6.0, **GENERATE_KW)
+    assert mers
+    for m in mers:
+        assert sum(m.sym_ops.anchor_counts.values()) == m.multiplicity

@@ -16,9 +16,14 @@ def merge(group: list[SymOpList]) -> tuple[SymOpList, list[SymOpList]]:
     """Fold a group of equivalent clusters into one representative
 
     :param group: clusters known to represent the same multimer
-    :returns: ``(representative, duplicates)``; the representative carries the group's total multiplicity
+    :returns: ``(representative, duplicates)``; the representative carries the group's total multiplicity and per-anchor counts
     """
     rep = min(group, key=translation_norm)
+    anchor_counts: dict[int, int] = {}
+    for g in group:
+        for ref, count in g.anchor_counts.items():
+            anchor_counts[ref] = anchor_counts.get(ref, 0) + count
+    rep.anchor_counts = anchor_counts
     rep.multiplicity = sum(g.multiplicity for g in group)
     return rep, [g for g in group if g is not rep]
 
