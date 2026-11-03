@@ -73,7 +73,7 @@ spec = cle.ComputeSpec(
     keywords={"scf_type": "df"},
 )
 
-backend = cle.LocalBackend(scratch="bz_run/", ncores=8, memory="16 GiB")
+backend = cle.LocalBackend(workdir="bz_run/", ncores=8, memory_per_task=16)
 # backend = cle.FractalBackend(client, name="benzene", tag="bigmem", priority="high")
 # backend = cle.InputFileBackend("inputs/")
 
@@ -220,8 +220,11 @@ Flow per `submit`:
    `(mc, label, molecule)`.
 3. Run each sub-calculation as a QCEngine `AtomicInput` in a process pool.
    Concurrency = `ncores // ncores_per_task`; each task gets a
-   `task_config` with its cores, memory, and scratch.
-4. Write each finished `AtomicResult` to the scratch directory as soon as it
+   `task_config` with its cores and memory, plus `scratch_directory` only when
+   the user passed `qc_scratch` (otherwise QCEngine's own resolution applies:
+   `$QCENGINE_SCRATCH_DIRECTORY`, `qcengine.yaml`, the program's variable such as
+   `$PSI_SCRATCH`, then the system temp directory).
+4. Write each finished `AtomicResult` to the workdir as soon as it
    completes, keyed by multimer ID + label. On rerun, skip anything already
    on disk. Failed results are recorded as failures, not raised, so one
    failure doesn't abort the run.
@@ -230,11 +233,12 @@ Flow per `submit`:
    nonadditive N-body energy.
 
 Resources: `ncores`, `ncores_per_task`, `memory` (total or per task, builder's
-call), `scratch`. Defaults come from `qcengine.get_config()` so a laptop user
-passes nothing beyond `scratch`. The scratch directory also holds a manifest
+call), `workdir` (job state), `qc_scratch` (QC program scratch, optional).
+Defaults come from `qcengine.get_config()` so a laptop user passes nothing
+beyond `workdir`. The workdir also holds a manifest
 (spec, generation settings, multimer IDs, multiplicities, order) so `collect`
-and `status` work from disk alone. Submitting a different spec into an existing scratch
-directory is an error.
+and `status` work from disk alone. Submitting a different spec into an existing
+workdir is an error.
 
 ### `FractalBackend`
 

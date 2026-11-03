@@ -27,9 +27,11 @@ class FakeEngine:
     def __init__(self, fail=lambda call: False):
         self.calls = 0
         self.fail = fail
+        self.task_configs = []
 
     def __call__(self, atomic_input, program, task_config):
         self.calls += 1
+        self.task_configs.append(task_config)
         if self.fail(self.calls):
             return {"success": False, "energy": None, "error": "boom"}
         return {"success": True, "energy": _toy_energy(atomic_input), "error": None}
@@ -80,7 +82,7 @@ def test_energy_is_cp_interaction_energy(tmp_path, fake_engine, ammonia):
     assert b.collect().rows[0].energy == pytest.approx(expected, abs=1e-12)
 
 
-def test_scratch_layout(tmp_path, fake_engine, ammonia):
+def test_workdir_layout(tmp_path, fake_engine, ammonia):
     ms = cle.generate(ammonia, N=2, R=4.0, verbose=0)
     LocalBackend(tmp_path, ncores=1).submit(ms, SPEC)
     manifest = json.loads((tmp_path / "manifest.json").read_text())
@@ -208,6 +210,47 @@ def test_missing_extra_gives_install_hint(tmp_path, monkeypatch):
 def test_concurrency_from_cores():
     assert LocalBackend("unused", ncores=8, ncores_per_task=2, memory_per_task=1.0).concurrency == 4
     assert LocalBackend("unused", ncores=1, ncores_per_task=4, memory_per_task=1.0).concurrency == 1
+
+
+def test_workdir_is_the_job_state_directory(tmp_path, fake_engine, ammonia):
+    b = LocalBackend(workdir=tmp_path, ncores=1)
+    b.submit(cle.generate(ammonia, N=2, R=4.0, verbose=0), SPEC)
+    assert b.workdir == tmp_path
+    assert (tmp_path / "manifest.json").exists()
+    with pytest.raises(TypeError):
+        LocalBackend(scratch=tmp_path, ncores=1)
+
+
+def test_qc_scratch_unset_leaves_qcengine_resolution(tmp_path, fake_engine, ammonia):
+    LocalBackend(tmp_path, ncores=1).submit(cle.generate(ammonia, N=2, R=4.0, verbose=0), SPEC)
+    assert fake_engine.task_configs
+    assert all("scratch_directory" not in c for c in fake_engine.task_configs)
+
+
+def test_qc_scratch_is_passed_to_every_task(tmp_path, fake_engine, ammonia):
+    qc = tmp_path / "qc"
+    b = LocalBackend(tmp_path / "work", qc_scratch=qc, ncores=1)
+    b.submit(cle.generate(ammonia, N=2, R=4.0, verbose=0), SPEC)
+    assert fake_engine.task_configs
+    assert all(c["scratch_directory"] == str(qc) for c in fake_engine.task_configs)
+    assert qc.is_dir()
+
+
+@pytest.mark.psi4
+def test_psi4_scratch_location(tmp_path, monkeypatch, ammonia):
+    pytest.importorskip("psi4")
+    spec = ComputeSpec(program="psi4", method="hf", basis="sto-3g", use_defaults=False)
+    m = cle.generate(ammonia, N=2, R=4.0, verbose=0)[0]
+    psi_scratch, explicit = tmp_path / "psi_scratch", tmp_path / "explicit"
+    psi_scratch.mkdir()
+    monkeypatch.setenv("PSI_SCRATCH", str(psi_scratch))
+    monkeypatch.setenv("QCENGINE_SCRATCH_MESSY", "true")  # keep per-task dirs so they can be found
+
+    LocalBackend(tmp_path / "w1", ncores=1, memory_per_task=1.0).submit([m], spec)
+    assert list(psi_scratch.glob("*_psi_scratch")), "unset qc_scratch must fall back to $PSI_SCRATCH"
+
+    LocalBackend(tmp_path / "w2", qc_scratch=explicit, ncores=1, memory_per_task=1.0).submit([m], spec)
+    assert list(explicit.glob("*_psi_scratch")), "explicit qc_scratch must win over $PSI_SCRATCH"
 
 
 @pytest.mark.psi4

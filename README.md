@@ -179,7 +179,7 @@ spec = cle.ComputeSpec(
     keywords={"scf_type": "df"},
 )
 
-backend = cle.LocalBackend("bz_run/", ncores=8)
+backend = cle.LocalBackend("bz_run/", ncores=8)  # workdir: manifest + per-task results
 # backend = cle.FractalBackend(client, "benzene", tag="bigmem", priority="high")
 # backend = cle.InputFileBackend("inputs/")
 
@@ -198,6 +198,7 @@ A complete command-line version is in `scripts/run_lattice_energy.py`.
 - **Incomplete data.** `collect()` refuses to assemble a lattice energy from missing or failed calculations. `collect(partial=True)` returns the rows that exist, so you can inspect per-multimer status and energies.
 - **Defaults.** `ComputeSpec` applies tight, v1-style Psi4 keywords (convergence thresholds, density fitting, frozen core) under your `keywords`; yours win. Pass `use_defaults=False` to turn this off.
 - **Known gap.** Charge and spin cannot be set yet; every monomer is treated as neutral. `InputFileBackend` writes each monomer with charge 0 and multiplicity 1. `LocalBackend` and `FractalBackend` build their molecules through QCElemental, which gives each fragment charge 0 and the lowest multiplicity its electron count allows (1 for an even count, 2 for an odd one).
+- **Workdir vs QC scratch.** `LocalBackend`'s first argument, `workdir`, holds CrystaLattE's job state (a manifest and small per-task JSON results) and is what makes reruns resume. The QC program's own scratch files are separate: pass `qc_scratch="/fast/disk"` to choose them explicitly, or leave it unset and QCEngine decides — `$QCENGINE_SCRATCH_DIRECTORY`, a `qcengine.yaml` `scratch_directory`, the program's own variable (e.g. `$PSI_SCRATCH` for Psi4), then the system temp directory. For `FractalBackend`, scratch is set in your compute manager's configuration on the workers.
 - **Scripts and parallelism.** `LocalBackend` runs calculations in worker processes. On macOS and Windows put the code that calls it under `if __name__ == "__main__":`, as `scripts/run_lattice_energy.py` does.
 
 #### Copyright

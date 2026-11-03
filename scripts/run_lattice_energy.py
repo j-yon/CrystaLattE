@@ -33,7 +33,12 @@ def main() -> None:
         help="multimer order and cutoff in Angstroms, repeatable (default 2=10 and 3=8)",
     )
     parser.add_argument("--backend", choices=("local", "inputs"), default="local")
-    parser.add_argument("--out", required=True, help="scratch directory (local) or input directory (inputs)")
+    parser.add_argument("--out", required=True, help="job-state workdir (local) or input directory (inputs)")
+    parser.add_argument(
+        "--qc-scratch",
+        default=None,
+        help="scratch for the QC program (local); default leaves it to QCEngine, e.g. $PSI_SCRATCH",
+    )
     parser.add_argument("--program", default="psi4")
     parser.add_argument("--method", default="mp2")
     parser.add_argument("--basis", default="aug-cc-pvdz")
@@ -62,7 +67,7 @@ def main() -> None:
         print(f"wrote input files under {args.out}")
         return
 
-    backend = cle.LocalBackend(args.out, ncores=args.ncores)
+    backend = cle.LocalBackend(args.out, qc_scratch=args.qc_scratch, ncores=args.ncores)
     backend.submit(multimers, spec)
     print(backend.status())
     results = backend.collect()  # raises IncompleteResultsError if anything is missing

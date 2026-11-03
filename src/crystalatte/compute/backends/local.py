@@ -1,4 +1,4 @@
-"""Single-machine backend: QCManyBody task enumeration, QCEngine execution, scratch-dir checkpoints."""
+"""Single-machine backend: QCManyBody task enumeration, QCEngine execution, workdir checkpoints."""
 
 import hashlib
 import json
@@ -93,10 +93,14 @@ class _Job:
 
 
 class LocalBackend(Backend):
-    """Run many-body calculations on this machine, checkpointing every task to ``scratch``
+    """Run many-body calculations on this machine, checkpointing every task to ``workdir``
 
-    :param scratch: directory holding the manifest and per-task results; resubmitting into
-        it skips finished tasks and retries failed ones
+    :param workdir: job-state directory holding the manifest and per-task results (small JSON
+        files, kept); resubmitting into it skips finished tasks and retries failed ones
+    :param qc_scratch: scratch directory for the QC program's own files. When ``None``, nothing
+        is passed and QCEngine resolves it as usual: ``$QCENGINE_SCRATCH_DIRECTORY``, then a
+        ``qcengine.yaml`` ``scratch_directory``, then the program's own fallback (for Psi4,
+        ``$PSI_SCRATCH``), then the system temp directory. When given, it overrides all of those.
     :param ncores: cores to use in total; defaults to the cores QCEngine detects
     :param ncores_per_task: cores given to each single-point calculation
     :param memory_per_task: memory in GiB for each calculation; defaults to the memory QCEngine
@@ -105,14 +109,16 @@ class LocalBackend(Backend):
 
     def __init__(
         self,
-        scratch: str | Path,
+        workdir: str | Path,
         *,
+        qc_scratch: str | Path | None = None,
         ncores: int | None = None,
         ncores_per_task: int = 1,
         memory_per_task: float | None = None,
     ):
         _require_extras()
-        self.scratch = Path(scratch)
+        self.workdir = Path(workdir)
+        self.qc_scratch = None if qc_scratch is None else Path(qc_scratch)
         if ncores is None or memory_per_task is None:
             import qcengine
 
@@ -127,10 +133,10 @@ class LocalBackend(Backend):
 
     @property
     def _manifest_path(self) -> Path:
-        return self.scratch / "manifest.json"
+        return self.workdir / "manifest.json"
 
     def _task_dir(self, multimer_id: str) -> Path:
-        return self.scratch / "tasks" / multimer_id
+        return self.workdir / "tasks" / multimer_id
 
     def _load_manifest(self) -> dict | None:
         path = self._manifest_path
@@ -151,13 +157,13 @@ class LocalBackend(Backend):
             }
         elif manifest["spec_fingerprint"] != spec.fingerprint():
             raise ValueError(
-                f"spec differs from the one used in {self.scratch} (spec fingerprint "
-                f"{manifest['spec_fingerprint'][:12]} vs {spec.fingerprint()[:12]}); use a new scratch directory"
+                f"spec differs from the one used in {self.workdir} (spec fingerprint "
+                f"{manifest['spec_fingerprint'][:12]} vs {spec.fingerprint()[:12]}); use a new workdir"
             )
         elif manifest["crystal_fingerprint"] != crystal_fp:
             raise ValueError(
-                f"crystal fingerprint differs from the one used in {self.scratch} "
-                f"({manifest['crystal_fingerprint'][:12]} vs {crystal_fp[:12]}); use a new scratch directory"
+                f"crystal fingerprint differs from the one used in {self.workdir} "
+                f"({manifest['crystal_fingerprint'][:12]} vs {crystal_fp[:12]}); use a new workdir"
             )
 
         for N, group in by_order.items():
@@ -171,7 +177,7 @@ class LocalBackend(Backend):
                     "weight": m.weight,
                     "molecule": json.loads(m.to_molecule().json()),
                 }
-        self.scratch.mkdir(parents=True, exist_ok=True)
+        self.workdir.mkdir(parents=True, exist_ok=True)
         _write_json(self._manifest_path, manifest)
 
         jobs = []
@@ -194,6 +200,9 @@ class LocalBackend(Backend):
 
     def _run(self, tasks: list[tuple[_Job, str, dict]], program: str) -> Iterator[tuple[_Job, str, dict]]:
         task_config = {"ncores": self.ncores_per_task, "memory": self.memory_per_task}
+        if self.qc_scratch is not None:
+            self.qc_scratch.mkdir(parents=True, exist_ok=True)
+            task_config["scratch_directory"] = str(self.qc_scratch)
         if self.concurrency == 1:
             for job, label, inp in tasks:
                 yield job, label, _safe_call(_run_task, inp, program, task_config)
@@ -215,7 +224,7 @@ class LocalBackend(Backend):
     def _rows(self) -> list[Row]:
         manifest = self._load_manifest()
         if manifest is None:
-            raise ValueError(f"no submission found in {self.scratch}; call submit() first")
+            raise ValueError(f"no submission found in {self.workdir}; call submit() first")
         known: dict[str, Row] = {}
         for id_, info in manifest["multimers"].items():
             known[id_] = self._row(id_, info)
