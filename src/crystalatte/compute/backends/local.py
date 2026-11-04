@@ -1,10 +1,12 @@
 """Single-machine backend: QCManyBody task enumeration, QCEngine execution, workdir checkpoints."""
 
+import fcntl
 import hashlib
 import json
 import os
 from collections.abc import Iterator
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from contextlib import contextmanager
 from pathlib import Path
 
 from ...core.multimer import Multimer
@@ -14,6 +16,7 @@ from .base import Backend, crystalatte_version
 
 _INSTALL_HINT = "LocalBackend needs qcengine and qcmanybody; install them with: pip install 'crystalatte[local]'"
 _RESULT = "result.json"
+_LOCK = "submit.lock"
 _PROVENANCE_FIELDS = ("version", "wall_time", "nthreads")
 
 
@@ -41,6 +44,25 @@ def _run_task(atomic_input: dict, program: str, task_config: dict) -> dict:
     error = out.get("error") or {}
     message = error.get("error_message") if isinstance(error, dict) else str(error)
     return {"success": False, "energy": None, "error": message or "unknown error"}
+
+
+@contextmanager
+def _workdir_lock(workdir: Path) -> Iterator[None]:
+    """Hold ``workdir`` exclusively; the OS drops the lock when the holder dies, so it never goes stale"""
+    workdir.mkdir(parents=True, exist_ok=True)
+    with open(workdir / _LOCK, "a+") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            handle.seek(0)
+            raise RuntimeError(
+                f"{workdir} is in use by another submit (pid {handle.read().strip() or 'unknown'}); "
+                "wait for it to finish or stop it"
+            ) from None
+        handle.truncate(0)
+        handle.write(str(os.getpid()))
+        handle.flush()
+        yield
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -104,7 +126,9 @@ class LocalBackend(Backend):
 
     :param workdir: job-state directory holding the manifest and per-task results (small JSON
         files, kept); resubmitting into it skips finished tasks and retries failed ones. Each
-        finished task also records the program version, wall time and thread count.
+        finished task also records the program version, wall time and thread count. Only one
+        :meth:`submit` can run in a workdir at a time; :meth:`status` and :meth:`collect` work
+        during one.
     :param qc_scratch: scratch directory for the QC program's own files. When ``None``, nothing
         is passed and QCEngine resolves it as usual: ``$QCENGINE_SCRATCH_DIRECTORY``, then a
         ``qcengine.yaml`` ``scratch_directory``, then the program's own fallback (for Psi4,
@@ -152,7 +176,11 @@ class LocalBackend(Backend):
 
     def submit(self, multimers: list[Multimer], spec: ComputeSpec) -> None:
         by_order = self._validate(multimers)
-        crystal_fp = multimers[0].generation.crystal_fingerprint
+        with _workdir_lock(self.workdir):
+            self._submit_locked(by_order, spec)
+
+    def _submit_locked(self, by_order: dict[int, list[Multimer]], spec: ComputeSpec) -> None:
+        crystal_fp = next(iter(by_order.values()))[0].generation.crystal_fingerprint
         manifest = self._load_manifest()
         if manifest is None:
             manifest = {
@@ -185,7 +213,6 @@ class LocalBackend(Backend):
                     "weight": m.weight,
                     "molecule": json.loads(m.to_molecule().json()),
                 }
-        self.workdir.mkdir(parents=True, exist_ok=True)
         _write_json(self._manifest_path, manifest)
 
         jobs = []

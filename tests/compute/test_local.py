@@ -1,4 +1,6 @@
 import json
+import signal
+import subprocess
 import sys
 
 import numpy as np
@@ -322,3 +324,76 @@ def test_task_files_record_psi4_provenance(tmp_path, ammonia):
         assert provenance["version"]
         assert provenance["wall_time"] > 0
         assert provenance["nthreads"] == 2
+
+
+HOLD_LOCK = """
+import sys
+from pathlib import Path
+from crystalatte.compute.backends import local
+with local._workdir_lock(Path(sys.argv[1])):
+    print("locked", flush=True)
+    sys.stdin.read()
+"""
+
+
+@pytest.fixture
+def other_process_lock(tmp_path):
+    """Another live process holding the workdir lock"""
+    holder = subprocess.Popen(
+        [sys.executable, "-c", HOLD_LOCK, str(tmp_path)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+    )
+    assert holder.stdout.readline().strip() == "locked"
+    yield holder
+    holder.kill()
+    holder.wait()
+
+
+def test_submit_refused_while_another_process_holds_workdir(tmp_path, fake_engine, ammonia, other_process_lock):
+    ms = cle.generate(ammonia, N=2, R=4.0, verbose=0)
+    with pytest.raises(RuntimeError, match=rf"pid {other_process_lock.pid}"):
+        LocalBackend(tmp_path, ncores=1).submit(ms, SPEC)
+    assert fake_engine.calls == 0
+    assert not (tmp_path / "manifest.json").exists()
+
+
+def test_lock_released_when_holder_is_killed(tmp_path, fake_engine, ammonia, other_process_lock):
+    other_process_lock.send_signal(signal.SIGKILL)
+    other_process_lock.wait()
+    ms = cle.generate(ammonia, N=2, R=4.0, verbose=0)
+    LocalBackend(tmp_path, ncores=1).submit(ms, SPEC)
+    assert fake_engine.calls == n_tasks(ms)
+
+
+def test_lock_released_after_interrupted_submit(tmp_path, monkeypatch, ammonia):
+    ms = cle.generate(ammonia, N=2, R=4.0, verbose=0)
+
+    def interrupted(*args):
+        raise KeyboardInterrupt
+
+    with monkeypatch.context() as mp:
+        mp.setattr(local, "_run_task", interrupted)
+        with pytest.raises(KeyboardInterrupt):
+            LocalBackend(tmp_path, ncores=1).submit(ms, SPEC)
+
+    engine = FakeEngine()
+    monkeypatch.setattr(local, "_run_task", engine)
+    LocalBackend(tmp_path, ncores=1).submit(ms, SPEC)
+    assert engine.calls == n_tasks(ms)
+
+
+def test_status_and_collect_work_during_a_submit(tmp_path, monkeypatch, ammonia):
+    ms = cle.generate(ammonia, N=2, R=4.0, verbose=0)
+    b = LocalBackend(tmp_path, ncores=1)
+    seen = []
+
+    def engine(atomic_input, program, task_config):
+        seen.append((b.status().counts[2], b.collect(partial=True).complete))
+        with pytest.raises(RuntimeError, match="in use"):
+            LocalBackend(tmp_path, ncores=1).submit(ms, SPEC)
+        return {"success": True, "energy": _toy_energy(atomic_input), "error": None}
+
+    monkeypatch.setattr(local, "_run_task", engine)
+    b.submit(ms, SPEC)
+    assert len(seen) == n_tasks(ms)
+    assert seen[0][1] is False
+    assert b.collect().complete
