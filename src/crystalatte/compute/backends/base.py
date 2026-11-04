@@ -2,9 +2,27 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from importlib.metadata import PackageNotFoundError, version
 
+from qcelemental.molutil import molecular_formula_from_symbols
+
 from ...core.multimer import Multimer
 from ..results import Results, Status
 from ..spec import ComputeSpec
+
+
+def manifest_entry(multimer: Multimer) -> dict:
+    """What a job manifest records about one multimer
+
+    ``geometric_mean`` (centroid distances) and ``min_separation`` (closest atoms) are in Angstroms;
+    ``formulas`` holds each monomer's Hill formula, in the order of the multimer's fragments.
+    """
+    return {
+        "N": len(multimer.monomers),
+        "multiplicity": multimer.multiplicity,
+        "weight": multimer.weight,
+        "geometric_mean": multimer.geometric_mean,
+        "min_separation": multimer.min_separation,
+        "formulas": [molecular_formula_from_symbols(m.symbols, order="hill") for m in multimer.monomers],
+    }
 
 
 def crystalatte_version() -> str:

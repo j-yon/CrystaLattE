@@ -6,7 +6,7 @@ from ...core.multimer import Multimer, order_name
 from ...io.writers import get_writer, has_writer
 from ..results import Results, Status
 from ..spec import ComputeSpec
-from .base import Backend, crystalatte_version
+from .base import Backend, crystalatte_version, manifest_entry
 
 _GIB = {"b": 1 / 1024**3, "kb": 1e3 / 1024**3, "mb": 1e6 / 1024**3, "gb": 1e9 / 1024**3, "tb": 1e12 / 1024**3,
         "kib": 1 / 1024**2, "mib": 1 / 1024, "gib": 1.0, "tib": 1024.0}
@@ -54,12 +54,7 @@ class InputFileBackend(Backend):
             manifest["generation"][str(N)] = group[0].generation.model_dump(mode="json")
             manifest["active"][str(N)] = [m.id for m in group]
             for m in group:
-                manifest["multimers"][m.id] = {
-                    "N": N,
-                    "multiplicity": m.multiplicity,
-                    "weight": m.weight,
-                    **entries[m.id],
-                }
+                manifest["multimers"][m.id] = {**manifest_entry(m), **entries[m.id]}
         manifest["crystalatte_version"] = crystalatte_version()
         self.output_dir.mkdir(parents=True, exist_ok=True)
         (self.output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))

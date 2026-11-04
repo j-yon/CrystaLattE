@@ -94,6 +94,11 @@ def test_workdir_layout(tmp_path, fake_engine, ammonia):
     assert manifest["active"] == {"2": [m.id for m in ms]}
     assert set(manifest["multimers"]) == {m.id for m in ms}
     for m in ms:
+        entry = manifest["multimers"][m.id]
+        assert entry["geometric_mean"] == m.geometric_mean
+        assert entry["min_separation"] == m.min_separation
+        assert entry["formulas"] == ["H3N", "H3N"]
+    for m in ms:
         task_dir = tmp_path / "tasks" / m.id
         assert (task_dir / "result.json").exists()
         task_files = [p for p in task_dir.glob("*.json") if p.name != "result.json"]

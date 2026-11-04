@@ -12,7 +12,7 @@ from pathlib import Path
 from ...core.multimer import Multimer
 from ..results import Results, Row, Status, assemble, select_active
 from ..spec import ComputeSpec
-from .base import Backend, crystalatte_version
+from .base import Backend, crystalatte_version, manifest_entry
 
 _INSTALL_HINT = "LocalBackend needs qcengine and qcmanybody; install them with: pip install 'crystalatte[local]'"
 _RESULT = "result.json"
@@ -207,12 +207,7 @@ class LocalBackend(Backend):
             manifest.setdefault("crystalatte_version", {})[str(N)] = crystalatte_version()
             manifest["active"][str(N)] = [m.id for m in group]
             for m in group:
-                manifest["multimers"][m.id] = {
-                    "N": N,
-                    "multiplicity": m.multiplicity,
-                    "weight": m.weight,
-                    "molecule": json.loads(m.to_molecule().json()),
-                }
+                manifest["multimers"][m.id] = {**manifest_entry(m), "molecule": json.loads(m.to_molecule().json())}
         _write_json(self._manifest_path, manifest)
 
         jobs = []

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import cached_property
+from itertools import combinations
 
 import numpy as np
 import qcelemental as qcel
 from numpy.typing import NDArray
-from scipy.spatial.distance import pdist
+from scipy.spatial.distance import cdist, pdist
 
 from .generation import GenerationInfo
 from .sym_ops import SymOp, SymOpList
@@ -168,6 +169,11 @@ class Multimer:
     @property
     def geometric_mean(self) -> float:
         return self._geometric_mean
+
+    @cached_property
+    def min_separation(self) -> float:
+        """Distance in Angstroms between the closest two atoms belonging to different monomers"""
+        return float(min(cdist(a._cart_coords, b._cart_coords).min() for a, b in combinations(self._monomers, 2)))
 
     @property
     def generation(self) -> GenerationInfo | None:

@@ -80,6 +80,9 @@ def test_manifest_records_run(tmp_path, nh3_dimers):
     for m in nh3_dimers:
         entry = manifest["multimers"][m.id]
         assert (entry["N"], entry["multiplicity"], entry["weight"]) == (2, m.multiplicity, m.weight)
+        assert entry["geometric_mean"] == m.geometric_mean
+        assert entry["min_separation"] == m.min_separation
+        assert entry["formulas"] == ["H3N", "H3N"]
 
 
 def test_psi4_manifest_lists_whole_multimer_file(tmp_path, nh3_dimers):
