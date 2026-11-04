@@ -2,12 +2,13 @@
 
 import json
 import re
+from dataclasses import replace
 
 from ...core.generation import GenerationInfo
 from ...core.multimer import Multimer, order_name
-from ..results import Results, Row, Status, assemble, select_active
+from ..results import Results, Row, Status, assemble, multimer_fields, select_active
 from ..spec import ComputeSpec
-from .base import Backend, crystalatte_version
+from .base import Backend, crystalatte_version, manifest_entry
 
 _INSTALL_HINT = "FractalBackend needs qcportal; install it with: pip install 'crystalatte[fractal]'"
 _DATASET_TYPE = "manybody"
@@ -124,9 +125,7 @@ class FractalBackend(Backend):
                     name=m.id,
                     initial_molecule=json.loads(m.to_molecule().json()),
                     attributes={
-                        "N": N,
-                        "multiplicity": m.multiplicity,
-                        "weight": m.weight,
+                        **manifest_entry(m),
                         "crystal_fingerprint": crystal_fp,
                         "crystalatte_version": version,
                     },
@@ -143,7 +142,7 @@ class FractalBackend(Backend):
                 "generation": group[0].generation.model_dump(mode="json"),
                 "active": [m.id for m in group],
                 # read by collect; entry attributes keep the values of the submit that added them
-                "multimers": {m.id: {"multiplicity": m.multiplicity, "weight": m.weight} for m in group},
+                "multimers": {m.id: manifest_entry(m) for m in group},
                 "crystalatte_version": version,
             }
             ds.set_extras({**(ds.extras or {}), _EXTRAS_KEY: meta})
@@ -166,28 +165,25 @@ class FractalBackend(Backend):
             for entry in ds.iterate_entries():
                 attrs = current.get(entry.name, entry.attributes)
                 known[entry.name] = Row(
-                    entry.name, N, attrs["multiplicity"], attrs["weight"], None, "pending"
+                    entry.name, N, attrs["multiplicity"], attrs["weight"], None, "pending", **multimer_fields(attrs)
                 )
             for entry_name, _, record in ds.iterate_records(specification_names=_SPEC_NAME):
                 row = known[entry_name]
                 if record.status == RecordStatusEnum.complete:
                     energy = ((record.properties or {}).get(_RESULTS_KEY) or {}).get(key)
                     if energy is None:
-                        known[entry_name] = Row(
-                            row.id, N, row.multiplicity, row.weight, None, "failed",
-                            f"record complete but its results are missing {key!r}",
+                        known[entry_name] = replace(
+                            row, status="failed", error=f"record complete but its results are missing {key!r}"
                         )
                     else:
-                        known[entry_name] = Row(row.id, N, row.multiplicity, row.weight, float(energy), "complete")
+                        known[entry_name] = replace(row, energy=float(energy), status="complete")
                 elif record.status not in _PENDING:
                     if record.status == RecordStatusEnum.error:
                         error = record.error or {}
                         message = error.get("error_message") if isinstance(error, dict) else str(error)
                     else:  # cancelled, invalid or deleted: terminal, never runs again on its own
                         message = f"record {record.status.value}"
-                    known[entry_name] = Row(
-                        row.id, N, row.multiplicity, row.weight, None, "failed", message or "unknown error"
-                    )
+                    known[entry_name] = replace(row, status="failed", error=message or "unknown error")
         return select_active(active, known)
 
     def status(self) -> Status:

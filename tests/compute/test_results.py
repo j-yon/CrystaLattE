@@ -6,6 +6,7 @@ from crystalatte.compute.results import (
     Row,
     Status,
     assemble,
+    multimer_fields,
     select_active,
 )
 
@@ -86,3 +87,26 @@ def test_status_str():
         "dimers: 40 complete, 2 pending, 1 failed",
         "trimers: 5 complete, 0 pending, 0 failed",
     ]
+
+
+def test_table_and_dataframe_expose_multimer_metadata():
+    pd = pytest.importorskip("pandas")
+    row = Row("dimer-a", 2, 1, 0.5, -0.001, "complete", geometric_mean=4.0, min_separation=3.0, formulas=("A", "B"))
+    r = assemble([row], partial=False)
+    assert r.table[0]["geometric_mean"] == 4.0
+    assert r.table[0]["min_separation"] == 3.0
+    assert r.table[0]["formulas"] == ("A", "B")
+    assert r.to_dataframe().loc[0, "min_separation"] == 3.0
+
+
+def test_multimer_fields_are_none_for_entries_that_predate_them():
+    assert multimer_fields({"multiplicity": 1, "weight": 0.5}) == {
+        "geometric_mean": None,
+        "min_separation": None,
+        "formulas": None,
+    }
+
+
+def test_multimer_fields_read_a_stored_entry():
+    stored = {"geometric_mean": 4.0, "min_separation": 3.0, "formulas": ["A", "B"]}
+    assert multimer_fields(stored) == {"geometric_mean": 4.0, "min_separation": 3.0, "formulas": ("A", "B")}

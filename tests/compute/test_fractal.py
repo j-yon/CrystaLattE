@@ -12,6 +12,7 @@ import pytest
 import crystalatte as cle
 from crystalatte.compute import ComputeSpec
 from crystalatte.compute.backends import FractalBackend, LocalBackend
+from crystalatte.compute.backends.base import manifest_entry
 from crystalatte.core.multimer import Multimer, order_name
 
 # tight SCF so Local and Fractal agree to ~1e-11 Eh per dimer; at Psi4's default convergence
@@ -75,16 +76,14 @@ def test_submit_creates_one_dataset_per_order(snowflake_client, ammonia):
         assert ds.specification_names == ["crystalatte"]
         meta = ds.extras["crystalatte"]
         assert meta["active"] == [m.id for m in ms]
-        assert meta["multimers"] == {m.id: {"multiplicity": m.multiplicity, "weight": m.weight} for m in ms}
+        assert meta["multimers"] == {m.id: manifest_entry(m) for m in ms}
         assert meta["crystalatte_version"] == version("crystalatte")
         assert meta["spec_fingerprint"] == SPEC.fingerprint()
         assert meta["crystal_fingerprint"] == ms[0].generation.crystal_fingerprint
         assert ComputeSpec.model_validate(meta["spec"]) == SPEC
         entry = ds.get_entry(ms[0].id)
         assert entry.attributes == {
-            "N": N,
-            "multiplicity": ms[0].multiplicity,
-            "weight": ms[0].weight,
+            **manifest_entry(ms[0]),
             "crystal_fingerprint": ms[0].generation.crystal_fingerprint,
             "crystalatte_version": version("crystalatte"),
         }
@@ -286,6 +285,43 @@ def test_complete_record_without_energy_is_failed(ammonia):
     assert b.status().counts[2] == {"complete": 0, "pending": 0, "failed": 1}
     with pytest.raises(cle.IncompleteResultsError, match="missing"):
         b.collect()
+
+
+def _fake_client(ds):
+    return SimpleNamespace(
+        list_datasets=lambda: [{"dataset_name": ds.name, "dataset_type": "manybody"}],
+        get_dataset=lambda kind, name: ds,
+    )
+
+
+def test_failed_row_keeps_multimer_metadata(ammonia):
+    pytest.importorskip("qcportal")
+    m = dimers(ammonia)[0]
+    ds = _FakeDataset(m)
+    ds.extras["crystalatte"]["multimers"][m.id] = manifest_entry(m)
+    row = FractalBackend(_fake_client(ds), "fake").collect(partial=True).rows[0]
+    assert row.status == "failed"
+    assert row.geometric_mean == m.geometric_mean
+    assert row.min_separation == m.min_separation
+    assert row.formulas == ("H3N", "H3N")
+
+
+def test_dataset_without_metadata_still_collects(ammonia):
+    pytest.importorskip("qcportal")
+    row = FractalBackend(_fake_client(_FakeDataset(dimers(ammonia)[0])), "fake").collect(partial=True).rows[0]
+    assert row.min_separation is None
+
+
+@pytest.mark.fractal
+def test_rows_carry_multimer_metadata(snowflake_client, ammonia):
+    ms = dimers(ammonia)
+    b = FractalBackend(snowflake_client, "rowmeta", priority="low")
+    b.submit(ms, SPEC)
+    by_id = {r.id: r for r in b.collect(partial=True).rows}
+    for m in ms:
+        assert by_id[m.id].geometric_mean == m.geometric_mean
+        assert by_id[m.id].min_separation == m.min_separation
+        assert by_id[m.id].formulas == ("H3N", "H3N")
 
 
 def test_missing_extra_gives_install_hint(monkeypatch):

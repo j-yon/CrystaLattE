@@ -402,3 +402,44 @@ def test_status_and_collect_work_during_a_submit(tmp_path, monkeypatch, ammonia)
     assert len(seen) == n_tasks(ms)
     assert seen[0][1] is False
     assert b.collect().complete
+
+
+def _assert_rows_describe(rows, multimers):
+    by_id = {m.id: m for m in multimers}
+    assert {r.id for r in rows} == set(by_id)
+    for row in rows:
+        m = by_id[row.id]
+        assert row.geometric_mean == m.geometric_mean
+        assert row.min_separation == m.min_separation
+        assert row.formulas == ("H3N", "H3N")
+
+
+def test_complete_rows_carry_multimer_metadata(tmp_path, fake_engine, ammonia):
+    ms = cle.generate(ammonia, N=2, R=4.0, verbose=0)
+    b = LocalBackend(tmp_path, ncores=1)
+    b.submit(ms, SPEC)
+    _assert_rows_describe(b.collect().rows, ms)
+
+
+def test_failed_rows_carry_multimer_metadata(tmp_path, failing_engine, ammonia):
+    ms = cle.generate(ammonia, N=2, R=4.0, verbose=0)
+    b = LocalBackend(tmp_path, ncores=1)
+    b.submit(ms, SPEC)
+    rows = b.collect(partial=True).rows
+    assert {r.status for r in rows} == {"failed"}
+    _assert_rows_describe(rows, ms)
+
+
+def test_collect_reads_manifest_written_before_metadata_existed(tmp_path, fake_engine, ammonia):
+    ms = cle.generate(ammonia, N=2, R=4.0, verbose=0)
+    b = LocalBackend(tmp_path, ncores=1)
+    b.submit(ms, SPEC)
+    path = tmp_path / "manifest.json"
+    manifest = json.loads(path.read_text())
+    for entry in manifest["multimers"].values():
+        for key in ("geometric_mean", "min_separation", "formulas"):
+            del entry[key]
+    path.write_text(json.dumps(manifest))
+    r = b.collect()
+    assert r.complete
+    assert {row.min_separation for row in r.rows} == {None}

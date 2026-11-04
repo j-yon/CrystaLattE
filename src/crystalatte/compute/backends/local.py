@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from ...core.multimer import Multimer
-from ..results import Results, Row, Status, assemble, select_active
+from ..results import Results, Row, Status, assemble, multimer_fields, select_active
 from ..spec import ComputeSpec
 from .base import Backend, crystalatte_version, manifest_entry
 
@@ -263,7 +263,13 @@ class LocalBackend(Backend):
 
     def _row(self, id_: str, info: dict) -> Row:
         task_dir = self._task_dir(id_)
-        common = {"id": id_, "N": info["N"], "multiplicity": info["multiplicity"], "weight": info["weight"]}
+        common = {
+            "id": id_,
+            "N": info["N"],
+            "multiplicity": info["multiplicity"],
+            "weight": info["weight"],
+            **multimer_fields(info),
+        }
         result = task_dir / _RESULT
         if result.exists():
             done = _read_json(result)

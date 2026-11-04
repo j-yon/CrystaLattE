@@ -13,7 +13,12 @@ _ERROR_LIMIT = 200
 
 @dataclass(frozen=True)
 class Row:
-    """One multimer's result. `energy` is the nonadditive energy in hartree."""
+    """One multimer's result
+
+    `energy` is the nonadditive energy in hartree. `geometric_mean` (centroid distances) and
+    `min_separation` (closest atoms) are in Angstroms, and `formulas` holds each monomer's Hill
+    formula. All three are ``None`` for results stored before they were recorded.
+    """
 
     id: str
     N: int
@@ -22,6 +27,19 @@ class Row:
     energy: float | None
     status: Literal["complete", "pending", "failed"]
     error: str | None = None
+    geometric_mean: float | None = None
+    min_separation: float | None = None
+    formulas: tuple[str, ...] | None = None
+
+
+def multimer_fields(info: dict) -> dict:
+    """The :class:`Row` fields describing a multimer, from its stored manifest entry"""
+    formulas = info.get("formulas")
+    return {
+        "geometric_mean": info.get("geometric_mean"),
+        "min_separation": info.get("min_separation"),
+        "formulas": None if formulas is None else tuple(formulas),
+    }
 
 
 def _missing(rows: list[Row]) -> dict[int, dict[str, list[str]]]:
