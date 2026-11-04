@@ -278,3 +278,47 @@ def test_cp_dimer_matches_direct_psi4(tmp_path, ammonia):
     direct = e(mol) - e(mol.get_fragment([0], [1])) - e(mol.get_fragment([1], [0]))
     print(f"LocalBackend {energy!r} direct {direct!r}")
     assert energy == pytest.approx(direct, abs=1e-8)
+
+
+def test_run_task_keeps_version_wall_time_and_threads(monkeypatch):
+    import qcengine
+
+    provenance = {"creator": "Psi4", "version": "1.10", "wall_time": 1.5, "nthreads": 2, "username": "someone"}
+    result = {"success": True, "return_result": -1.0, "provenance": provenance}
+    monkeypatch.setattr(qcengine, "compute", lambda *args, **kwargs: result)
+    outcome = local._run_task({}, "psi4", {})
+    assert outcome["energy"] == -1.0
+    assert outcome["provenance"] == {"version": "1.10", "wall_time": 1.5, "nthreads": 2}
+
+
+def test_run_task_tolerates_programs_reporting_less_provenance(monkeypatch):
+    import qcengine
+
+    result = {"success": True, "return_result": -1.0, "provenance": {"creator": "x", "version": "2"}}
+    monkeypatch.setattr(qcengine, "compute", lambda *args, **kwargs: result)
+    assert local._run_task({}, "x", {})["provenance"] == {"version": "2", "wall_time": None, "nthreads": None}
+
+
+def test_run_task_failure_has_no_provenance(monkeypatch):
+    import qcengine
+
+    result = {"success": False, "error": {"error_message": "boom"}}
+    monkeypatch.setattr(qcengine, "compute", lambda *args, **kwargs: result)
+    outcome = local._run_task({}, "psi4", {})
+    assert outcome["error"] == "boom"
+    assert "provenance" not in outcome
+
+
+@pytest.mark.psi4
+def test_task_files_record_psi4_provenance(tmp_path, ammonia):
+    pytest.importorskip("psi4")
+    spec = ComputeSpec(program="psi4", method="hf", basis="sto-3g", use_defaults=False)
+    m = cle.generate(ammonia, N=2, R=4.0, verbose=0)[0]
+    LocalBackend(tmp_path, ncores=2, ncores_per_task=2, memory_per_task=1.0).submit([m], spec)
+    tasks = [p for p in (tmp_path / "tasks" / m.id).glob("*.json") if p.name != "result.json"]
+    assert tasks
+    for path in tasks:
+        provenance = json.loads(path.read_text())["provenance"]
+        assert provenance["version"]
+        assert provenance["wall_time"] > 0
+        assert provenance["nthreads"] == 2

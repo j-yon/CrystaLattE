@@ -14,6 +14,7 @@ from .base import Backend, crystalatte_version
 
 _INSTALL_HINT = "LocalBackend needs qcengine and qcmanybody; install them with: pip install 'crystalatte[local]'"
 _RESULT = "result.json"
+_PROVENANCE_FIELDS = ("version", "wall_time", "nthreads")
 
 
 def _require_extras() -> None:
@@ -30,7 +31,13 @@ def _run_task(atomic_input: dict, program: str, task_config: dict) -> dict:
 
     out = qcengine.compute(atomic_input, program, raise_error=False, task_config=task_config, return_dict=True)
     if out.get("success"):
-        return {"success": True, "energy": float(out["return_result"]), "error": None}
+        provenance = out.get("provenance") or {}
+        return {
+            "success": True,
+            "energy": float(out["return_result"]),
+            "error": None,
+            "provenance": {field: provenance.get(field) for field in _PROVENANCE_FIELDS},
+        }
     error = out.get("error") or {}
     message = error.get("error_message") if isinstance(error, dict) else str(error)
     return {"success": False, "energy": None, "error": message or "unknown error"}
@@ -96,7 +103,8 @@ class LocalBackend(Backend):
     """Run many-body calculations on this machine, checkpointing every task to ``workdir``
 
     :param workdir: job-state directory holding the manifest and per-task results (small JSON
-        files, kept); resubmitting into it skips finished tasks and retries failed ones
+        files, kept); resubmitting into it skips finished tasks and retries failed ones. Each
+        finished task also records the program version, wall time and thread count.
     :param qc_scratch: scratch directory for the QC program's own files. When ``None``, nothing
         is passed and QCEngine resolves it as usual: ``$QCENGINE_SCRATCH_DIRECTORY``, then a
         ``qcengine.yaml`` ``scratch_directory``, then the program's own fallback (for Psi4,
