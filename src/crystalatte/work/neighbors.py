@@ -175,6 +175,9 @@ def generate_neighbors(
             if verbose:
                 tqdm.write(f"Reference {i}: {len(near)} monomers within {R} Angstroms.")
 
+            if not near:
+                continue
+
             # every pair of members must lie within R, so partners must also be within R of each other
             adj = None
             if N > 2:

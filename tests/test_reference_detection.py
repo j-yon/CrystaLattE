@@ -1,4 +1,4 @@
-"""Reference detection on hand-built crystals.
+"""Reference detection on hand-built crystals, and generation with no partners in range.
 
 Each crystal is small enough that its correct references can be read off by hand.
 """
@@ -10,6 +10,9 @@ from crystalatte.core.crystal import Crystal
 from crystalatte.core.multimer import ASU
 from crystalatte.core.space_group import SpaceGroup
 from crystalatte.core.sym_ops import SymOp
+from crystalatte.work.generate import generate
+
+from conftest import load
 
 ORTHO = (90.0, 90.0, 90.0)
 SCREW_B = SymOp.from_components(
@@ -55,3 +58,8 @@ def test_one_orbit_gives_one_reference_when_rounding_would_split_its_centroid():
     crystal = _crystal((10.0, 10.0, 10.0), ["Ar"], [[0.0015, 0.5, 0.5]])
     assert [r.symbols for r in crystal.get_references()] == [["Ar"]]
 
+
+@pytest.mark.parametrize("N", [2, 3, 4])
+def test_cutoff_with_no_partners_gives_no_multimers(N):
+    # benzene's closest intermolecular contact is far longer than 0.5 A
+    assert generate(load("benzene"), N, 0.5, verbose=0) == []
