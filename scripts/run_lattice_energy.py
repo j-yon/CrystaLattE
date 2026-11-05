@@ -20,7 +20,11 @@ def main() -> None:
         bsse="cp",
     )
 
-    client = PortalClient("http://localhost:7777", username=None, password=None)
+    client = PortalClient(
+        "http://localhost:7777",
+        username=None,
+        password=None
+    )
     backend = cle.FractalBackend(client, "benzene-mbe")
     backend.submit(multimers, spec)
 
@@ -30,7 +34,7 @@ def main() -> None:
 
     results = backend.collect()
 
-    print(f"lattice energy: {results.lattice_energy:.4f} kJ/mol per formula unit")
+    print(f"lattice energy: {results.lattice_energy:.4f} kJ/mol")
     for order, energy in sorted(results.by_order.items()):
         print(f"\t{order}-body: {energy:.4f} kJ/mol")
 
