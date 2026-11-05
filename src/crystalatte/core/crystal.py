@@ -9,6 +9,7 @@ from numpy.typing import NDArray
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
+from scipy.spatial.distance import cdist
 
 from .multimer import ASU, Monomer
 from .space_group import SpaceGroup
@@ -278,6 +279,40 @@ class Crystal:
         full = [c for c in components if len(c) == site_len[site[c[0]]]]
         return unique_frac, unique_cart, unique_symbols, full
 
+    def _check_finite(self, frac: NDArray, symbols: list[str], tol: float = 1.2) -> None:
+        """Check that nothing else in the periodic crystal bonds to a candidate molecule
+
+        :param frac: Fractional coordinates of the molecule's atoms, shape (n, 3)
+        :param symbols: Atomic symbols of the molecule's atoms
+        :param tol: Tolerance factor for determining bonding
+        :raises ValueError: If an atom outside the molecule bonds to it, as in a covalent network
+            or a molecule too large to be completed
+        """
+        cell, cell_symbols, _ = expand_cell(
+            self._asu.positions, self._asu.atoms, self._space_group.sym_ops
+        )
+        radii = {str(s): self._get_covalent_radius(str(s)) for s in cell_symbols}
+
+        # every cell image that could reach the molecule
+        spacing = 1.0 / np.linalg.norm(np.linalg.inv(self._frac_to_cart), axis=1)
+        reach = tol * 2 * max(radii.values()) / spacing
+        lows = np.floor(frac.min(axis=0) - reach).astype(int)
+        highs = np.ceil(frac.max(axis=0) + reach).astype(int)
+        shifts = np.array(list(product(*map(range, lows, highs + 1))))
+        images = (cell + shifts[:, None]).reshape(-1, 3)
+        image_radii = np.tile([radii[str(s)] for s in cell_symbols], len(shifts))
+
+        mol_radii = np.array([radii[s] for s in symbols])
+        bonded = cdist(self.to_cartesian(frac), self.to_cartesian(images)) <= tol * (
+            mol_radii[:, None] + image_radii
+        )
+        member = (cdist(frac, images) < 1e-3).any(axis=0)
+        if np.any(bonded[:, ~member]):
+            raise ValueError(
+                f"Atoms {symbols} are not a finite molecule: other atoms in the crystal bond to "
+                f"them, so it is a covalent network or too large to be completed"
+            )
+
     def _build_monomer(
         self,
         comp: list[int],
@@ -348,6 +383,8 @@ class Crystal:
 
         # only keep the closest representative of each symmetry orbit
         ordered = [comp for *_, comp in sorted(reps, key=lambda t: t[1])]
+        for c in ordered:
+            self._check_finite(unique_frac[c], [str(unique_symbols[j]) for j in c], tol)
         return [
             self._build_monomer(c, unique_frac, unique_cart, unique_symbols)
             for c in ordered
