@@ -196,7 +196,7 @@ class Crystal:
                 adjacency[i].append(j)
                 adjacency[j].append(i)
 
-        # BFS with shift propagation
+        # depth-first walk over the bond graph
         fragments = []
         visited = np.zeros(N, dtype=bool)
         for start in range(N):

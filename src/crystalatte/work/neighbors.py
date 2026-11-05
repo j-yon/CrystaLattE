@@ -24,7 +24,7 @@ def _distance_mode(kwargs: dict) -> str:
     # closest partner atom to anchor centroid
     if kwargs.get("use_origin"):
         return "origin"
-    # closest atom-pair contact
+    # centroid-to-centroid distance
     if kwargs.get("use_com", False):
         return "com"
     # default: closest atom-pair contact
