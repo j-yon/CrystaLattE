@@ -1,3 +1,4 @@
+
 import time
 
 from qcportal import PortalClient
@@ -6,7 +7,7 @@ import crystalatte as cle
 
 
 def main() -> None:
-    crystal = next(cle.from_cif("tests/x23/benzene/benzene.cif", disorder="enumerate"))
+    crystal = next(cle.from_cif("/path/to/benzene.cif", disorder="enumerate"))
 
     multimers = []
     for N, R in [(2, 30.0), (3, 15.0), (4, 10.0)]:
@@ -19,8 +20,8 @@ def main() -> None:
         bsse="cp",
     )
 
-    client = PortalClient("https://my-qcfractal-server:7777", username="me", password="secret")
-    backend = cle.FractalBackend(client, "benzene-dlpno-ccsdt")
+    client = PortalClient("https://my-qcfractal-server:7777", username="me", password=None)
+    backend = cle.FractalBackend(client, "benzene-mbe")
     backend.submit(multimers, spec)
 
     while any(counts["pending"] for counts in backend.status().counts.values()):
