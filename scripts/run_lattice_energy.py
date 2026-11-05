@@ -20,7 +20,7 @@ def main() -> None:
         bsse="cp",
     )
 
-    client = PortalClient("https://my-qcfractal-server:7777", username="me", password=None)
+    client = PortalClient("http://localhost:7777", username=None, password=None)
     backend = cle.FractalBackend(client, "benzene-mbe")
     backend.submit(multimers, spec)
 
@@ -37,3 +37,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
