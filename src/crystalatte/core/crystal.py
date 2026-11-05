@@ -6,6 +6,8 @@ from itertools import product
 import numpy as np
 import qcelemental as qcel
 from numpy.typing import NDArray
+from scipy.sparse import coo_matrix
+from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
 from .multimer import ASU, Monomer
@@ -259,21 +261,25 @@ class Crystal:
         # determine connected components using BFS
         components = self._bfs(unique_cart, unique_symbols, tol)
 
-        # key each atom by its unit-cell site, so all periodic images of an atom share a key
+        # label each atom by its unit-cell site, so all periodic images of an atom share a label
         wrapped = unique_frac % 1.0
-        wrapped[wrapped > 1.0 - 1e-3] -= 1.0  # wrap 0.999... -> ~0
-        site = [tuple(r) for r in np.round(wrapped, 3)]
+        wrapped[wrapped >= 1.0] = 0.0  # a tiny negative wraps to exactly 1.0
+        pairs = cKDTree(wrapped, boxsize=1.0).query_pairs(1e-3, output_type="ndarray")
+        n_atoms = len(wrapped)
+        images = coo_matrix(
+            (np.ones(len(pairs), dtype=bool), (pairs[:, 0], pairs[:, 1])), shape=(n_atoms, n_atoms)
+        )
+        _, site = connected_components(images, directed=False)
 
         # a site's molecule size is its largest image; edge fragments are strictly smaller
-        site_len: dict[tuple, int] = {}
+        site_len = np.zeros(site.max() + 1, dtype=np.intp)
         for c in components:
-            for i in c:
-                site_len[site[i]] = max(site_len.get(site[i], 0), len(c))
+            np.maximum.at(site_len, site[c], len(c))
         full = [c for c in components if len(c) == site_len[site[c[0]]]]
         return unique_frac, unique_cart, unique_symbols, full
 
     def _build_monomer(
-        self, 
+        self,
         comp: list[int],
         unique_frac: NDArray[np.float64],
         unique_cart: NDArray[np.float64],
@@ -316,7 +322,8 @@ class Crystal:
         unique_frac, unique_cart, unique_symbols, full = self._find_molecules(tol)
         ops = self._space_group.sym_ops
 
-        reps: dict[tuple, tuple[float, list]] = {}
+        # one [centroid, distance to origin, component] per symmetry orbit
+        reps: list[list] = []
 
         # TODO: find why this is necessary
         # iterate over all complete molecules and find the representative of each symmetry orbit
@@ -324,22 +331,23 @@ class Crystal:
             syms = [str(unique_symbols[j]) for j in comp]
             masses = np.array([qcel.periodictable.to_mass(s) for s in syms])
             cen = np.average(unique_frac[comp], axis=0, weights=masses)
-            imgs = []
 
             # apply all symmetry operations to the centroid and find images
-            for op in ops:
-                r = op.apply(cen) % 1.0
-                r[r > 1.0 - 1e-3] -= 1.0  # wrap 0.999... -> ~0
-                imgs.append(tuple(np.round(r, 3)))
-
-            # assign minimum image as representative key
-            key = min(imgs)
+            imgs = np.array([op.apply(cen) for op in ops])
             d = float(np.linalg.norm(cen))
-            if key not in reps or d < reps[key][0]:
-                reps[key] = (d, comp)
+
+            # same orbit iff some image lands on a known centroid, modulo the lattice
+            for rep in reps:
+                delta = (imgs - rep[0] + 0.5) % 1.0 - 0.5
+                if np.any(np.linalg.norm(delta, axis=1) < 1e-3):
+                    if d < rep[1]:
+                        rep[1:] = [d, comp]
+                    break
+            else:
+                reps.append([cen, d, comp])
 
         # only keep the closest representative of each symmetry orbit
-        ordered = [comp for _, comp in sorted(reps.values(), key=lambda t: t[0])]
+        ordered = [comp for *_, comp in sorted(reps, key=lambda t: t[1])]
         return [
             self._build_monomer(c, unique_frac, unique_cart, unique_symbols)
             for c in ordered
