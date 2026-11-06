@@ -90,7 +90,7 @@ def draw_scatter(fig, points: dict[int, list[tuple[str, int, float]]]) -> None:
 
     handles = [Line2D([], [], ls="", marker="o", mfc=V2, mec=V2, ms=4.5),
                Line2D([], [], ls="", marker="D", mfc="none", mec=V2, ms=4.5, mew=0.9)]
-    fig.legend(handles, ["v2", "v2, >1 reference"], ncol=2, frameon=False, fontsize=8.2, loc="lower center",
+    fig.legend(handles, ["v2", "v2, Z″>1"], ncol=2, frameon=False, fontsize=8.2, loc="lower center",
                bbox_to_anchor=(0.284, 0.006), handletextpad=0.05, columnspacing=0.6, labelcolor=INK2, borderpad=0)
 
 
