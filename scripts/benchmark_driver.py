@@ -63,9 +63,8 @@ def resident_gb(pid: int) -> float:
     return int(out.strip()) / 1024**2 if out.strip() else 0.0
 
 
-def measure(cif: str, N: int, R: float, timeout: float, max_gb: float) -> dict:
+def measure(worker: Path, cif: str, N: int, R: float, timeout: float, max_gb: float) -> dict:
     """Run one measurement in a fresh process and return its result fields"""
-    worker = Path(__file__).with_name("benchmark_generate.py")
     env = {**os.environ, **SINGLE_THREAD}
     peak = 0.0
     with tempfile.TemporaryFile("w+") as stderr:
@@ -115,10 +114,12 @@ def main() -> None:
     parser.add_argument("--max-R", type=float, default=float("inf"), help="largest cutoff to run")
     parser.add_argument("--cif-root", type=Path, default=Path("."), help="directory the CIF paths are relative to")
     parser.add_argument("--skip", nargs="*", default=[], help="N:R pairs not to run, e.g. 4:20 5:15")
+    parser.add_argument("--worker", type=Path, default=Path(__file__).with_name("benchmark_generate.py"), help="script timing one run")
+    parser.add_argument("--code-commit", help="commit to record; defaults to the last commit touching src")
     args = parser.parse_args()
     skipped = {tuple(float(part) for part in pair.split(":")) for pair in args.skip}
 
-    commit = subprocess.run(["git", "log", "-1", "--format=%h", "--", "src"], capture_output=True, text=True).stdout.strip()
+    commit = args.code_commit or subprocess.run(["git", "log", "-1", "--format=%h", "--", "src"], capture_output=True, text=True).stdout.strip()
     args.out = args.out.expanduser()
     args.out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -142,7 +143,7 @@ def main() -> None:
                 for repeat in range(args.repeats):
                     if (name, N, R, repeat) in finished:
                         continue
-                    result = measure(str(args.cif_root / CRYSTALS[name]), N, R, args.timeout, args.max_gb)
+                    result = measure(args.worker, str(args.cif_root / CRYSTALS[name]), N, R, args.timeout, args.max_gb)
                     record = {"crystal": name, "N": N, "R": R, "repeat": repeat, "code_commit": commit, **result}
                     with args.out.open("a") as handle:
                         handle.write(json.dumps(record) + "\n")
