@@ -86,8 +86,9 @@ def draw_scatter(fig, v2: dict, v1: dict, v1_timed_out: set, orders: list[int]) 
                    linewidths=0.8 if hollow else 0, alpha=0.95 if hollow else 0.75, zorder=3)
         key = (name, N, R)
         if key in v1:
-            v1_unique, _, v1_seconds = v1[key]
-            merged = v1_unique != unique
+            v1_unique, v1_candidates, v1_seconds = v1[key]
+            # merged clusters keep their replicas, so a lower total means a cluster fell outside the cutoff
+            merged = v1_unique < unique and v1_candidates == candidates
             merged_any |= merged
             if merged:
                 ax.scatter(candidates, v1_seconds, s=14, marker="x", color=V1, linewidths=0.9, zorder=4)
