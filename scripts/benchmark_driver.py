@@ -114,7 +114,9 @@ def main() -> None:
     parser.add_argument("--N", nargs="*", type=int, default=list(CUTOFFS), dest="orders")
     parser.add_argument("--max-R", type=float, default=float("inf"), help="largest cutoff to run")
     parser.add_argument("--cif-root", type=Path, default=Path("."), help="directory the CIF paths are relative to")
+    parser.add_argument("--skip", nargs="*", default=[], help="N:R pairs not to run, e.g. 4:20 5:15")
     args = parser.parse_args()
+    skipped = {tuple(float(part) for part in pair.split(":")) for pair in args.skip}
 
     commit = subprocess.run(["git", "log", "-1", "--format=%h", "--", "src"], capture_output=True, text=True).stdout.strip()
     args.out = args.out.expanduser()
@@ -133,7 +135,7 @@ def main() -> None:
 
     # ascending cutoffs across all crystals, so every crystal has cheap data before any costly run
     for N in args.orders:
-        for R in (r for r in CUTOFFS[N] if r <= args.max_R):
+        for R in (r for r in CUTOFFS[N] if r <= args.max_R and (N, r) not in skipped):
             for name in args.only:
                 if (name, N) in stopped:
                     continue
