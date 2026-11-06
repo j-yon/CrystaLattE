@@ -39,7 +39,9 @@ HEATMAP_CRYSTALS = [
 
 
 def load_medians(path: Path, orders: list[int], exclude: list[str]) -> dict[int, list[tuple[str, int, float]]]:
-    """Return ``(crystal, unique count, median seconds)`` per order, skipping unfinished runs
+    """Return ``(crystal, candidate count, median seconds)`` per order, skipping unfinished runs
+
+    A run's summed multiplicity is its candidate count, since every candidate joins one unique multimer.
 
     :param path: JSON Lines file written by ``benchmark_driver.py``
     :param orders: Multimer orders to keep
@@ -56,7 +58,7 @@ def load_medians(path: Path, orders: list[int], exclude: list[str]) -> dict[int,
 
     points = defaultdict(list)
     for (name, N, _), repeats in runs.items():
-        points[N].append((name, repeats[0]["unique"], statistics.median(r["seconds"] for r in repeats)))
+        points[N].append((name, repeats[0]["multiplicity"], statistics.median(r["seconds"] for r in repeats)))
     return points
 
 
@@ -65,15 +67,15 @@ def draw_scatter(fig, points: dict[int, list[tuple[str, int, float]]]) -> None:
     grid = fig.add_gridspec(2, 2, left=0.068, right=0.50, top=0.945, bottom=0.138, wspace=0.05, hspace=0.05)
     facets = {N: fig.add_subplot(grid[i]) for i, N in enumerate(PANEL_ORDERS)}
     for i, (N, ax) in enumerate(facets.items()):
-        for name, unique, seconds in points.get(N, []):
+        for name, candidates, seconds in points.get(N, []):
             hollow = name in MULTI_REFERENCE
-            ax.scatter(unique, seconds, s=13 if hollow else 10, marker="D" if hollow else "o",
+            ax.scatter(candidates, seconds, s=13 if hollow else 10, marker="D" if hollow else "o",
                        facecolors="none" if hollow else V2, edgecolors=V2 if hollow else "none",
                        linewidths=0.8 if hollow else 0, alpha=0.95 if hollow else 0.75, zorder=3)
         if N not in points:
             ax.text(0.5, 0.42, "not yet included", transform=ax.transAxes, ha="center", va="center", fontsize=9, color=INK2)
         ax.set_xscale("log"); ax.set_yscale("log")
-        ax.set_xlim(0.6, 6e6); ax.set_ylim(0.15, TIME_LIMIT * 2.4)
+        ax.set_xlim(0.6, 5e7); ax.set_ylim(0.15, TIME_LIMIT * 2.4)
         ax.set_xticks([1, 100, 10000, 1000000], ["1", "10²", "10⁴", "10⁶"])
         ax.set_yticks([1, 10, 100, 1000], ["1", "10", "100", "1000"])
         ax.minorticks_off()
@@ -86,7 +88,7 @@ def draw_scatter(fig, points: dict[int, list[tuple[str, int, float]]]) -> None:
         ax.text(0.05, 0.78, f"N={N}", transform=ax.transAxes, fontsize=10)
     facets[2].text(0.97, TIME_LIMIT * 0.62, "1 h", transform=facets[2].get_yaxis_transform(), ha="right", va="top", fontsize=8, color=INK2)
     facets[2].set_ylabel("Wall time (s)", fontsize=9, y=-0.025, labelpad=2)
-    fig.text(0.284, 0.066, "Unique multimers", fontsize=9, color=INK2, ha="center")
+    fig.text(0.284, 0.066, "Total $N$-mer candidates", fontsize=9, color=INK2, ha="center", math_fontfamily="custom")
 
     handles = [Line2D([], [], ls="", marker="o", mfc=V2, mec=V2, ms=4.5),
                Line2D([], [], ls="", marker="D", mfc="none", mec=V2, ms=4.5, mew=0.9)]
