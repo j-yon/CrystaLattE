@@ -22,7 +22,7 @@ from matplotlib.patches import Rectangle
 TIME_LIMIT = 3600.0
 PANEL_ORDERS = (2, 3, 4, 5)
 HEATMAP_ORDERS = (2, 3, 4, 5)
-ZPRIME = {"pyrazole", "fomepizole"}
+MULTI_REFERENCE = {"pyrazole", "fomepizole", "phenol", "pentacene", "cholesterol"}
 
 INK, INK2, GRID, AXIS, SURFACE = "#0b0b0b", "#52514e", "#e1e0d9", "#c3c2b7", "#fcfcfb"
 V2 = "#2a78d6"
@@ -31,9 +31,9 @@ V2 = "#2a78d6"
 HEATMAP_CRYSTALS = [
     ("Carbon dioxide", 3, 24), ("Urea", 8, 8), ("1,3,5-Triazine", 9, 36), ("γ-Glycine", 10, 3),
     ("Trioxane", 12, 18), ("Benzene", 12, 8), ("L-Alanine", 13, 4), ("Ethyl carbamate", 13, 2),
-    ("1,4-Cyclohexanedione", 16, 2), ("Aspirin", 21, 4), ("Hexamine", 22, 48), ("Anthracene", 24, 4),
-    ("Adamantane", 26, 8), ("β-HMX", 28, 4), ("PETN I", 29, 8), ("Hexamethylbenzene", 30, 2),
-    ("Ibuprofen", 33, 4), ("Coronene", 36, 4), ("Pentacene", 36, 2), ("Sucrose", 45, 2),
+    ("1,4-Cyclohexanedione", 16, 2), ("Aspirin", 21, 4), ("Pentaerythritol", 21, 8), ("Hexamine", 22, 48),
+    ("Anthracene", 24, 4), ("Adamantane", 26, 8), ("β-HMX", 28, 4), ("Hexamethylbenzene", 30, 2),
+    ("Ibuprofen", 33, 4), ("Coronene", 36, 4), ("Sucrose", 45, 2),
     ("Rubrene", 70, 16), ("Ritonavir", 98, 4),
 ]
 
@@ -66,7 +66,7 @@ def draw_scatter(fig, points: dict[int, list[tuple[str, int, float]]]) -> None:
     facets = {N: fig.add_subplot(grid[i]) for i, N in enumerate(PANEL_ORDERS)}
     for i, (N, ax) in enumerate(facets.items()):
         for name, unique, seconds in points.get(N, []):
-            hollow = name in ZPRIME
+            hollow = name in MULTI_REFERENCE
             ax.scatter(unique, seconds, s=13 if hollow else 10, marker="D" if hollow else "o",
                        facecolors="none" if hollow else V2, edgecolors=V2 if hollow else "none",
                        linewidths=0.8 if hollow else 0, alpha=0.95 if hollow else 0.75, zorder=3)
@@ -90,7 +90,7 @@ def draw_scatter(fig, points: dict[int, list[tuple[str, int, float]]]) -> None:
 
     handles = [Line2D([], [], ls="", marker="o", mfc=V2, mec=V2, ms=4.5),
                Line2D([], [], ls="", marker="D", mfc="none", mec=V2, ms=4.5, mew=0.9)]
-    fig.legend(handles, ["v2", "v2, Z′>1"], ncol=2, frameon=False, fontsize=8.2, loc="lower center",
+    fig.legend(handles, ["v2", "v2, >1 reference"], ncol=2, frameon=False, fontsize=8.2, loc="lower center",
                bbox_to_anchor=(0.284, 0.006), handletextpad=0.05, columnspacing=0.6, labelcolor=INK2, borderpad=0)
 
 
