@@ -28,6 +28,17 @@ CRYSTALS = {
     "ritonavir_c2": "tests/other/ritonavir_c2/ritonavir_c2.cif",
     "pyrazole": "tests/x23/pyrazole/pyrazole.cif",
     "fomepizole": "tests/other/fomepizole/fomepizole.cif",
+    "gamma_glycine": "tests/other/gamma_glycine/gamma_glycine.cif",
+    "l_alanine": "tests/other/l_alanine/l_alanine.cif",
+    "phenol": "tests/other/phenol/phenol.cif",
+    "aspirin": "tests/other/aspirin/aspirin.cif",
+    "pentaerythritol": "tests/other/pentaerythritol/pentaerythritol.cif",
+    "beta_hmx": "tests/other/beta_hmx/beta_hmx.cif",
+    "hexamethylbenzene": "tests/other/hexamethylbenzene/hexamethylbenzene.cif",
+    "ibuprofen": "tests/other/ibuprofen/ibuprofen.cif",
+    "pentacene": "tests/other/pentacene/pentacene.cif",
+    "sucrose": "tests/other/sucrose/sucrose.cif",
+    "rubrene": "tests/other/rubrene/rubrene.cif",
 }
 CUTOFFS = {
     2: [8, 10, 12, 15, 20, 30, 40, 50, 60],
@@ -100,6 +111,7 @@ def main() -> None:
     parser.add_argument("--only", nargs="*", default=list(CRYSTALS), help="crystal names to run")
     parser.add_argument("--N", nargs="*", type=int, default=list(CUTOFFS), dest="orders")
     parser.add_argument("--max-R", type=float, default=float("inf"), help="largest cutoff to run")
+    parser.add_argument("--cif-root", type=Path, default=Path("."), help="directory the CIF paths are relative to")
     args = parser.parse_args()
 
     commit = subprocess.run(["git", "log", "-1", "--format=%h", "--", "src"], capture_output=True, text=True).stdout.strip()
@@ -126,7 +138,7 @@ def main() -> None:
                 for repeat in range(args.repeats):
                     if (name, N, R, repeat) in finished:
                         continue
-                    result = measure(CRYSTALS[name], N, R, args.timeout, args.max_gb)
+                    result = measure(str(args.cif_root / CRYSTALS[name]), N, R, args.timeout, args.max_gb)
                     record = {"crystal": name, "N": N, "R": R, "repeat": repeat, "code_commit": commit, **result}
                     with args.out.open("a") as handle:
                         handle.write(json.dumps(record) + "\n")
