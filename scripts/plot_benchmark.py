@@ -38,16 +38,19 @@ HEATMAP_CRYSTALS = [
 ]
 
 
-def load_medians(path: Path, orders: list[int]) -> dict[int, list[tuple[str, int, float]]]:
+def load_medians(path: Path, orders: list[int], exclude: list[str]) -> dict[int, list[tuple[str, int, float]]]:
     """Return ``(crystal, unique count, median seconds)`` per order, skipping unfinished runs
 
     :param path: JSON Lines file written by ``benchmark_driver.py``
     :param orders: Multimer orders to keep
+    :param exclude: Crystal names to leave out of the plot; the file is not changed
     :returns: Points to plot, keyed by order
     """
     runs = defaultdict(list)
     for line in path.read_text().splitlines():
         record = json.loads(line)
+        if record["crystal"] in exclude:
+            continue
         if record["N"] in orders and record["status"] == "ok" and record["unique"] > 0:
             runs[record["crystal"], record["N"], record["R"]].append(record)
 
@@ -91,17 +94,18 @@ def draw_scatter(fig, points: dict[int, list[tuple[str, int, float]]]) -> None:
                bbox_to_anchor=(0.284, 0.006), handletextpad=0.05, columnspacing=0.6, labelcolor=INK2, borderpad=0)
 
 
-def draw_empty_heatmap(fig) -> None:
+def draw_empty_heatmap(fig, exclude: list[str]) -> None:
     """Draw panel b's layout without values, since a speedup needs v1 timings"""
+    crystals = [c for c in HEATMAP_CRYSTALS if c[0].lower().replace(" ", "_") not in exclude]
     ax = fig.add_axes([0.665, 0.103, 0.262, 0.84])
-    ax.set_xlim(0, len(HEATMAP_ORDERS)); ax.set_ylim(len(HEATMAP_CRYSTALS), 0)
-    for i in range(len(HEATMAP_CRYSTALS)):
+    ax.set_xlim(0, len(HEATMAP_ORDERS)); ax.set_ylim(len(crystals), 0)
+    for i in range(len(crystals)):
         for j in range(len(HEATMAP_ORDERS)):
             ax.add_patch(Rectangle((j + 0.025, i + 0.05), 0.95, 0.90, facecolor=GRID, linewidth=0))
-    ax.text(len(HEATMAP_ORDERS) / 2, len(HEATMAP_CRYSTALS) / 2, "needs v1 timings", ha="center", va="center", fontsize=10, color=INK2)
+    ax.text(len(HEATMAP_ORDERS) / 2, len(crystals) / 2, "needs v1 timings", ha="center", va="center", fontsize=10, color=INK2)
     ax.set_xticks([j + 0.5 for j in range(len(HEATMAP_ORDERS))], [f"N={N}" for N in HEATMAP_ORDERS], fontsize=9.5, color=INK)
     ax.xaxis.tick_top()
-    ax.set_yticks([i + 0.5 for i in range(len(HEATMAP_CRYSTALS))], [c[0] for c in HEATMAP_CRYSTALS], fontsize=8.8, color=INK)
+    ax.set_yticks([i + 0.5 for i in range(len(crystals))], [c[0] for c in crystals], fontsize=8.8, color=INK)
     ax.tick_params(length=0, pad=2)
     for spine in ax.spines.values():
         spine.set_visible(False)
@@ -109,7 +113,7 @@ def draw_empty_heatmap(fig) -> None:
     xform = ax.get_yaxis_transform()
     for x, header, index in ((1.09, "atoms", 1), (1.215, "ops", 2)):
         ax.text(x, 1.006, header, transform=ax.transAxes, ha="center", va="bottom", fontsize=8.3, color=INK2)
-        for i, crystal in enumerate(HEATMAP_CRYSTALS):
+        for i, crystal in enumerate(crystals):
             ax.text(x, i + 0.5, str(crystal[index]), transform=xform, ha="center", va="center", fontsize=8.3, color=INK2)
 
     diverging = LinearSegmentedColormap.from_list("v", [(0, "#e34948"), (0.25, "#f0efec"), (0.55, "#86b6ef"), (0.8, "#2a78d6"), (1, "#0d366b")])
@@ -125,6 +129,7 @@ def main() -> None:
     parser.add_argument("timings", type=Path, help="JSON Lines results file")
     parser.add_argument("--N", nargs="+", type=int, required=True, dest="orders", help="orders to plot")
     parser.add_argument("--out", type=Path, required=True, help="output path without an extension")
+    parser.add_argument("--exclude", nargs="*", default=[], help="crystal names to leave out of the plot")
     args = parser.parse_args()
 
     plt.rcParams.update({
@@ -136,9 +141,9 @@ def main() -> None:
     fig.text(0.008, 0.968, "a", fontsize=12, weight="bold")
     fig.text(0.515, 0.968, "b", fontsize=12, weight="bold")
 
-    points = load_medians(args.timings, args.orders)
+    points = load_medians(args.timings, args.orders, args.exclude)
     draw_scatter(fig, points)
-    draw_empty_heatmap(fig)
+    draw_empty_heatmap(fig, args.exclude)
 
     fig.savefig(f"{args.out}.png", dpi=220, bbox_inches="tight", pad_inches=0.05)
     fig.savefig(f"{args.out}.pdf", bbox_inches="tight", pad_inches=0.05)
