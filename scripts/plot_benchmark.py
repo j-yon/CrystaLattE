@@ -73,7 +73,7 @@ def draw_scatter(fig, points: dict[int, list[tuple[str, int, float]]]) -> None:
         if N not in points:
             ax.text(0.5, 0.42, "not yet included", transform=ax.transAxes, ha="center", va="center", fontsize=9, color=INK2)
         ax.set_xscale("log"); ax.set_yscale("log")
-        ax.set_xlim(0.6, 2e6); ax.set_ylim(0.15, TIME_LIMIT * 2.4)
+        ax.set_xlim(0.6, 6e6); ax.set_ylim(0.15, TIME_LIMIT * 2.4)
         ax.set_xticks([1, 100, 10000, 1000000], ["1", "10²", "10⁴", "10⁶"])
         ax.set_yticks([1, 10, 100, 1000], ["1", "10", "100", "1000"])
         ax.minorticks_off()
