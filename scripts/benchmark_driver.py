@@ -39,6 +39,8 @@ CRYSTALS = {
     "pentacene": "tests/other/pentacene/pentacene.cif",
     "sucrose": "tests/other/sucrose/sucrose.cif",
     "rubrene": "tests/other/rubrene/rubrene.cif",
+    "coronene": "tests/other/coronene/coronene.cif",
+    "cholesterol": "tests/other/cholesterol/cholesterol.cif",
 }
 CUTOFFS = {
     2: [8, 10, 12, 15, 20, 30, 40, 50, 60],
