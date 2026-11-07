@@ -25,13 +25,18 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory() as scratch:  # cif_main writes the supercell to a file
         os.chdir(scratch)
-        with contextlib.redirect_stdout(io.StringIO()):
-            t0 = time.perf_counter()
-            r_cut_monomer = cif_main(cif, "sc.xyz", 0, 0, 0, 0.0, R, True)
-            nmers = supercell2monomers("sc.xyz", r_cut_monomer, 1.2, 0)
-            build_nmer(nmers, len(nmers), NMER_TYPES[N], R, NO_COM_CUTOFF, "ChSEV", 0)
-            elapsed = time.perf_counter() - t0
-        os.chdir("/")
+        captured = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(captured):
+                t0 = time.perf_counter()
+                r_cut_monomer = cif_main(cif, "sc.xyz", 0, 0, 0, 0.0, R, True)
+                nmers = supercell2monomers("sc.xyz", r_cut_monomer, 1.2, 0)
+                build_nmer(nmers, len(nmers), NMER_TYPES[N], R, NO_COM_CUTOFF, "ChSEV", 0)
+                elapsed = time.perf_counter() - t0
+        except SystemExit:  # v1 reports bad input by printing it and exiting with status 0
+            sys.exit(captured.getvalue()[-500:] or "v1 exited without output")
+        finally:
+            os.chdir("/")
 
     found = [nmer for nmer in nmers.values() if len(nmer["monomers"]) == N]
     print(
