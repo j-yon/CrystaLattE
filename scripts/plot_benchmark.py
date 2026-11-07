@@ -30,17 +30,19 @@ V1, V2 = "#eb6834", "#2a78d6"
 DIVERGING = LinearSegmentedColormap.from_list("v", [(0, "#e34948"), (0.25, "#f0efec"), (0.55, "#86b6ef"), (0.8, "#2a78d6"), (1, "#0d366b")])
 SPEEDUP_NORM = Normalize(vmin=-1, vmax=3)
 
-# name, results-file key, atoms per molecule, symmetry operations
+# name, results-file key, atoms per molecule, space group as written in the CIF used
 HEATMAP_CRYSTALS = [
-    ("Carbon dioxide", "carbon_dioxide", 3, 24), ("Urea", "urea", 8, 8), ("1,3,5-Triazine", "triazine", 9, 36),
-    ("γ-Glycine", "gamma_glycine", 10, 3), ("Trioxane", "trioxane", 12, 18), ("Benzene", "benzene", 12, 8),
-    ("L-Alanine", "l_alanine", 13, 4), ("Ethyl carbamate", "ethyl_carbamate", 13, 2),
-    ("1,4-Cyclohexanedione", "14_cyclohexanedione", 16, 2), ("Aspirin", "aspirin", 21, 4),
-    ("Pentaerythritol", "pentaerythritol", 21, 8), ("Hexamine", "hexamine", 22, 48),
-    ("Anthracene", "anthracene", 24, 4), ("Adamantane", "adamantane", 26, 8), ("β-HMX", "beta_hmx", 28, 4),
-    ("Hexamethylbenzene", "hexamethylbenzene", 30, 2), ("Ibuprofen", "ibuprofen", 33, 4),
-    ("Coronene", "coronene", 36, 4), ("Sucrose", "sucrose", 45, 2), ("Rubrene", "rubrene", 70, 16),
-    ("Ritonavir", "ritonavir_c2", 98, 4),
+    ("Carbon dioxide", "carbon_dioxide", 3, r"Pa\bar{3}"), ("Urea", "urea", 8, r"P\bar{4}2_1m"),
+    ("1,3,5-Triazine", "triazine", 9, r"R\bar{3}c"), ("γ-Glycine", "gamma_glycine", 10, r"P3_2"),
+    ("Trioxane", "trioxane", 12, r"R3c"), ("Benzene", "benzene", 12, r"Pbca"),
+    ("L-Alanine", "l_alanine", 13, r"P2_12_12_1"), ("Ethyl carbamate", "ethyl_carbamate", 13, r"P\bar{1}"),
+    ("1,4-Cyclohexanedione", "14_cyclohexanedione", 16, r"P2_1"), ("Aspirin", "aspirin", 21, r"P2_1/c"),
+    ("Pentaerythritol", "pentaerythritol", 21, r"I\bar{4}"), ("Hexamine", "hexamine", 22, r"I\bar{4}3m"),
+    ("Anthracene", "anthracene", 24, r"P2_1/a"), ("Adamantane", "adamantane", 26, r"P\bar{4}2_1c"),
+    ("β-HMX", "beta_hmx", 28, r"P2_1/n"), ("Hexamethylbenzene", "hexamethylbenzene", 30, r"P\bar{1}"),
+    ("Ibuprofen", "ibuprofen", 33, r"P2_1/c"), ("Coronene", "coronene", 36, r"P2_1/n"),
+    ("Sucrose", "sucrose", 45, r"P2_1"), ("Rubrene", "rubrene", 70, r"Cmca"),
+    ("Ritonavir", "ritonavir_c2", 98, r"C2"),
 ]
 
 
@@ -72,7 +74,7 @@ def load_runs(path: Path, exclude: list[str]) -> tuple[dict, set]:
 
 def draw_scatter(fig, v2: dict, v1: dict, v1_timed_out: set, orders: list[int]) -> None:
     """Draw panel a against v2's candidate count, leaving orders without data empty"""
-    grid = fig.add_gridspec(2, 2, left=0.068, right=0.50, top=0.945, bottom=0.138, wspace=0.05, hspace=0.05)
+    grid = fig.add_gridspec(2, 2, left=0.068, right=0.46, top=0.945, bottom=0.138, wspace=0.05, hspace=0.05)
     facets = {N: fig.add_subplot(grid[i]) for i, N in enumerate(PANEL_ORDERS)}
 
     differs_any = False
@@ -113,7 +115,7 @@ def draw_scatter(fig, v2: dict, v1: dict, v1_timed_out: set, orders: list[int]) 
         ax.text(0.05, 0.78, f"N={N}", transform=ax.transAxes, fontsize=10)
     facets[2].text(0.97, TIME_LIMIT * 0.62, "1 h", transform=facets[2].get_yaxis_transform(), ha="right", va="top", fontsize=8, color=INK2)
     facets[2].set_ylabel("Wall time (s)", fontsize=9, y=-0.025, labelpad=2)
-    fig.text(0.284, 0.066, "Total $N$-mer candidates", fontsize=9, color=INK2, ha="center", math_fontfamily="custom")
+    fig.text(0.264, 0.066, "Total $N$-mer candidates", fontsize=9, color=INK2, ha="center")
 
     entries = []
     if v1:
@@ -125,13 +127,13 @@ def draw_scatter(fig, v2: dict, v1: dict, v1_timed_out: set, orders: list[int]) 
     entries.append((Line2D([], [], ls="", marker="o", mfc=V2, mec=V2, ms=4.5), "v2"))
     entries.append((Line2D([], [], ls="", marker="D", mfc="none", mec=V2, ms=4.5, mew=0.9), "v2, Z″>1"))
     fig.legend(*zip(*entries), ncol=len(entries), frameon=False, fontsize=8.2, loc="lower center",
-               bbox_to_anchor=(0.284, 0.006), handletextpad=0.05, columnspacing=0.6, labelcolor=INK2, borderpad=0)
+               bbox_to_anchor=(0.264, 0.006), handletextpad=0.05, columnspacing=0.6, labelcolor=INK2, borderpad=0)
 
 
 def draw_heatmap(fig, v2: dict, v1: dict, v1_timed_out: set, cutoffs: list[float], exclude: list[str]) -> None:
     """Draw panel b at one cutoff per order, leaving cells without both timings blank"""
     crystals = [c for c in HEATMAP_CRYSTALS if c[1] not in exclude]
-    ax = fig.add_axes([0.665, 0.103, 0.262, 0.84])
+    ax = fig.add_axes([0.715, 0.103, 0.232, 0.84])
     ax.set_xlim(0, len(HEATMAP_ORDERS)); ax.set_ylim(len(crystals), 0)
     for i, (_, key, *_rest) in enumerate(crystals):
         for j, (N, R) in enumerate(zip(HEATMAP_ORDERS, cutoffs)):
@@ -149,18 +151,17 @@ def draw_heatmap(fig, v2: dict, v1: dict, v1_timed_out: set, cutoffs: list[float
                 ax.text(j + 0.5, i + 0.52, label, ha="center", va="center", fontsize=8.3, color=SURFACE if shade > 0.68 else INK)
     ax.set_xticks([j + 0.5 for j in range(len(HEATMAP_ORDERS))], [f"N={N}" for N in HEATMAP_ORDERS], fontsize=9.5, color=INK)
     ax.xaxis.tick_top()
-    ax.set_yticks([i + 0.5 for i in range(len(crystals))], [c[0] for c in crystals], fontsize=8.8, color=INK)
+    ax.set_yticks([i + 0.5 for i in range(len(crystals))], [f"{c[0]} (${c[3]}$)" for c in crystals], fontsize=8.8, color=INK)
     ax.tick_params(length=0, pad=2)
     for spine in ax.spines.values():
         spine.set_visible(False)
 
     xform = ax.get_yaxis_transform()
-    for x, header, index in ((1.09, "atoms", 2), (1.215, "ops", 3)):
-        ax.text(x, 1.006, header, transform=ax.transAxes, ha="center", va="bottom", fontsize=8.3, color=INK2)
-        for i, crystal in enumerate(crystals):
-            ax.text(x, i + 0.5, str(crystal[index]), transform=xform, ha="center", va="center", fontsize=8.3, color=INK2)
+    ax.text(1.1, 1.006, "atoms", transform=ax.transAxes, ha="center", va="bottom", fontsize=8.3, color=INK2)
+    for i, crystal in enumerate(crystals):
+        ax.text(1.1, i + 0.5, str(crystal[2]), transform=xform, ha="center", va="center", fontsize=8.3, color=INK2)
 
-    cax = fig.add_axes([0.665, 0.058, 0.262, 0.016])
+    cax = fig.add_axes([0.715, 0.058, 0.232, 0.016])
     bar = fig.colorbar(plt.cm.ScalarMappable(norm=SPEEDUP_NORM, cmap=DIVERGING), cax=cax, orientation="horizontal", ticks=[-1, 0, 1, 2, 3])
     bar.ax.set_xticklabels(["0.1×", "1×", "10×", "100×", "1k×"], fontsize=8.2, color=INK2)
     bar.outline.set_visible(False)
@@ -181,10 +182,11 @@ def main() -> None:
         "font.family": ["Arial", "DejaVu Sans"], "font.size": 9,
         "axes.edgecolor": AXIS, "axes.labelcolor": INK2, "xtick.color": INK2, "ytick.color": INK2,
         "text.color": INK, "figure.facecolor": SURFACE, "axes.facecolor": SURFACE,
+        "mathtext.fontset": "custom", "mathtext.rm": "Arial", "mathtext.it": "Arial:italic", "mathtext.bf": "Arial:bold",
     })
     fig = plt.figure(figsize=(8.4, 5.0))
     fig.text(0.008, 0.968, "a", fontsize=12, weight="bold")
-    fig.text(0.515, 0.968, "b", fontsize=12, weight="bold")
+    fig.text(0.47, 0.968, "b", fontsize=12, weight="bold")
 
     v2, _ = load_runs(args.timings, args.exclude)
     v1, v1_timed_out = load_runs(args.v1, args.exclude) if args.v1 else ({}, set())
