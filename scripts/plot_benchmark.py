@@ -75,7 +75,7 @@ def draw_scatter(fig, v2: dict, v1: dict, v1_timed_out: set, orders: list[int]) 
     grid = fig.add_gridspec(2, 2, left=0.068, right=0.50, top=0.945, bottom=0.138, wspace=0.05, hspace=0.05)
     facets = {N: fig.add_subplot(grid[i]) for i, N in enumerate(PANEL_ORDERS)}
 
-    merged_any = False
+    differs_any = False
     for (name, N, R), (unique, candidates, seconds) in v2.items():
         if N not in orders or unique == 0:
             continue
@@ -86,11 +86,10 @@ def draw_scatter(fig, v2: dict, v1: dict, v1_timed_out: set, orders: list[int]) 
                    linewidths=0.8 if hollow else 0, alpha=0.95 if hollow else 0.75, zorder=3)
         key = (name, N, R)
         if key in v1:
-            v1_unique, v1_candidates, v1_seconds = v1[key]
-            # merged clusters keep their replicas, so a lower total means a cluster fell outside the cutoff
-            merged = v1_unique < unique and v1_candidates == candidates
-            merged_any |= merged
-            if merged:
+            v1_unique, _, v1_seconds = v1[key]
+            differs = v1_unique != unique
+            differs_any |= differs
+            if differs:
                 ax.scatter(candidates, v1_seconds, s=14, marker="x", color=V1, linewidths=0.9, zorder=4)
             else:
                 ax.scatter(candidates, v1_seconds, s=10, color=V1, linewidths=0, alpha=0.75, zorder=2)
@@ -119,8 +118,8 @@ def draw_scatter(fig, v2: dict, v1: dict, v1_timed_out: set, orders: list[int]) 
     entries = []
     if v1:
         entries.append((Line2D([], [], ls="", marker="o", mfc=V1, mec=V1, ms=4.5), "v1"))
-    if merged_any:
-        entries.append((Line2D([], [], ls="", marker="x", mec=V1, ms=4.5, mew=0.9), "v1 merged clusters"))
+    if differs_any:
+        entries.append((Line2D([], [], ls="", marker="x", mec=V1, ms=4.5, mew=0.9), "v1 count differs"))
     if v1_timed_out:
         entries.append((Line2D([], [], ls="", marker="^", mfc=V1, mec=V1, ms=4.5), "v1 timed out"))
     entries.append((Line2D([], [], ls="", marker="o", mfc=V2, mec=V2, ms=4.5), "v2"))
