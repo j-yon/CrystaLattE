@@ -183,14 +183,23 @@ def draw_scatter(fig, v2: dict, v1: dict, v1_timed_out: set, orders: list[int]) 
         ax.set_yticks([1, 10, 100, 1000], ["1", "10", "100", "1000"])
         ax.minorticks_off()
         ax.tick_params(
-            length=0, labelleft=i % 2 == 0, labelbottom=i >= 2, labelsize=9.5, pad=2
+            direction="in",
+            length=3,
+            width=0.6,
+            top=True,
+            right=True,
+            labelleft=i % 2 == 0,
+            labelbottom=i >= 2,
+            labelsize=9.5,
+            pad=3,
         )
         ax.axhline(TIME_LIMIT, color=INK2, lw=0.7, ls=(0, (3, 2)), zorder=1)
         ax.grid(True, color=GRID, lw=0.5, zorder=0)
         ax.set_axisbelow(True)
         for spine in ax.spines.values():
             spine.set_linewidth(0.8)
-        ax.text(0.05, 0.94, f"N={N}", transform=ax.transAxes, fontsize=11)
+        # bottom right is always empty: many candidates never finish quickly
+        ax.text(0.95, 0.05, f"$N$ = {N}", transform=ax.transAxes, ha="right", va="bottom", fontsize=11)
     facets[3].text(
         0.97,
         TIME_LIMIT * 1.72,
@@ -285,7 +294,7 @@ def draw_heatmap(
                 )
     ax.set_xticks(
         [j + 0.5 for j in range(len(HEATMAP_ORDERS))],
-        [f"N={N}" for N in HEATMAP_ORDERS],
+        [f"$N$ = {N}" for N in HEATMAP_ORDERS],
         fontsize=10.5,
         color=INK,
     )
