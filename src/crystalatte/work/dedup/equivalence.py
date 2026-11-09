@@ -1,37 +1,27 @@
 import numpy as np
+from numpy.typing import NDArray
 
-from ...core.sym_ops import SymOpList
 
+def representatives(labels: NDArray, tnorm: NDArray) -> tuple[NDArray, NDArray]:
+    """Fold every orbit label into one representative cluster
 
-def translation_norm(g_N: SymOpList) -> float:
-    """Return the summed translation norm of a cluster's operations, used to pick representatives
+    The labels are exact, so every cluster sharing one is the same multimer. Its representative is the first
+    cluster with the smallest summed translation norm, and representatives come out in the order their labels
+    first appear.
 
-    :param g_N: cluster to measure
-    :returns: sum of the members' translation norms
+    :param labels: ``(N,)`` int64 orbit labels numbered ``0..U-1``
+    :param tnorm: ``(N,)`` summed translation norm of each cluster's members
+    :returns: ``(rep, multiplicity)``, two ``(U,)`` int64 arrays: each representative's cluster index and the
+        number of clusters it stands for
     """
-    return float(np.linalg.norm(g_N.tr_cache, axis=1).sum())
-
-
-def merge(group: list[SymOpList]) -> tuple[SymOpList, list[SymOpList]]:
-    """Fold a group of equivalent clusters into one representative
-
-    :param group: clusters known to represent the same multimer
-    :returns: ``(representative, duplicates)``; the representative carries the group's total multiplicity
-    """
-    rep = min(group, key=translation_norm)
-    rep.multiplicity = sum(g.multiplicity for g in group)
-    return rep, [g for g in group if g is not rep]
-
-
-def deduplicate_bucket(
-    bucket: list[SymOpList],
-) -> tuple[list[SymOpList], list[SymOpList]]:
-    """Deduplicate one bucket of clusters sharing an :func:`~crystalatte.work.dedup.invariants.orbit_labels` label
-
-    The label is exact, so every cluster in the bucket is the same multimer.
-
-    :param bucket: clusters sharing a single orbit label
-    :returns: a tuple ``(unique, duplicate)`` of cluster lists
-    """
-    rep, duplicates = merge(bucket)
-    return [rep], duplicates
+    N = len(labels)
+    U = int(labels.max()) + 1
+    best = np.full(U, np.inf)
+    np.minimum.at(best, labels, tnorm)
+    hit = np.flatnonzero(tnorm == best[labels])
+    rep = np.full(U, N, dtype=np.int64)
+    np.minimum.at(rep, labels[hit], hit)
+    first = np.full(U, N, dtype=np.int64)
+    np.minimum.at(first, labels, np.arange(N, dtype=np.int64))
+    order = np.argsort(first)
+    return rep[order], np.bincount(labels, minlength=U)[order]

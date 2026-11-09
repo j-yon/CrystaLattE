@@ -1,5 +1,6 @@
-from collections import defaultdict
-from itertools import product
+from dataclasses import dataclass
+from itertools import islice, product
+from typing import Final
 
 import numpy as np
 from numpy.typing import NDArray
@@ -11,8 +12,8 @@ from ..core.multimer import Monomer
 from ..core.space_group import SITE_ATOL
 from ..core.sym_ops import SymOp, SymOpList
 from .dedup import context
-from .dedup.equivalence import deduplicate_bucket
-from .dedup.invariants import orbit_labels
+from .dedup.equivalence import representatives
+from .dedup.invariants import chunk_keys, labels_from_keys, pair_codes, relative_rows
 
 
 def _distance_mode(kwargs: dict) -> str:
@@ -111,17 +112,82 @@ def _cliques(adj: NDArray | None, n: int, size: int):
     yield from extend((), np.arange(n))
 
 
-# TODO: split this into two functions, one for generating candidates and one for deduplicating them
-def generate_neighbors(
+#: (cluster, anchor, dressing) key rows built per batch of clusters; bounds the keying intermediates to ~100 MB
+KEY_CHUNK_ROWS: Final[int] = 1 << 20
+
+
+@dataclass
+class Candidates:
+    """Every candidate cluster, stored as member indices into per-anchor partner tables
+
+    Table ``i`` holds reference ``i``'s anchor (row 0, the identity) and each partner within ``R`` of it, and
+    ``members[i]`` holds one row of table indices per cluster, the anchor first. Clusters are numbered across
+    the tables in order, and only the ones asked for become :class:`SymOpList` objects.
+
+    :ivar rot: per-table ``(P, 3, 3)`` int16 member rotations
+    :ivar tr: per-table ``(P, 3)`` int16 member translations, in twelfths
+    :ivar ref: per-table ``(P,)`` int64 member base references
+    :ivar members: per-table ``(C, N)`` int32 member rows
+    :ivar group: ``(M,)`` group code of each cluster (:func:`~.dedup.invariants.chunk_keys`)
+    :ivar keys: ``(M, N - 1)`` orbit key of each cluster
+    :ivar tnorm: ``(M,)`` summed translation norm of each cluster's members
+    """
+
+    rot: list[NDArray]
+    tr: list[NDArray]
+    ref: list[NDArray]
+    members: list[NDArray]
+    group: NDArray
+    keys: NDArray
+    tnorm: NDArray
+
+    def __post_init__(self):
+        self._offsets = np.cumsum([0] + [len(m) for m in self.members])
+
+    def __len__(self) -> int:
+        return len(self.group)
+
+    def cluster(self, k: int) -> SymOpList:
+        """Return cluster ``k`` as a :class:`SymOpList` of multiplicity 1
+
+        :param k: cluster index across all tables
+        :returns: the cluster's members, its anchor first
+        """
+        return self.clusters(np.array([k]), np.ones(1, dtype=np.int64))[0]
+
+    def clusters(self, ks: NDArray, multiplicities: NDArray) -> list[SymOpList]:
+        """Return clusters ``ks`` as :class:`SymOpList` objects, gathering each table's members at once
+
+        :param ks: ``(K,)`` cluster indices across all tables
+        :param multiplicities: ``(K,)`` multiplicity to give each
+        :returns: the clusters in the order of ``ks``, each with its anchor first
+        """
+        table = np.searchsorted(self._offsets, ks, side="right") - 1
+        out: list[SymOpList | None] = [None] * len(ks)
+        for i in np.unique(table).tolist():
+            at = np.flatnonzero(table == i)
+            rows = self.members[i][ks[at] - self._offsets[i]]
+            rot, tr, ref = self.rot[i][rows], self.tr[i][rows], self.ref[i][rows]
+            for n, a in enumerate(at.tolist()):
+                out[a] = SymOpList.from_components(rot[n], tr[n], int(multiplicities[a]), ref[n])
+        return out
+
+
+def enumerate_candidates(
     crystal: Crystal,
     monomers: list[Monomer],
     cutoff: NDArray,
     R: float,
     N: int,
     **kwargs,
-) -> list[SymOpList]:
-    """Generate and deduplicate all unique multimers in the supercell defined by ``cutoff``.
-    Multimers are not actually constructed, only their symmetry operations are considered
+) -> Candidates:
+    """Enumerate every candidate cluster in the supercell defined by ``cutoff`` and key it for deduplication
+
+    Each anchor's partners form a table, and every ordered pair of mutually close members gets the dressed codes
+    of its relative transform once (:func:`~.dedup.invariants.pair_codes`), over all tables together so their
+    codes compare. Clusters are then enumerated in batches and keyed by looking up their member pairs
+    (:func:`~.dedup.invariants.chunk_keys`), so per cluster only its member indices, key and translation norm
+    are kept.
 
     :param crystal: :class:`Crystal` containing the monomers
     :param monomers: Reference :class:`Monomer` instance(s) used to anchor the N-mer search
@@ -129,7 +195,7 @@ def generate_neighbors(
     :param R: Distance cutoff in Angstroms, applied to every pair of members. The distance convention is selected by ``kwargs``
     :param N: N-mer order
     :param kwargs: Additional options (``verbose``, ``site_atol``, etc.)
-    :returns: Unique clusters as a list of :class:`SymOpList` instances
+    :returns: the keyed :class:`Candidates`
     """
     verbose = kwargs.get("verbose", 1)
     mode = _distance_mode(kwargs)
@@ -150,9 +216,10 @@ def generate_neighbors(
         for op, tr in product(sym_ops, translations):
             pool.append((j, op.translate(np.array(tr, dtype=np.int16) * 12)))
 
-    # anchor each reference i
-    candidates: list[SymOpList] = []
+    # anchor each reference i: its partner table and the ordered member pairs a cluster can contain
     identity = SymOp.identity()  # parse once; SymOps are never mutated, so members can share it
+    rot, tr, ref, adjs, eids, pairs = [], [], [], [], [], []
+    n_edges = 0
     with tqdm(
         total=len(monomers) * len(pool),
         desc="Generating candidate operations",
@@ -175,61 +242,102 @@ def generate_neighbors(
             if verbose:
                 tqdm.write(f"Reference {i}: {len(near)} monomers within {R} Angstroms.")
 
+            rot.append(np.stack([identity.rot] + [op.rot for _, op in near]))
+            tr.append(np.stack([identity.tr] + [op.tr for _, op in near]))
+            ref.append(np.array([i] + [j for j, _ in near], dtype=np.int64))
+            P = len(near) + 1
+
             # every pair of members must lie within R, so partners must also be within R of each other
             adj = None
-            if N > 2:
+            close = np.zeros((P, P), dtype=bool)
+            close[0, 1:] = close[1:, 0] = True
+            if N > 2 and near:
                 adj = _partner_adjacency(
                     carts, [context.mass_by_ref[j] for j, _ in near], R, mode
                 )
+                close[1:, 1:] = adj
+            p, q = np.nonzero(close)
+            eid = np.full((P, P), -1, dtype=np.int32)
+            eid[p, q] = n_edges + np.arange(len(p))
+            n_edges += len(p)
+            adjs.append(adj)
+            eids.append(eid)
+            pairs.append((relative_rows(rot[i], tr[i], p, q), ref[i][p], ref[i][q]))
 
-            cliques = tqdm(
-                _cliques(adj, len(near), N - 1),
-                desc=f"Enumerating clusters for reference {i}",
-                unit=" clusters",
-                position=1,
-                leave=False,
-                disable=not verbose,
-            )
-            idx = np.array(list(cliques), dtype=np.int64)
-            if len(idx) == 0:
-                continue
+    codes = pair_codes(
+        np.concatenate([r for r, _, _ in pairs]),
+        np.concatenate([a for _, a, _ in pairs]),
+        np.concatenate([b for _, _, b in pairs]),
+    )
 
-            # gather every clique's members at once, the anchor's identity first; each candidate is a view
-            C = len(idx)
-            rot = np.concatenate(
-                (np.broadcast_to(identity.rot, (C, 1, 3, 3)), np.stack([op.rot for _, op in near])[idx]),
-                axis=1,
-            )
-            tr = np.concatenate(
-                (np.broadcast_to(identity.tr, (C, 1, 3)), np.stack([op.tr for _, op in near])[idx]),
-                axis=1,
-            )
-            refs = np.concatenate(
-                (np.full((C, 1), i, dtype=np.int64), np.array([j for j, _ in near], dtype=np.int64)[idx]),
-                axis=1,
-            )
-            candidates.extend(SymOpList.from_components(rot[c], tr[c], 1, refs[c]) for c in range(C))
+    # enumerate and key the clusters of each anchor in batches
+    S_max = codes.shape[1]
+    batch = max(1, KEY_CHUNK_ROWS // (N * S_max))
+    members, groups, keys, tnorms = [], [], [], []
+    for i in range(len(monomers)):
+        tnorm = np.linalg.norm(tr[i], axis=1)
+        cliques = _cliques(adjs[i], len(ref[i]) - 1, N - 1)
+        rows = []
+        with tqdm(
+            desc=f"Enumerating clusters for reference {i}",
+            unit=" clusters",
+            position=1,
+            leave=False,
+            disable=not verbose,
+        ) as bar:
+            while chunk := list(islice(cliques, batch)):
+                mem = np.empty((len(chunk), N), dtype=np.int32)
+                mem[:, 0] = 0
+                mem[:, 1:] = np.array(chunk, dtype=np.int32) + 1
+                g, k = chunk_keys(codes, eids[i][mem[:, :, None], mem[:, None, :]], ref[i][mem])
+                rows.append(mem)
+                groups.append(g)
+                keys.append(k)
+                tnorms.append(tnorm[mem].sum(axis=1))
+                bar.update(len(chunk))
+        members.append(np.concatenate(rows) if rows else np.empty((0, N), dtype=np.int32))
 
-    # exact pass: clusters sharing an orbit key are the same multimer
-    buckets: dict[int, list[SymOpList]] = defaultdict(list)
-    for label, g_t in zip(orbit_labels(candidates).tolist(), candidates):
-        buckets[label].append(g_t)
+    return Candidates(
+        rot,
+        tr,
+        ref,
+        members,
+        np.concatenate(groups) if groups else np.empty(0, dtype=np.int64),
+        np.concatenate(keys) if keys else np.empty((0, N - 1), dtype=np.int32),
+        np.concatenate(tnorms) if tnorms else np.empty(0),
+    )
 
-    unique: list[SymOpList] = []
-    duplicate: list[SymOpList] = []
-    for bucket in tqdm(
-        buckets.values(), 
-        desc="Deduplicating candidates with exact integer checks", 
-        leave=False,
-        disable=not verbose
-    ):
-        local_unique, local_dup = deduplicate_bucket(bucket)
-        unique.extend(local_unique)
-        duplicate.extend(local_dup)
 
-    if verbose:
+def generate_neighbors(
+    crystal: Crystal,
+    monomers: list[Monomer],
+    cutoff: NDArray,
+    R: float,
+    N: int,
+    **kwargs,
+) -> list[SymOpList]:
+    """Generate and deduplicate all unique multimers in the supercell defined by ``cutoff``.
+    Multimers are not actually constructed, only their symmetry operations are considered
+
+    :param crystal: :class:`Crystal` containing the monomers
+    :param monomers: Reference :class:`Monomer` instance(s) used to anchor the N-mer search
+    :param cutoff: Per-axis ``(low, high)`` integer lattice translation bounds
+    :param R: Distance cutoff in Angstroms, applied to every pair of members. The distance convention is selected by ``kwargs``
+    :param N: N-mer order
+    :param kwargs: Additional options (``verbose``, ``site_atol``, etc.)
+    :returns: Unique clusters as a list of :class:`SymOpList` instances
+    """
+    candidates = enumerate_candidates(crystal, monomers, cutoff, R, N, **kwargs)
+    if not len(candidates):
+        return []
+
+    # exact pass: clusters sharing an orbit label are the same multimer
+    labels = labels_from_keys(candidates.group, candidates.keys, candidates.cluster)
+    rep, multiplicity = representatives(labels, candidates.tnorm)
+
+    if kwargs.get("verbose", 1):
         print(
-            f"Found {len(duplicate)} equivalent multimers from neighboring unit cell search."
+            f"Found {len(candidates) - len(rep)} equivalent multimers from neighboring unit cell search."
         )
 
-    return unique
+    return candidates.clusters(rep, multiplicity)
