@@ -19,13 +19,13 @@ class SymOp:
     :param _op: Symmetry operation string like ``'x,y,z'`` or ``'-x+1/2,y,-z+1/2'``
     :ivar _rot: 3x3 matrix corresponding to the rotational component of the operation in fractional coordinates
     :ivar _tr: 3D vector corresponding to the translational component of the operation in fractional coordinates
-    :ivar _augment: 4x4 matrix representing the symmetry operation in augmented matrix form
+    :ivar _augment: 4x4 matrix representing the symmetry operation in augmented matrix form, built on first use
     """
 
     _op: str | None
     _rot: NDArray[np.int16] = field(init=False)
     _tr: NDArray[np.int16] = field(init=False)
-    _augment: NDArray[np.int16] = field(init=False)
+    _augment: NDArray[np.int16] | None = field(init=False)
 
     def __post_init__(self):
         if self._op is None:
@@ -105,17 +105,17 @@ class SymOp:
     def __eq__(self, value: object, /) -> bool:
         if not isinstance(value, SymOp):
             return NotImplemented
-        return np.array_equal(self._augment, value._augment)
+        return np.array_equal(self.augment, value.augment)
 
     def __hash__(self) -> int:
-        return hash(self._augment.tobytes())
+        return hash(self.augment.tobytes())
 
     def __iter__(self):
         yield self._rot
         yield self._tr
 
     def __repr__(self) -> str:
-        return f"SymOp(op='{self._op}', rot='{self._rot}', tr='{self._tr}', augment=\n{self._augment})"
+        return f"SymOp(op='{self._op}', rot='{self._rot}', tr='{self._tr}', augment=\n{self.augment})"
 
     @property
     def op(self) -> str:
@@ -133,6 +133,12 @@ class SymOp:
 
     @property
     def augment(self) -> NDArray[np.int16]:
+        # built on first use: most ops made by from_components are only ever applied
+        if self._augment is None:
+            augment = np.eye(4, dtype=np.int16)
+            augment[:3, :3] = self._rot
+            augment[:3, 3] = self._tr
+            self._augment = augment
         return self._augment
 
     @classmethod
@@ -154,11 +160,7 @@ class SymOp:
         symop = cls.__new__(cls)
         symop._rot = rot
         symop._tr = tr
-
-        augment = np.eye(4, dtype=np.int16)
-        augment[:3, :3] = rot
-        augment[:3, 3] = tr
-        symop._augment = augment
+        symop._augment = None
         symop._op = op
 
         return symop
