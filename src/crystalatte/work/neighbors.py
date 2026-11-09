@@ -147,6 +147,11 @@ class Candidates:
     def __len__(self) -> int:
         return len(self.group)
 
+    @property
+    def anchor(self) -> NDArray:
+        """``(M,)`` base reference each cluster was anchored on: table ``i`` anchors reference ``i``"""
+        return np.repeat(np.arange(len(self.members), dtype=np.int64), [len(m) for m in self.members])
+
     def cluster(self, k: int) -> SymOpList:
         """Return cluster ``k`` as a :class:`SymOpList` of multiplicity 1
 
@@ -347,11 +352,15 @@ def generate_neighbors(
 
     # exact pass: clusters sharing an orbit label are the same multimer
     labels = labels_from_keys(candidates.group, candidates.keys, candidates.arrays)
-    rep, multiplicity = representatives(labels, candidates.tnorm)
+    rep, multiplicity, anchor_counts = representatives(labels, candidates.tnorm, candidates.anchor)
 
     if kwargs.get("verbose", 1):
         print(
             f"Found {len(candidates) - len(rep)} equivalent multimers from neighboring unit cell search."
         )
 
-    return candidates.clusters(rep, multiplicity)
+    # per-anchor counts feed Multimer.weight; candidates anchored on reference r are the clusters containing r
+    unique = candidates.clusters(rep, multiplicity)
+    for g_N, counts in zip(unique, anchor_counts.tolist()):
+        g_N.anchor_counts = {r: c for r, c in enumerate(counts) if c}
+    return unique

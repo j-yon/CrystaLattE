@@ -201,6 +201,7 @@ class SymOpList:
     :param _sym_ops: List of :class:`SymOp` objects representing the symmetry operations
     :param _multiplicity: Number of equivalent multimers that correspond to these symmetry operations
     :param _ref_indices: Per-member base-reference index, defaults to all-zeros for single-reference clusters
+    :param _anchor_counts: How many of the merged candidates were anchored on each reference index, defaults to all of the multiplicity on the first member's reference
     :ivar _rot_cache: Cached array of the rotational components of the symmetry operations
     :ivar _tr_cache: Cached array of the translational components of the symmetry operations
     """
@@ -208,6 +209,7 @@ class SymOpList:
     _sym_ops: list[SymOp] | None
     _multiplicity: int
     _ref_indices: NDArray | None = field(default=None, repr=False)
+    _anchor_counts: dict[int, int] | None = field(default=None, repr=False, compare=False)
     _rot_cache: NDArray = field(init=False, repr=False)
     _tr_cache: NDArray = field(init=False, repr=False)
 
@@ -269,6 +271,17 @@ class SymOpList:
         self._multiplicity = value
 
     @property
+    def anchor_counts(self) -> dict[int, int]:
+        """Reference index to number of merged candidates anchored on it; sums to :attr:`multiplicity`"""
+        if self._anchor_counts is None:
+            return {int(self._ref_indices[0]): self._multiplicity}
+        return self._anchor_counts
+
+    @anchor_counts.setter
+    def anchor_counts(self, value: dict[int, int]):
+        self._anchor_counts = dict(value)
+
+    @property
     def translations(self) -> list[NDArray]:
         return [sym_op.tr for sym_op in self.sym_ops]
 
@@ -312,6 +325,8 @@ class SymOpList:
             if ref_indices is None
             else np.asarray(ref_indices, dtype=np.int64)
         )
+
+        instance._anchor_counts = None
 
         # set caches
         instance._rot_cache = rot

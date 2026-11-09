@@ -156,6 +156,52 @@ Finally, to execute the code:
 
 Precision issues may arise when computing a large number of structures at default energy and density convergence criteria if using Psi4 1.3.2 and newer versions. Although the default energy and density convergence criteria for Psi4 calculations has been increased in CrystaLattE, the user should be careful.
 
+#### Computing lattice energies
+
+The `crystalatte` package generates the unique multimers of a crystal and assembles a lattice energy from their many-body energies. Three backends run the calculations; install the extra each one needs:
+
+| Backend | Purpose | Extra |
+|---------|---------|-------|
+| `LocalBackend` | run every calculation on this machine through QCEngine and QCManyBody | `pip install "crystalatte[local]"` (`qcengine`, `qcmanybody`) |
+| `FractalBackend` | submit to a QCFractal server and collect from it | `pip install "crystalatte[fractal]"` (`qcportal`) |
+| `InputFileBackend` | only write input files (plus `manifest.json`) to run yourself; no results | none for Psi4; `crystalatte[local]` for other programs |
+
+QC programs such as Psi4 are not installed by these extras; installing them is up to you.
+
+```python
+import crystalatte as cle
+
+crystal = next(cle.from_cif("benzene.cif"))
+multimers = cle.generate(crystal, 2, 10.0) + cle.generate(crystal, 3, 8.0)
+
+spec = cle.ComputeSpec(
+    program="psi4", method="mp2", basis="aug-cc-pvdz", bsse="cp",
+    keywords={"scf_type": "df"},
+)
+
+backend = cle.LocalBackend("bz_run/", ncores=8)  # workdir: manifest + per-task results
+# backend = cle.FractalBackend(client, "benzene", tag="bigmem", priority="high")
+# backend = cle.InputFileBackend("inputs/")
+
+backend.submit(multimers, spec)
+print(backend.status())
+results = backend.collect()    # raises IncompleteResultsError if anything is missing
+
+print(results.lattice_energy)  # kJ/mol per formula unit
+print(results.by_order)        # {2: ..., 3: ...}
+results.table                  # per-multimer rows
+```
+
+A complete command-line version is in `scripts/run_lattice_energy.py`.
+
+- **Definition.** The lattice energy is per formula unit, in kJ/mol: `E_latt = (1/Z_fu) Σ_N Σ_orbits (copies per cell) ΔE^(N-body)`. It is comparable to a periodic-DFT `E(bulk)/Z − E(A) − E(B)`. The energy of deforming or relaxing the monomers from their gas-phase geometries is not included.
+- **Incomplete data.** `collect()` refuses to assemble a lattice energy from missing or failed calculations. `collect(partial=True)` returns the rows that exist, so you can inspect per-multimer status and energies.
+- **Defaults.** `ComputeSpec` applies tight, v1-style Psi4 keywords (convergence thresholds, density fitting, frozen core) under your `keywords`; yours win. Pass `use_defaults=False` to turn this off.
+- **Known gap.** Charge and spin cannot be set yet; every monomer is treated as neutral. `InputFileBackend` writes each monomer with charge 0 and multiplicity 1. `LocalBackend` and `FractalBackend` build their molecules through QCElemental, which gives each fragment charge 0 and the lowest multiplicity its electron count allows (1 for an even count, 2 for an odd one).
+- **Input files.** `InputFileBackend` writes files and a `manifest.json`, then stops; to keep calculations inside CrystaLattE use `LocalBackend` or `FractalBackend`. Psi4 gets one file per multimer (`dimers/<id>.in`), since Psi4's own many-body driver does the counterpoise splitting. Every other program uses QCEngine's input builder, which writes single-point inputs only, so each multimer becomes one input per QCManyBody sub-calculation (`dimers/<id>/real-2_basis-1-2/…`). The manifest records the spec, generation settings and crystalatte version, and per multimer its order, multiplicity, lattice weight and files; for sub-calculations also the QCManyBody label, the real and ghost (basis-only) fragments, and the command QCEngine would run. To assemble a multimer, feed your energies to `qcmanybody.ManyBodyCore(...).analyze({label: {"energy": e}})` and take `<bsse>_corrected_<N>_body_contribution_to_energy`; multiply by the weight and sum for the lattice energy (×2625.4996 for kJ/mol). Counterpoise sub-calculations need ghost atoms, which QCEngine's builders are only verified to write for NWChem and Molpro (Q-Chem's drops them; GAMESS's refuses them); for other programs use `bsse="nocp"`. Programs QCEngine cannot write inputs for (e.g. RDKit, ML potentials) raise an error pointing to `LocalBackend`, and some builders (CFOUR, MRChem, Turbomole) need the program installed where the files are generated. `memory` takes GiB or a string like `"8 GB"`; if unset for QCEngine-built inputs, the memory detected on the machine writing the files is used.
+- **Workdir vs QC scratch.** `LocalBackend`'s first argument, `workdir`, holds CrystaLattE's job state (a manifest and small per-task JSON results) and is what makes reruns resume. The QC program's own scratch files are separate: pass `qc_scratch="/fast/disk"` to choose them explicitly, or leave it unset and QCEngine decides — `$QCENGINE_SCRATCH_DIRECTORY`, a `qcengine.yaml` `scratch_directory`, the program's own variable (e.g. `$PSI_SCRATCH` for Psi4), then the system temp directory. For `FractalBackend`, scratch is set in your compute manager's configuration on the workers.
+- **Scripts and parallelism.** `LocalBackend` runs calculations in worker processes. On macOS and Windows put the code that calls it under `if __name__ == "__main__":`, as `scripts/run_lattice_energy.py` does.
+
 #### Copyright
 
 Copyright (c) 2020, Carlos H. Borca

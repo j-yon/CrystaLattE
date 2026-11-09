@@ -6,6 +6,11 @@ _REGISTRY: dict[str, type[QCWriter]] = {
 }
 
 
+def has_writer(name: str) -> bool:
+    """Whether ``name`` has a dedicated whole-multimer writer (others go through QCEngine)"""
+    return name.lower() in _REGISTRY
+
+
 def get_writer(name: str) -> QCWriter:
     try:
         return _REGISTRY[name.lower()]()

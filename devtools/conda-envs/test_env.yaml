@@ -7,6 +7,8 @@ dependencies:
   - pip
   - psi4 >= 1.9.1
   - pycifrw
+  - pydantic >=2
+  - qcelemental >=0.50,<0.70
 
     # Testing
   - pytest

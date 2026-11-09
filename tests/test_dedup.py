@@ -517,9 +517,9 @@ def _observe_dedup(monkeypatch) -> dict:
         seen["candidates"] = real_enumerate(*args, **kwargs)
         return seen["candidates"]
 
-    def _representatives(labels, tnorm):
-        seen["rep"], multiplicity = real_representatives(labels, tnorm)
-        return seen["rep"], multiplicity
+    def _representatives(labels, tnorm, anchor):
+        seen["rep"], *rest = real_representatives(labels, tnorm, anchor)
+        return (seen["rep"], *rest)
 
     monkeypatch.setattr(neighbors, "enumerate_candidates", _enumerate)
     monkeypatch.setattr(neighbors, "representatives", _representatives)
@@ -698,3 +698,36 @@ def test_bound_dressing_groups_satisfy_the_containment_theorem(name):
                 f"{name}: reference {i} has a site operation absent from D. "
                 "Any merge that needs it as a dressing is lost."
             )
+
+
+def test_anchor_counts_default_is_own_anchor():
+    g = SymOpList.from_components(
+        np.stack([np.eye(3, dtype=np.int16)] * 2),
+        np.zeros((2, 3), dtype=np.int16),
+        3,
+        np.array([1, 0]),
+    )
+    assert g.anchor_counts == {1: 3}
+
+
+def test_representatives_count_anchors():
+    from crystalatte.work.dedup.equivalence import representatives
+
+    # label 0: one cluster anchored on reference 0 and two on reference 1; label 1: one on reference 0
+    rep, multiplicity, anchor_counts = representatives(
+        np.array([0, 1, 0, 0]), np.zeros(4), np.array([0, 0, 1, 1])
+    )
+    assert rep.tolist() == [0, 1]
+    assert multiplicity.tolist() == [3, 1]
+    assert anchor_counts.tolist() == [[1, 2], [1, 0]]
+    assert (anchor_counts.sum(axis=1) == multiplicity).all()
+
+
+@pytest.mark.parametrize(
+    "name", ["pyrazole", "salicylic_hydroxybenzamide", "benzene"]
+)
+def test_generate_anchor_counts_sum_to_multiplicity(name):
+    mers = generate.generate(load(name), 2, 6.0, **GENERATE_KW)
+    assert mers
+    for m in mers:
+        assert sum(m.sym_ops.anchor_counts.values()) == m.multiplicity
