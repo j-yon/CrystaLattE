@@ -31,14 +31,16 @@ V1, V2 = "#eb6834", "#2a78d6"
 DIVERGING = LinearSegmentedColormap.from_list(
     "v",
     [
-        (0, "#e34948"),
-        (0.25, "#f0efec"),
-        (0.55, "#86b6ef"),
-        (0.8, "#2a78d6"),
-        (1, "#0d366b"),
+        (0, "#e34948"),  # 0.1x
+        (0.2, "#f0efec"),  # 1x
+        (0.44, "#86b6ef"),
+        (0.64, "#2a78d6"),
+        (0.8, "#0d366b"),  # 1000x
+        (1, "#071d3a"),  # 10000x
     ],
 )
-SPEEDUP_NORM = Normalize(vmin=-1, vmax=3)
+SPEEDUP_NORM = Normalize(vmin=-1, vmax=4)
+WHITE_TEXT_ABOVE = SPEEDUP_NORM(1.72)  # about 50x, where cells turn dark
 
 # name, results-file key, atoms per molecule (row order), space group as written in the CIF used
 HEATMAP_CRYSTALS = [
@@ -199,7 +201,15 @@ def draw_scatter(fig, v2: dict, v1: dict, v1_timed_out: set, orders: list[int]) 
         for spine in ax.spines.values():
             spine.set_linewidth(0.8)
         # bottom right is always empty: many candidates never finish quickly
-        ax.text(0.95, 0.05, f"$N$ = {N}", transform=ax.transAxes, ha="right", va="bottom", fontsize=11)
+        ax.text(
+            0.98,
+            0.04,
+            f"$N$ = {N}",
+            transform=ax.transAxes,
+            ha="right",
+            va="bottom",
+            fontsize=11,
+        )
     facets[3].text(
         0.97,
         TIME_LIMIT * 1.72,
@@ -212,7 +222,12 @@ def draw_scatter(fig, v2: dict, v1: dict, v1_timed_out: set, orders: list[int]) 
     )
     facets[2].set_ylabel("Wall time (s)", fontsize=10, y=0, labelpad=2)
     fig.text(
-        (left + right) / 2, 0.068, "Total $N$-mer candidates", fontsize=10, color=INK2, ha="center"
+        (left + right) / 2,
+        0.068,
+        "Total $N$-mer candidates",
+        fontsize=10,
+        color=INK2,
+        ha="center",
     )
 
     entries = []
@@ -220,13 +235,13 @@ def draw_scatter(fig, v2: dict, v1: dict, v1_timed_out: set, orders: list[int]) 
         entries.append(
             (Line2D([], [], ls="", marker="o", mfc=V1, mec=V1, ms=4.5), "v1")
         )
-    # if differs_any:
-    #     entries.append(
-    #         (
-    #             Line2D([], [], ls="", marker="x", mec=V1, ms=4.5, mew=0.9),
-    #             "v1 count differs",
-    #         )
-    #     )
+    if differs_any:
+        entries.append(
+            (
+                Line2D([], [], ls="", marker="x", mec=V1, ms=4.5, mew=0.9),
+                "v1 (mismatch)",
+            )
+        )
     if v1_timed_out:
         entries.append(
             (Line2D([], [], ls="", marker="^", mfc=V1, mec=V1, ms=4.5), "v1 (timeout)")
@@ -240,11 +255,12 @@ def draw_scatter(fig, v2: dict, v1: dict, v1_timed_out: set, orders: list[int]) 
     )
     fig.legend(
         *zip(*entries),
-        ncol=2,
+        ncol=len(entries),
         frameon=False,
         fontsize=9.5,
-        loc="upper right",
-        bbox_to_anchor=((left + right) / 2 - 0.006, 0.91),
+        loc="upper center",
+        # bbox_to_anchor=((left + right) / 2 - 0.006, 0.91),
+        bbox_to_anchor=(0.28, 0.99),
         handletextpad=0.05,
         columnspacing=0.6,
         labelcolor=INK2,
@@ -270,7 +286,7 @@ def draw_heatmap(
                 shade = SPEEDUP_NORM(math.log10(value))
                 color = DIVERGING(shade)
                 text = (
-                    f"{value / 1000:.0f}k"
+                    f"{value / 1000:.1f}k"
                     if value >= 1000
                     else f"{value:.0f}"
                     if value >= 10
@@ -290,7 +306,7 @@ def draw_heatmap(
                     ha="center",
                     va="center",
                     fontsize=9.3,
-                    color=SURFACE if shade > 0.68 else INK,
+                    color=SURFACE if shade > WHITE_TEXT_ABOVE else INK,
                 )
     ax.set_xticks(
         [j + 0.5 for j in range(len(HEATMAP_ORDERS))],
@@ -309,15 +325,15 @@ def draw_heatmap(
     for spine in ax.spines.values():
         spine.set_visible(False)
 
-    cax = fig.add_axes([0.716, 0.082, 0.274, 0.016])
+    cax = fig.add_axes([0.716, 0.112, 0.274, 0.016])
     bar = fig.colorbar(
         plt.cm.ScalarMappable(norm=SPEEDUP_NORM, cmap=DIVERGING),
         cax=cax,
         orientation="horizontal",
-        ticks=[-1, 0, 1, 2, 3],
+        ticks=[-1, 0, 1, 2, 3, 4],
     )
     bar.ax.set_xticklabels(
-        ["0.1×", "1×", "10×", "100×", "1k×"], fontsize=9.5, color=INK2
+        ["0.1×", "1×", "10×", "100×", "1k×", "10k×"], fontsize=9.5, color=INK2
     )
     bar.outline.set_visible(False)
     bar.ax.tick_params(length=0, pad=1.5)
@@ -366,8 +382,8 @@ def main() -> None:
         }
     )
     fig = plt.figure(figsize=(9.0, 5.0))
-    fig.text(0.008, 0.968, "a", fontsize=12, weight="bold")
-    fig.text(0.525, 0.968, "b", fontsize=12, weight="bold")
+    fig.text(0.018, 0.958, "a", fontsize=14, weight="bold")
+    fig.text(0.535, 0.958, "b", fontsize=14, weight="bold")
 
     v2, _ = load_runs(args.timings, args.exclude)
     v1, v1_timed_out = load_runs(args.v1, args.exclude) if args.v1 else ({}, set())
