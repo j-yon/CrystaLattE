@@ -1,0 +1,18 @@
+# One environment for both codes. Versions match the macOS `cle` env the M1 Max runs used
+# (psi4 there was 1.10; linux-64 conda-forge has 1.10.2 for py313). v1 only imports psi4, it never calls it here.
+# Do NOT install crystalatte into this env: each code is selected with PYTHONPATH.
+name: cle-bench
+channels:
+  - conda-forge
+dependencies:
+  - python=3.13.12
+  - numpy=2.4.3
+  - scipy=1.17.1
+  - spglib=2.7.0
+  - psi4=1.10
+  - pycifrw=5.0.1
+  - pydantic=2.13.4
+  - tqdm=4.67.3
+  - pip
+  - pip:
+      - qcelemental==0.51.4
