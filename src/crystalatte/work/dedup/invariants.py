@@ -185,11 +185,27 @@ def chunk_keys(codes: NDArray, edges: NDArray, refs: NDArray) -> tuple[NDArray, 
             cols = [j for j, r in enumerate(partner_refs) if r == ref_b]
             K[..., cols[0] : cols[-1] + 1].sort(axis=3)
 
-        # lexicographic minimum over (anchor, anchor dressing) for each cluster
-        flat = K.reshape(-1, n - 1)
-        pick = np.lexsort((*flat.T[::-1], np.repeat(np.arange(len(rows)), c * S)))
-        keys[rows] = flat[pick[:: c * S]]
+        # lexicographic minimum over (anchor, anchor dressing) for each cluster, one slot at a time: a row
+        # stays in the running while it ties the minimum of every slot so far
+        keys[rows] = _segmented_lexmin(K.reshape(len(rows), c * S, n - 1))
     return group, keys
+
+
+def _segmented_lexmin(rows: NDArray) -> NDArray:
+    """Return the lexicographically smallest row of each segment, without sorting
+
+    :param rows: ``(C, m, k)`` int32 array, ``m`` rows of ``k`` codes per segment, all below ``2**31 - 1``
+    :returns: ``(C, k)`` int32 minima
+    """
+    C, _, k = rows.shape
+    out = np.empty((C, k), dtype=np.int32)
+    alive = None
+    for j in range(k):
+        col = rows[:, :, j] if alive is None else np.where(alive, rows[:, :, j], np.iinfo(np.int32).max)
+        out[:, j] = col.min(axis=1)
+        tied = col == out[:, j, None]
+        alive = tied if alive is None else alive & tied
+    return out
 
 
 def _list_keys(cands: list[SymOpList]) -> tuple[NDArray, NDArray]:
