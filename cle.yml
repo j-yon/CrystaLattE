@@ -1,172 +1,28 @@
 name: cle
 channels:
   - conda-forge
-  - defaults
 dependencies:
-  - _openmp_mutex
-  - annotated-types
-  - armadillo
-  - arpack
-  - backports.zstd
-  - bibtexparser
-  - brotli
-  - brotli-bin
-  - brotli-python
-  - bzip2
-  - c-ares
-  - ca-certificates
-  - certifi
-  - charset-normalizer
-  - colorama
-  - contourpy
-  - cpp-argparse
-  - cpptrace
-  - cpython
-  - cycler
-  - dkh
-  - einsums
-  - exceptiongroup
-  - fftw
-  - flexcache
-  - flexparser
-  - fmt
-  - fonttools
-  - freetype
-  - future
-  - gau2grid
-  - gmp
-  - gmpy2
-  - h2
-  - hdf5
-  - hpack
-  - hyperframe
-  - icu
-  - idna
-  - importlib-metadata
-  - importlib-resources
-  - importlib_resources
-  - iniconfig
-  - joblib
-  - jpype1
-  - kiwisolver
-  - krb5
-  - latexcodec
-  - lcms2
-  - ld_impl_linux-64
-  - lerc
-  - libaec
-  - libblas
-  - libbrotlicommon
-  - libbrotlidec
-  - libbrotlienc
-  - libcblas
-  - libcurl
-  - libdeflate
-  - libdwarf
-  - libecpint
-  - libedit
-  - libev
-  - libexpat
-  - libffi
-  - libfreetype
-  - libfreetype6
-  - libhwloc
-  - libiconv
-  - libint
-  - libjpeg-turbo
-  - liblapack
-  - liblzma
-  - libmpdec
-  - libnghttp2
-  - libpcm
-  - libpng
-  - libsqlite
-  - libssh2
-  - libtiff
-  - libuuid
-  - libwebp-base
-  - libxc-c
-  - libxcb
-  - libxml2
-  - libxml2-16
-  - libxslt
-  - libzlib
-  - llvm-openmp
-  - lxml
-  - matplotlib-base
-  - monty
-  - mpc
-  - mpfr
-  - mpmath
-  - msgpack-python
-  - munkres
-  - narwhals
-  - ncurses
-  - networkx
-  - numpy
-  - openjpeg
-  - openorbitaloptimizer
-  - openssl
-  - optking
-  - orjson
-  - packaging
-  - palettable
-  - pandas
-  - pcmsolver
-  - pillow
-  - pint
+  - python >=3.13
   - pip
-  - platformdirs
-  - plotly
-  - pluggy
-  - ply
-  - psi4
-  - psutil
-  - pthread-stubs
-  - pugixml
-  - py-cpuinfo
-  - pybind11-abi
-  - pybtex
-  - pycifrw
-  - pydantic
-  - pydantic-core
-  - pygments
-  - pyparsing
-  - pysocks
-  - pytest
-  - python
-  - python-dateutil
-  - python_abi
-  - pyyaml
-  - qcelemental
-  - qcengine
-  - qcmanybody
-  - qhull
-  - readline
-  - requests
-  - ruamel.yaml
-  - ruamel.yaml.clib
+
+  # required
+  - numpy
   - scipy
-  - setuptools
-  - six
-  - spdlog
   - spglib
-  - superlu
-  - sympy
-  - tabulate
-  - tbb
-  - tk
-  - tomli
+  - pycifrw
+  - pydantic >=2
+  - qcelemental >=0.50
   - tqdm
-  - typing-extensions
-  - typing-inspection
-  - typing_extensions
-  - tzdata
-  - uncertainties
-  - urllib3
-  - xorg-libxau
-  - xorg-libxdmcp
-  - yaml
-  - zipp
-  - zlib-ng
-  - zstd
+
+  # tests
+  - pytest
+
+  # optional: LocalBackend, and InputFileBackend for programs other than Psi4
+  - qcengine >=0.52
+  - qcmanybody >=0.8
+
+  # optional: FractalBackend
+  - qcportal >=0.71
+
+  # optional: a QC program, e.g. Psi4
+  # - psi4

@@ -4,169 +4,111 @@ Automated calculation of crystal lattice energies with the many-body expansion.
 
 | Category | Badges |
 |-------------|-------------|
-| **Status** | [![GitHub Actitus](https://img.shields.io/github/actions/workflow/status/j-yon/CrystaLattE/CI.yaml?logo=github)](https://github.com/j-yon/CrystaLattE/actions?query=workflow%3ACI) [![codecov](https://codecov.io/gh/j-yon/CrystaLattE/branch/master/graph/badge.svg)](https://codecov.io/gh/j-yon/CrystaLattE/branch/master) ![python](https://img.shields.io/badge/python-3.8+-blue.svg) |
+| **Status** | [![GitHub Actions](https://img.shields.io/github/actions/workflow/status/j-yon/CrystaLattE/CI.yaml?logo=github)](https://github.com/j-yon/CrystaLattE/actions?query=workflow%3ACI) [![codecov](https://codecov.io/gh/j-yon/CrystaLattE/graph/badge.svg)](https://codecov.io/gh/j-yon/CrystaLattE) ![python](https://img.shields.io/badge/python-3.13+-blue.svg) |
 | **Foundation** | [![License](https://img.shields.io/github/license/j-yon/CrystaLattE.svg)](https://opensource.org/licenses/LGPL-3.0) [![GitHub Top Languages](https://img.shields.io/github/languages/top/j-yon/CrystaLattE)](https://github.com/j-yon/CrystaLattE/) |
 | **GitHub Info** | [![GitHub Code Size](https://img.shields.io/github/languages/code-size/j-yon/CrystaLattE)](https://github.com/j-yon/CrystaLattE/) [![GitHub Commits per Month](https://img.shields.io/github/commit-activity/m/j-yon/CrystaLattE)](https://github.com/j-yon/CrystaLattE/) [![GitHub Last Commit](https://img.shields.io/github/last-commit/j-yon/CrystaLattE)](https://github.com/j-yon/CrystaLattE/) |
 | **Citation** | [![doi](https://img.shields.io/badge/DOI-10.1063%2F1.5120520-blue)](http://dx.doi.org/10.1063/1.5120520) |
 
 ## Overview
 
-CrystaLattE is a software that automates the computation of crystal lattice energies using the many-body cluster expansion. The required computations on dimers, trimers, etc., within the crystal are independent of each other, leading to a naturally parallel approach. The algorithm exploits the long-range three-dimensional periodic order of crystals to automatically detect and avoid redundant or unnecessary computations.
+CrystaLattE automates the computation of crystal lattice energies with the many-body expansion (MBE). From a CIF file it finds the molecules in the crystal, enumerates every dimer, trimer, … within a cutoff, keeps one representative of each symmetry-equivalent set, and assembles the lattice energy from the many-body energies of those representatives. The calculations are independent of each other, so they run in parallel, locally or on a [QCFractal](https://github.com/MolSSI/QCFractal) server.
 
-## General Information
+Version 2 is a rewrite as a Python library. Compared with v1:
 
-CrystaLattE has an interface with the quantum chemistry package Psi4. To run, the code requires a crystallographic information file containing structural information of the crystal and an input file specifying execution details. Work continues in the creation of a CrystaLattE `pip` package. So, for the moment, the instructions to download and install CrystaLattE and to create a _conda environment_ that includes Psi4 are presented below. 
+- **Exact symmetry deduplication.** Multimers are compared by their crystallographic symmetry operations instead of by numerical fingerprints (nuclear repulsion energy and Coulomb-matrix eigenvalues). Multimers are not built for comparison, and the result does not depend on floating-point tolerances.
+- **Any multimer order.** `N` is not limited to 5.
+- **Symmetry detection.** spglib finds the full space group, so symmetry missing from the declared one is still used.
+- **Z' > 1 and cocrystals.** Crystals with several independent molecules in the asymmetric unit, including different chemical species, are supported. Lattice energies are reported per formula unit.
+- **Disorder.** Partially occupied CIF sites can be enumerated into ordered states, or ignored or dropped.
+- **Pluggable compute.** Calculations run through QCEngine/QCManyBody, QCFractal, or as input files you run yourself, and work with any program those support, not only Psi4.
 
-### Installation
+## Installation
 
-Minimal set of commands to install CrystaLattE on Linux, MacOS, or Windows (with the Windows Subsystem for Linux). Last tested on 4 October 2019:
+CrystaLattE requires Python 3.13 or newer. It is not on PyPI yet; install from source:
 
-#### 1. Install Miniconda:
-
-If you have an installation of _Conda_ in your system, please skip to step 2. Otherwise, _Miniconda_ is required and the installer is available from the the Anaconda website. To download the installer from the terminal (in Linux or the Windows Subsystem for Linux): 
-
-```
-wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-```
-
-(_Note_) If you use MacOS, replace `Linux` by `MacOSX` on the previous command.
-
-Run the installer following the on-screen instructions:
-
-```
-bash Miniconda3-latest-Linux-x86_64.sh
+```bash
+git clone https://github.com/j-yon/CrystaLattE.git
+cd CrystaLattE
+pip install -e .
 ```
 
-After the installation is complete, close the terminal and start a new shell.
+Optional extras add the compute backends:
 
-(_Optional_) Disable automatic activation of the _base_ conda environment:
+| Extra | Installs | Needed for |
+|-------|----------|------------|
+| `local` | `qcengine`, `qcmanybody` | `LocalBackend`; `InputFileBackend` for programs other than Psi4 |
+| `fractal` | `qcportal` | `FractalBackend` |
+| `tests` | `pytest` | running the test suite |
 
-```
-conda config --set auto_activate_base false
-```
-
-#### 2. Create a _Conda Environment_ for CrystaLattE
-
-CrystaLattE requires Psi4 and PyCIFRW. Conda offers the possibility of creating an _environment_ that contains all the dependencies required by CrystaLattE. To download and install PSI4 and other related software tools in a new _cle_ environment execute the command below and follow the on-screen instructions:
-
-```
-conda create -n cle python psi4 pycifrw -c conda-forge
+```bash
+pip install -e ".[local,tests]"
 ```
 
-#### 3. Activate the _cle_ environment
+The extras do not install quantum chemistry programs. Install those yourself; for example, Psi4 from conda-forge:
 
-To use the recently created _cle_ environment, activate it:
-
-```
+```bash
+conda create -n cle -c conda-forge python=3.13 psi4
 conda activate cle
+pip install -e ".[local]"
 ```
 
-#### 4. Clone CrystaLattE from its GitHub repository:
+## Quick start
 
-In you file system navigate to the location where you would like to place the root directory of CrystaLattE and clone it from its corresponding GitHub repository:
+### 1. Read a crystal
 
-```
-git clone https://github.com/carlosborca/CrystaLattE.git
-```
+```python
+import crystalatte as cle
 
-#### 5. Test CrystaLattE
-
-Go to the root directory of the CrystaLatte repository in the file system and run the test suite:
-
-```
-pytest
+crystal = next(cle.from_cif("benzene.cif"))
+print(crystal)
 ```
 
-(_Note_) It is known that the `v2rdm_casscf` plugin of PSI4 may cause execution errors when trying to import PSI4 from CrystaLattE. If such error is encountered during testing, remove it.
+`from_cif` is a generator because a CIF file may hold several data blocks; it yields one `Crystal` per block. The space group is read from the CIF's Hall or Hermann–Mauguin symbol and checked against any listed symmetry operations.
 
-```
-conda remove v2rdm_casscf
-```
+### 2. Generate the unique multimers
 
-### How to run CrystaLattE
+```python
+dimers = cle.generate(crystal, N=2, R=10.0)
+trimers = cle.generate(crystal, N=3, R=8.0)
 
-CrystaLattE requires a crystallographic information file (.cif) and an options input file (.cle). CIF files can be obtained from multiple sources. For example, from the Cambridge Crystallographic Data Centre (CCDC) website. The options file must be generated by the user. A template is presented below:
-
-#### Preparing the options input
-
-Example of an options input file for CrystaLattE.
-
-```
-# This is a typical CrystaLattE input template: input.cle
-
-# Blank lines and lines starting with the hash character are omitted.
-# Padding blank spaces are also ignored.
-
-# The format is:
-# Keywords  equal  Value
-
-cif_input       =  ../MyCrystals/OneCrystal.cif
-cif_output      =  ../MyCrystals/SuperCell.xyz
-bfs_thresh      =  1.2
-uniq_filter     =  ChSEV
-nmers_up_to     =  3
-r_cut_com       =  12.0
-r_cut_monomer   =  15.0
-r_cut_dimer     =  9.0
-r_cut_trimer    =  12.0
-r_cut_tetramer  =  6.0
-r_cut_pentamer  =  4.0
-cle_run_type    =  psi4api + quiet
-psi4_method     =  MP2/aug-cc-pV[TQ]Z + D:FNO-CCSD(T)/aug-cc-pVDZ
-psi4_bsse       =  cp
-psi4_memory     =  8 GB
-verbose         =  2
+for m in dimers[:5]:
+    print(m.id, m.multiplicity, m.weight, m.geometric_mean, m.min_separation)
 ```
 
-#### Keywords
+`generate(crystal, N, R)` returns one `Multimer` per symmetry-unique cluster of `N` molecules in which **every pair** of molecules is within `R` Å.
 
-Description of keywords and their acceptable values.
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `N` | (required) | Multimer order, an integer ≥ 2 |
+| `R` | (required) | Cutoff in Å, applied to every pair of monomers |
+| `detect_symmetry` | `True` | Detect the full space group with spglib before generating. If off, multimers related by symmetry the declared group lacks may appear twice |
+| `symprec` | `1e-3` | spglib tolerance in Å |
+| `z_fu` | auto | Formula units per cell. Defaults to the gcd over chemical species (by Hill formula) of molecules per cell. Override it for, e.g., a cocrystal of two species that share a formula |
+| `use_origin` | `False` | Measure distance from the closest atom to the anchor's centroid, instead of the closest atom pair |
+| `use_com` | `False` | Measure distance between centres of mass, instead of the closest atom pair |
+| `verbose` | `1` | `0` hides progress bars and summaries |
 
-| Keyword          | Acceptable Values                              | Default      | Example      | Notes                |
-|------------------|------------------------------------------------|--------------|--------------|----------------------|
-| `cif_input`      | \<RelativePath\>\/\<FileName\>.cif             | *No default* | Benzene.cif  | Must be a .cif       |
-| `cif_output`     | \<RelativePath\>\/\<FileName\>.xyz             | sc.xyz       | Benzene.xyz  | Must be a .xyz       |
-| `cif_a`          | Odd positive integer                           | 5            | 9            |                      |
-| `cif_b`          | Odd positive integer                           | 5            | 7            |                      |
-| `cif_c`          | Odd positive integer                           | 5            | 11           |                      |
-| `bfs_thresh`     | Positive float                                 | 1.2          | 1.3          | vdW radii multiplier |
-| `uniq_filter`    | ChSEV, Dreamaligner                            | ChSEV        | Dreamaligner |                      |
-| `nmers_up_to`    | 2, 3, 4, 5                                     | 2            | 3            | Dimers, Trimers...   |
-| `r_cut_com`      | Positive float                                 | 10.0         | 12.0         | Angstroms            |
-| `r_cut_monomer`  | Positive float                                 | 12.0         | 15.0         | Angstroms            |
-| `r_cut_dimer`    | Positive float                                 | 10.0         | 8.0          | Angstroms            |
-| `r_cut_trimer`   | Positive float                                 | 8.0          | 10.0         | Angstroms            |
-| `r_cut_tetramer` | Positive float                                 | 6.0          | 5.0          | Angstroms            |
-| `r_cut_pentamer` | Positive float                                 | 4.0          | 3.0          | Angstroms            |
-| `cle_run_type`   | psi4api, psithon, makefp, test, quiet, timings | psi4api      | test + quiet | Separate with +      |
-| `psi4_method`    | String                                         | HF/STO-3G    | HF-3c        | See PSI4 manual      |
-| `psi4_bsse`      | vmfc, cp, nocp                                 | cp           | nocp         |                      |
-| `psi4_memory`    | String                                         | 500 MB       | 2 GB         |                      |
-| `verbose`        | 0, 1, 2                                        | 1            | 2            |                      |
+Each `Multimer` provides:
 
-#### Running CrystaLattE
+| Attribute | Meaning |
+|-----------|---------|
+| `id` | Stable identifier, e.g. `dimer-1a2b…`, from the order and a geometry hash |
+| `multiplicity` | Number of symmetry-equivalent copies represented |
+| `weight` | Factor that multiplies this multimer's N-body energy in the per-formula-unit lattice energy |
+| `geometric_mean`, `min_separation` | Distance measures in Å |
+| `monomers` | The member `Monomer`s (symbols, fractional/Cartesian coordinates, symmetry operation) |
+| `to_molecule()` | A QCElemental `Molecule` with one fragment per monomer |
+| `to_monomer_molecules()` | One QCElemental `Molecule` per monomer |
 
-Finally, to execute the code:
+### 3. Compute the lattice energy
 
-```
-./crystalatte.py input.cle
-```
-
-#### Known Issues
-
-Precision issues may arise when computing a large number of structures at default energy and density convergence criteria if using Psi4 1.3.2 and newer versions. Although the default energy and density convergence criteria for Psi4 calculations has been increased in CrystaLattE, the user should be careful.
-
-#### Computing lattice energies
-
-The `crystalatte` package generates the unique multimers of a crystal and assembles a lattice energy from their many-body energies. Three backends run the calculations; install the extra each one needs:
+Three backends run the calculations:
 
 | Backend | Purpose | Extra |
 |---------|---------|-------|
-| `LocalBackend` | run every calculation on this machine through QCEngine and QCManyBody | `pip install "crystalatte[local]"` (`qcengine`, `qcmanybody`) |
-| `FractalBackend` | submit to a QCFractal server and collect from it | `pip install "crystalatte[fractal]"` (`qcportal`) |
-| `InputFileBackend` | only write input files (plus `manifest.json`) to run yourself; no results | none for Psi4; `crystalatte[local]` for other programs |
-
-QC programs such as Psi4 are not installed by these extras; installing them is up to you.
+| `LocalBackend` | Run every calculation on this machine through QCEngine and QCManyBody | `local` |
+| `FractalBackend` | Submit to a QCFractal server and collect from it | `fractal` |
+| `InputFileBackend` | Only write input files (plus `manifest.json`) to run yourself; returns no results | none for Psi4; `local` for other programs |
 
 ```python
 import crystalatte as cle
@@ -189,25 +131,90 @@ results = backend.collect()    # raises IncompleteResultsError if anything is mi
 
 print(results.lattice_energy)  # kJ/mol per formula unit
 print(results.by_order)        # {2: ..., 3: ...}
-results.table                  # per-multimer rows
+results.table                  # per-multimer rows; results.to_dataframe() needs pandas
 ```
 
-A complete command-line version is in `scripts/run_lattice_energy.py`.
+`ComputeSpec` fields:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `program` | (required) | Any QCEngine program, e.g. `psi4`, `nwchem`, `molpro` |
+| `method`, `basis` | (required) | Passed to the program |
+| `bsse` | `"cp"` | `cp`, `nocp` or `vmfc` |
+| `keywords` | `{}` | Program keywords; applied on top of the defaults |
+| `use_defaults` | `True` | Apply tight, v1-style Psi4 keywords (convergence thresholds, density fitting, frozen core) under `keywords` |
+
+`LocalBackend(workdir, *, qc_scratch=None, ncores=None, ncores_per_task=1, memory_per_task=None)`. Unset `ncores` and `memory_per_task` are taken from QCEngine's configuration.
+
+#### Notes
 
 - **Definition.** The lattice energy is per formula unit, in kJ/mol: `E_latt = (1/Z_fu) Σ_N Σ_orbits (copies per cell) ΔE^(N-body)`. It is comparable to a periodic-DFT `E(bulk)/Z − E(A) − E(B)`. The energy of deforming or relaxing the monomers from their gas-phase geometries is not included.
 - **Incomplete data.** `collect()` refuses to assemble a lattice energy from missing or failed calculations. `collect(partial=True)` returns the rows that exist, so you can inspect per-multimer status and energies.
-- **Defaults.** `ComputeSpec` applies tight, v1-style Psi4 keywords (convergence thresholds, density fitting, frozen core) under your `keywords`; yours win. Pass `use_defaults=False` to turn this off.
-- **Known gap.** Charge and spin cannot be set yet; every monomer is treated as neutral. `InputFileBackend` writes each monomer with charge 0 and multiplicity 1. `LocalBackend` and `FractalBackend` build their molecules through QCElemental, which gives each fragment charge 0 and the lowest multiplicity its electron count allows (1 for an even count, 2 for an odd one).
-- **Input files.** `InputFileBackend` writes files and a `manifest.json`, then stops; to keep calculations inside CrystaLattE use `LocalBackend` or `FractalBackend`. Psi4 gets one file per multimer (`dimers/<id>.in`), since Psi4's own many-body driver does the counterpoise splitting. Every other program uses QCEngine's input builder, which writes single-point inputs only, so each multimer becomes one input per QCManyBody sub-calculation (`dimers/<id>/real-2_basis-1-2/…`). The manifest records the spec, generation settings and crystalatte version, and per multimer its order, multiplicity, lattice weight and files; for sub-calculations also the QCManyBody label, the real and ghost (basis-only) fragments, and the command QCEngine would run. To assemble a multimer, feed your energies to `qcmanybody.ManyBodyCore(...).analyze({label: {"energy": e}})` and take `<bsse>_corrected_<N>_body_contribution_to_energy`; multiply by the weight and sum for the lattice energy (×2625.4996 for kJ/mol). Counterpoise sub-calculations need ghost atoms, which QCEngine's builders are only verified to write for NWChem and Molpro (Q-Chem's drops them; GAMESS's refuses them); for other programs use `bsse="nocp"`. Programs QCEngine cannot write inputs for (e.g. RDKit, ML potentials) raise an error pointing to `LocalBackend`, and some builders (CFOUR, MRChem, Turbomole) need the program installed where the files are generated. `memory` takes GiB or a string like `"8 GB"`; if unset for QCEngine-built inputs, the memory detected on the machine writing the files is used.
-- **Workdir vs QC scratch.** `LocalBackend`'s first argument, `workdir`, holds CrystaLattE's job state (a manifest and small per-task JSON results) and is what makes reruns resume. The QC program's own scratch files are separate: pass `qc_scratch="/fast/disk"` to choose them explicitly, or leave it unset and QCEngine decides — `$QCENGINE_SCRATCH_DIRECTORY`, a `qcengine.yaml` `scratch_directory`, the program's own variable (e.g. `$PSI_SCRATCH` for Psi4), then the system temp directory. For `FractalBackend`, scratch is set in your compute manager's configuration on the workers.
-- **Scripts and parallelism.** `LocalBackend` runs calculations in worker processes. On macOS and Windows put the code that calls it under `if __name__ == "__main__":`, as `scripts/run_lattice_energy.py` does.
+- **Resuming.** `LocalBackend` stores each finished sub-calculation in `workdir`. Rerunning with the same workdir skips completed work. Multimer ids depend on the geometry of the chosen representative, so changing the code or settings may cause work to be redone, but a result is never assigned to the wrong multimer.
+- **Workdir vs QC scratch.** `workdir` holds CrystaLattE's job state. The QC program's own scratch files are separate: pass `qc_scratch="/fast/disk"`, or leave it unset and QCEngine decides (`$QCENGINE_SCRATCH_DIRECTORY`, a `qcengine.yaml` `scratch_directory`, the program's own variable such as `$PSI_SCRATCH`, then the system temp directory). For `FractalBackend`, scratch is set in the compute manager's configuration on the workers.
+- **Scripts and parallelism.** `LocalBackend` runs calculations in worker processes. On macOS and Windows, put the code that calls it under `if __name__ == "__main__":`.
+- **Input files.** `InputFileBackend` writes files and a `manifest.json`, then stops. Psi4 gets one file per multimer (`dimers/<id>.in`), since Psi4's own many-body driver does the counterpoise splitting. Every other program uses QCEngine's input builder, which writes single-point inputs only, so each multimer becomes one input per QCManyBody sub-calculation (`dimers/<id>/real-2_basis-1-2/…`). The manifest records the spec, generation settings and crystalatte version. For each multimer it records the order, multiplicity, lattice weight and files. For sub-calculations it also records the QCManyBody label, the real and ghost fragments, and the command QCEngine would run. To assemble a multimer, feed your energies to `qcmanybody.ManyBodyCore(...).analyze({label: {"energy": e}})` and take `<bsse>_corrected_<N>_body_contribution_to_energy`. Multiply by the weight and sum for the lattice energy (×2625.4996 for kJ/mol).
+  - Counterpoise sub-calculations need ghost atoms, which QCEngine's builders are only verified to write for NWChem and Molpro (Q-Chem's drops them; GAMESS's refuses them). For other programs use `bsse="nocp"`.
+  - Programs QCEngine cannot write inputs for (e.g. RDKit, ML potentials) raise an error pointing to `LocalBackend`. Some builders (CFOUR, MRChem, Turbomole) need the program installed where the files are generated.
+  - `memory` takes GiB or a string like `"8 GB"`. If unset for QCEngine-built inputs, the memory detected on the machine writing the files is used.
 
-#### Copyright
+## Disordered crystals
 
-Copyright (c) 2020, Carlos H. Borca
+`from_cif(path, disorder=...)` controls how partially occupied sites are handled:
 
+| Policy | Behaviour |
+|--------|-----------|
+| `"enumerate"` (default) | Yield one `Crystal` per ordered state, with a `RuntimeWarning`. Each crystal's `state` (`DisorderState`) has a `label`, the `weight` of that state implied by the CIF, and the disorder `groups` chosen. States come from explicit `_atom_site_disorder_assembly`/`_group` tags, or from symmetry when the tags are absent |
+| `"error"` | Raise on any partial occupancy |
+| `"ignore"` | Keep every site as if fully occupied |
+| `"drop"` | Remove partially occupied sites |
 
-#### Acknowledgements
- 
-Project based on the 
-[Computational Molecular Science Python Cookiecutter](https://github.com/molssi/cookiecutter-cms) version 1.0.
+Generate and compute each state separately, then combine them with their `crystal.state.weight` as appropriate.
+
+## Example scripts
+
+- `scripts/run_generate.py`: generate multimers from a CIF and print counts, multiplicities and timing.
+
+  ```bash
+  python scripts/run_generate.py tests/x23/benzene/benzene.cif -N 3 -R 8 --list
+  ```
+
+- `scripts/run_lattice_energy.py`: an end-to-end lattice energy with `FractalBackend`.
+
+## Testing
+
+```bash
+pip install -e ".[tests]"
+pytest
+```
+
+Tests in `tests/compute/` that need `qcengine`, `qcmanybody`, `qcportal`, `qcfractal` or `psi4` are skipped when those packages are missing.
+
+## Migrating from v1
+
+v1's `.cle` input file and `crystalatte.py` command-line script have been removed. Their keywords map onto the API as follows:
+
+| v1 keyword | v2 equivalent |
+|------------|---------------|
+| `cif_input` | `cle.from_cif(path)` |
+| `nmers_up_to`, `r_cut_dimer` … `r_cut_pentamer` | one `cle.generate(crystal, N, R)` call per order |
+| `r_cut_com` | `generate(..., use_com=True)` |
+| `uniq_filter` (ChSEV, Dreamaligner) | removed; deduplication is by exact symmetry. `cle.count_chemistry_classes(multimers)` reproduces the v1 NRE/ChSEV grouping for comparison |
+| `cif_a`, `cif_b`, `cif_c`, `r_cut_monomer`, `cif_output` | removed; the search region is sized automatically |
+| `bfs_thresh` | fixed at 1.2 × covalent radii for molecule detection |
+| `psi4_method` | `ComputeSpec(program="psi4", method=..., basis=...)` |
+| `psi4_bsse` | `ComputeSpec(bsse=...)` |
+| `psi4_memory` | `LocalBackend(memory_per_task=...)` / `InputFileBackend(memory=...)` |
+| `cle_run_type` | choice of backend |
+
+## Citation
+
+If you use CrystaLattE, please cite:
+
+> C. H. Borca, B. W. Bakr, L. A. Burns, C. D. Sherrill, "CrystaLattE: Automated computation of lattice energies of organic crystals exploiting the many-body expansion to achieve dual-level parallelism," *J. Chem. Phys.* **151**, 144103 (2019). [doi:10.1063/1.5120520](http://dx.doi.org/10.1063/1.5120520)
+
+This will be updated for CrystaLattE v2 once it is published.
+
+## Copyright
+
+Copyright (c) 2026, Jaden C. Yon
