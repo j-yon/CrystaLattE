@@ -116,6 +116,7 @@ def main() -> None:
     parser.add_argument("--skip", nargs="*", default=[], help="N:R pairs not to run, e.g. 4:20 5:15")
     parser.add_argument("--worker", type=Path, default=Path(__file__).with_name("benchmark_generate.py"), help="script timing one run")
     parser.add_argument("--code-commit", help="commit to record; defaults to the last commit touching src")
+    parser.add_argument("--retry-errors", action="store_true", help="rerun measurements recorded as errors")
     args = parser.parse_args()
     skipped = {tuple(float(part) for part in pair.split(":")) for pair in args.skip}
 
@@ -127,6 +128,8 @@ def main() -> None:
     if args.out.exists():
         for line in args.out.read_text().splitlines():
             record = json.loads(line)
+            if args.retry_errors and record["status"] == "error":
+                continue
             finished[record["crystal"], record["N"], record["R"], record["repeat"]] = record
 
     stopped = set()
