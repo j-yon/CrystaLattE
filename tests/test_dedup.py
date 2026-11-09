@@ -508,6 +508,24 @@ _REFEREE_BOX = {
 }
 
 
+def _observe_dedup(monkeypatch) -> dict:
+    """Record the candidates and representatives ``generate_neighbors`` produces, passing both through"""
+    seen = {}
+    real_enumerate, real_representatives = neighbors.enumerate_candidates, neighbors.representatives
+
+    def _enumerate(*args, **kwargs):
+        seen["candidates"] = real_enumerate(*args, **kwargs)
+        return seen["candidates"]
+
+    def _representatives(labels, tnorm):
+        seen["rep"], multiplicity = real_representatives(labels, tnorm)
+        return seen["rep"], multiplicity
+
+    monkeypatch.setattr(neighbors, "enumerate_candidates", _enumerate)
+    monkeypatch.setattr(neighbors, "representatives", _representatives)
+    return seen
+
+
 # Parametrized over ORDER as well as crystal. The direct over-merge check used
 # to run only at N = 2, which left the regime where the anchored search works
 # hardest -- its cost is O(|S| n^3) in cluster size and the permutation
@@ -542,11 +560,12 @@ def test_no_over_merge_every_discarded_cluster_matches_a_survivor(name, N, R, mo
     # repulsion energy, which no part of the dedup path consults.
     #
     # `generate_neighbors` returns only the survivors, so the discarded clusters
-    # are collected one layer down, where they still exist: `deduplicate_bucket`
-    # returns `(unique, duplicate)` per bucket. Wrapping it keeps this test at
-    # full strength without asking the enumeration to carry the duplicates back
-    # out, and the wrapper is pure observation -- the real function still does
-    # the work and its result is passed through untouched.
+    # are collected one layer down, where they still exist: every candidate
+    # `enumerate_candidates` returns that `representatives` does not keep.
+    # Wrapping both keeps this test at full strength without asking the
+    # enumeration to carry the duplicates back out, and the wrappers are pure
+    # observation -- the real functions still do the work and their results are
+    # passed through untouched.
 
     crystal = load(name)
     crystal = crystal.detect_symmetry(1e-3)
@@ -554,18 +573,14 @@ def test_no_over_merge_every_discarded_cluster_matches_a_survivor(name, N, R, mo
     box = _REFEREE_BOX.get((name, N, R), 1)
     bounds = np.array([[-box, box]] * 3)
 
-    duplicate = []
-    real_dedup = neighbors.deduplicate_bucket
-
-    def _capture(bucket):
-        local_unique, local_dup = real_dedup(bucket)
-        duplicate.extend(local_dup)
-        return local_unique, local_dup
-
-    monkeypatch.setattr(neighbors, "deduplicate_bucket", _capture)
+    seen = _observe_dedup(monkeypatch)
     unique = neighbors.generate_neighbors(
         crystal, refs, bounds, R, N, **GENERATE_KW
     )
+    kept = set(seen["rep"].tolist())
+    duplicate = [
+        seen["candidates"].cluster(k) for k in range(len(seen["candidates"])) if k not in kept
+    ]
     assert duplicate, f"{name} N={N}: no duplicates generated, test is vacuous"
 
     survivors = [_cluster_referee(u) for u in unique]
@@ -603,19 +618,12 @@ def test_no_over_merge_multiplicity_is_conserved(monkeypatch):
     crystal = crystal.detect_symmetry(1e-3)
     refs = crystal.get_references()
 
-    candidates = 0
-    real_dedup = neighbors.deduplicate_bucket
-
-    def _count(bucket):
-        nonlocal candidates
-        candidates += len(bucket)
-        return real_dedup(bucket)
-
-    monkeypatch.setattr(neighbors, "deduplicate_bucket", _count)
+    seen = _observe_dedup(monkeypatch)
     unique = neighbors.generate_neighbors(
         crystal, refs, np.array([[-1, 1], [-1, 1], [-1, 1]]), 8.0, 2,
         **GENERATE_KW,
     )
+    candidates = len(seen["candidates"])
     assert candidates, "no candidates enumerated, test is vacuous"
     assert sum(u.multiplicity for u in unique) == candidates
 

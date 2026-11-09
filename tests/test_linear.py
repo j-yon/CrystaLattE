@@ -159,16 +159,9 @@ def _dimer(t1_twelfths, rot1=np.eye(3, dtype=np.int16)):
 
 
 def _candidates(cry, refs, R, monkeypatch, N=2):
-    """Return every candidate cluster ``generate_neighbors`` hands to ``orbit_labels``"""
-    seen = []
-
-    def _record(cands):
-        seen.extend(cands)
-        return np.arange(len(cands))
-
-    monkeypatch.setattr(neighbors, "orbit_labels", _record)
-    neighbors.generate_neighbors(cry, refs, np.array([[-2, 2]] * 3), R, N, **GENERATE_KW)
-    return seen
+    """Return every candidate cluster ``generate_neighbors`` enumerates, as :class:`SymOpList` objects"""
+    cands = neighbors.enumerate_candidates(cry, refs, np.array([[-2, 2]] * 3), R, N, **GENERATE_KW)
+    return [cands.cluster(k) for k in range(len(cands))]
 
 def test_dot_key_merges_the_surviving_co2_pair():
     _ref_setup("carbon_dioxide")
@@ -275,7 +268,7 @@ def test_orbit_labels_keeps_frame_labels_on_overflow(monkeypatch):
     def _overflow(*args):
         raise OverflowError("dot-product formulas would overflow int64")
 
-    monkeypatch.setattr(dotkey, "dot_keys", _overflow)
+    monkeypatch.setattr(dotkey, "dot_keys_arrays", _overflow)
     with pytest.warns(RuntimeWarning, match="overflow"):
         labels = invariants.orbit_labels(cands)
     assert np.array_equal(labels, frame.ravel())

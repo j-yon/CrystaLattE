@@ -1,5 +1,5 @@
 import warnings
-from collections import defaultdict
+from collections.abc import Callable
 from typing import Final
 
 import numpy as np
@@ -28,6 +28,9 @@ def int_inv(M: NDArray) -> NDArray:
 
 #: dressed rows materialised per chunk in :func:`_dressed_minima`; bounds its intermediates to ~100 MB
 DRESS_CHUNK_ROWS: Final[int] = 1 << 19
+
+#: returns the stacked ``(rot (K, n, 3, 3), tr (K, n, 3), ref (K, n))`` member arrays of clusters ``ks``
+Gather = Callable[[NDArray], tuple[NDArray, NDArray, NDArray]]
 
 
 def lex_codes(rows: NDArray) -> NDArray:
@@ -91,76 +94,180 @@ def _dressed_minima(D: NDArray, ref_a: int, ref_b: int) -> NDArray:
     return out
 
 
+def relative_rows(rot: NDArray, tr: NDArray, p: NDArray, q: NDArray) -> NDArray:
+    """Return the relative transforms ``Delta = T_p^-1 T_q`` of member pairs
+
+    :param rot: ``(P, 3, 3)`` integer rotations of the members
+    :param tr: ``(P, 3)`` integer translations of the members, in twelfths
+    :param p: ``(E,)`` first member of each pair
+    :param q: ``(E,)`` second member of each pair
+    :returns: ``(E, 12)`` int64 rows flattened as ``(L (9), v (3))``
+    """
+    R = rot.astype(np.int64)
+    t = tr.astype(np.int64)
+    R_inv = int_inv(R)
+    L = R_inv[p] @ R[q]
+    v = (R_inv[p] @ (t[q] - t[p])[..., None])[..., 0]
+    return np.concatenate((L.reshape(-1, 9), v), axis=1)
+
+
+def pair_codes(rows: NDArray, ref_a: NDArray, ref_b: NDArray) -> NDArray:
+    """Return the dressed code of every member pair under every dressing of its first member
+
+    Code ``[e, s]`` stands for the canonical row of the coset ``s^-1 Delta_e D_b`` (:func:`_dressed_minima`),
+    ranked among the rows of every pair with the same ``(ref_a, ref_b)``, so such codes compare like the rows
+    they stand for. Many pairs share a relative transform, so each distinct one is dressed once.
+
+    :param rows: ``(E, 12)`` relative transforms from :func:`relative_rows`
+    :param ref_a: ``(E,)`` base reference of each pair's first member
+    :param ref_b: ``(E,)`` base reference of each pair's second member
+    :returns: ``(E, S_max)`` int32 codes; columns past the first member's dressing count are ``-1``
+    """
+    n_refs = len(context.dress_stacked_by_ref)
+    S_max = max(len(W) for W, _, _ in context.dress_stacked_by_ref)
+    out = np.full((len(rows), S_max), -1, dtype=np.int32)
+    pair = ref_a * n_refs + ref_b
+    for ab in np.unique(pair).tolist():
+        sel = np.flatnonzero(pair == ab)
+        _, first, inverse = np.unique(
+            lex_codes(rows[sel]), return_index=True, return_inverse=True
+        )
+        dressed = lex_codes(_dressed_minima(rows[sel[first]], ab // n_refs, ab % n_refs))
+        _, rank = np.unique(dressed, return_inverse=True)
+        out[sel, : dressed.shape[1]] = rank.reshape(dressed.shape)[inverse.ravel()]
+    return out
+
+
+def _ref_tuple(group: int, n: int) -> tuple[int, ...]:
+    """Decode a group code from :func:`chunk_keys` into its base references, sorted by ``context.anchor_rank``"""
+    B = len(context.anchor_rank)
+    rank_to_ref = np.argsort(context.anchor_rank)
+    return tuple(int(rank_to_ref[(group // B ** (n - 1 - k)) % B]) for k in range(n))
+
+
+def chunk_keys(codes: NDArray, edges: NDArray, refs: NDArray) -> tuple[NDArray, NDArray]:
+    """Return the orbit keys of a chunk of clusters
+
+    Members are sorted by anchor rank. An anchor's base reference leads its key, so only anchors of the
+    lowest-ranked reference can win: after sorting they are the first ``c`` members, and each sees its
+    partners' references as ``refs[1:]``.
+
+    :param codes: ``(E, S_max)`` pair codes from :func:`pair_codes`
+    :param edges: ``(C, n, n)`` row of ``codes`` for each ordered member pair of each cluster; the diagonal is
+        never read
+    :param refs: ``(C, n)`` base reference of each member
+    :returns: ``(group, key)``: the ``(C,)`` int64 code of each cluster's ranked base-reference tuple
+        (decoded by :func:`_ref_tuple`) and ``(C, n - 1)`` int32 keys. Two clusters are the same multimer, up to
+        the linear merge, iff both agree
+    """
+    C, n = refs.shape
+    rank = context.anchor_rank[refs]
+    order = np.argsort(rank, axis=1, kind="stable")
+    srank = np.take_along_axis(rank, order, axis=1)
+    group = srank @ (len(context.anchor_rank) ** np.arange(n - 1, -1, -1, dtype=np.int64))
+    if n == 1:
+        return group, np.zeros((C, 1), dtype=np.int32)
+
+    keys = np.empty((C, n - 1), dtype=np.int32)
+    for g in np.unique(group).tolist():
+        rows = np.flatnonzero(group == g)
+        ref_tuple = _ref_tuple(g, n)
+        o = order[rows]
+        e = edges[rows[:, None, None], o[:, :, None], o[:, None, :]]
+
+        c = ref_tuple.count(ref_tuple[0])
+        partner_refs = ref_tuple[1:]
+        S = len(context.dress_stacked_by_ref[ref_tuple[0]][0])
+        K = np.empty((len(rows), c, S, n - 1), dtype=np.int32)  # (cluster, anchor, anchor dressing, slot)
+        for a in range(c):
+            for j in range(n - 1):
+                K[:, a, :, j] = codes[e[:, a, j + (j >= a)], :S]
+
+        # partners of one reference are unordered; their slots are contiguous
+        for ref_b in sorted(set(partner_refs)):
+            cols = [j for j, r in enumerate(partner_refs) if r == ref_b]
+            K[..., cols[0] : cols[-1] + 1].sort(axis=3)
+
+        # lexicographic minimum over (anchor, anchor dressing) for each cluster, one slot at a time: a row
+        # stays in the running while it ties the minimum of every slot so far
+        keys[rows] = segmented_lexmin(K.reshape(len(rows), c * S, n - 1))
+    return group, keys
+
+
+def segmented_lexmin(rows: NDArray) -> NDArray:
+    """Return the lexicographically smallest row of each segment, without sorting
+
+    :param rows: ``(C, m, k)`` integer array, ``m`` rows of ``k`` entries per segment, all below the dtype's maximum
+    :returns: ``(C, k)`` minima, same dtype
+    """
+    C, _, k = rows.shape
+    out = np.empty((C, k), dtype=rows.dtype)
+    alive = None
+    for j in range(k):
+        col = rows[:, :, j] if alive is None else np.where(alive, rows[:, :, j], np.iinfo(rows.dtype).max)
+        out[:, j] = col.min(axis=1)
+        tied = col == out[:, j, None]
+        alive = tied if alive is None else alive & tied
+    return out
+
+
+def _list_keys(cands: list[SymOpList]) -> tuple[NDArray, NDArray]:
+    """Return :func:`chunk_keys` for a list of clusters of one size, each its own partner table"""
+    n = len(cands[0])
+    rot = np.concatenate([g.rot_cache for g in cands])
+    tr = np.concatenate([g.tr_cache for g in cands])
+    ref = np.concatenate([g.ref_indices for g in cands]).astype(np.int64)
+
+    a, b = np.nonzero(~np.eye(n, dtype=bool))
+    base = np.arange(len(cands))[:, None] * n
+    p, q = (base + a).ravel(), (base + b).ravel()
+    codes = pair_codes(relative_rows(rot, tr, p, q), ref[p], ref[q])
+    edges = np.zeros((len(cands), n, n), dtype=np.int64)
+    edges[:, a, b] = np.arange(len(p)).reshape(len(cands), len(a))
+    return chunk_keys(codes, edges, ref.reshape(len(cands), n))
+
+
 def _group_keys(cands: list[SymOpList], refs: tuple[int, ...]) -> NDArray:
     """Return the orbit keys of clusters that share one ranked base-reference tuple
 
     :param cands: clusters whose ``ref_indices``, sorted by ``context.anchor_rank``, equal ``refs``
     :param refs: the shared base references, sorted by ``context.anchor_rank`` (non-linear first)
-    :returns: an ``(N, n - 1)`` int64 array; two clusters have equal keys iff their rows are equal
+    :returns: an ``(N, n - 1)`` int32 array; two clusters have equal keys iff their rows are equal
     """
-    N, n = len(cands), len(refs)
-    if n == 1:
-        return np.zeros((N, 1), dtype=np.int64)
+    if len(refs) == 1:
+        return np.zeros((len(cands), 1), dtype=np.int32)
+    return _list_keys(cands)[1]
 
-    # sort members by anchor rank so every cluster's members line up; the key ignores member order
-    order = np.argsort(
-        context.anchor_rank[np.stack([g.ref_indices for g in cands])], axis=1, kind="stable"
-    )
-    R = np.take_along_axis(
-        np.stack([g.rot_cache for g in cands]).astype(np.int64),
-        order[..., None, None],
-        axis=1,
-    )
-    t = np.take_along_axis(
-        np.stack([g.tr_cache for g in cands]).astype(np.int64), order[..., None], axis=1
+
+def _stack(cands: list[SymOpList]) -> tuple[NDArray, NDArray, NDArray]:
+    """Return the stacked ``(rot, tr, ref)`` member arrays of a list of clusters of one size"""
+    return (
+        np.stack([g.rot_cache for g in cands]),
+        np.stack([g.tr_cache for g in cands]),
+        np.stack([g.ref_indices for g in cands]),
     )
 
-    # relative transforms Delta[a,b] = T_a^-1 T_b of every cluster at once
-    R_inv = int_inv(R)
-    L = R_inv[:, :, None] @ R[:, None]  # (N, n, n, 3, 3)
-    v = (R_inv[:, :, None] @ (t[:, None] - t[:, :, None])[..., None])[
-        ..., 0
-    ]  # (N, n, n, 3)
 
-    # an anchor's base reference leads its key, so only anchors of the lowest-ranked reference can win.
-    # After sorting they are the first c members, and each sees its partners' references as refs[1:]
-    c = refs.count(refs[0])
-    partner_refs = refs[1:]
-    S = len(context.dress_stacked_by_ref[refs[0]][0])
-    M = np.empty(
-        (N, c, S, n - 1), dtype=np.int64
-    )  # (cluster, anchor, anchor dressing, partner slot)
-    for ref_b in sorted(set(partner_refs)):
-        cols = [j for j, r in enumerate(partner_refs) if r == ref_b]
-        pairs = [
-            (a, j, j + (j >= a)) for a in range(c) for j in cols
-        ]  # (anchor, slot, member)
-        D = np.concatenate(
-            [
-                np.concatenate((L[:, a, b].reshape(N, 9), v[:, a, b]), axis=1)
-                for a, _, b in pairs
-            ]
-        )
+def labels_from_keys(group: NDArray, keys: NDArray, gather: Gather) -> NDArray:
+    """Label clusters from their :func:`chunk_keys`, merging all-linear groups by the dot-product key
 
-        # many clusters share a relative transform: dress each distinct one once.
-        # Rows are packed into int64 codes first, a 1-D unique being far faster than unique(axis=0)
-        _, first, inverse = np.unique(
-            lex_codes(D), return_index=True, return_inverse=True
-        )
-        U = D[first]
-        codes = lex_codes(_dressed_minima(U, refs[0], ref_b))[inverse.ravel()].reshape(
-            len(pairs), N, S
-        )
-        for p, (a, j, _) in enumerate(pairs):
-            M[:, a, :, j] = codes[p]
-
-        # partners of one reference are unordered; their slots are contiguous
-        M[..., cols[0] : cols[-1] + 1].sort(axis=3)
-
-    # lexicographic minimum over (anchor, anchor dressing) for each cluster
-    flat = M.reshape(N * c * S, n - 1)
-    order = np.lexsort((*flat.T[::-1], np.repeat(np.arange(N), c * S)))
-    return flat[order[:: c * S]]
+    :param group: ``(N,)`` group codes
+    :param keys: ``(N, n - 1)`` orbit keys
+    :param gather: returns the stacked member arrays of clusters ``ks``, for the dot-product key
+    :returns: an ``(N,)`` int64 array of labels
+    """
+    labels = np.empty(len(group), dtype=np.int64)
+    n_labels = 0
+    for g in np.unique(group).tolist():
+        idx = np.flatnonzero(group == g)
+        refs = _ref_tuple(g, keys.shape[1] + 1)
+        _, inverse = np.unique(keys[idx], axis=0, return_inverse=True)
+        inverse = inverse.ravel()
+        if all(context.linear_by_ref[r] for r in refs):
+            inverse = _merge_by_dot_key(idx, refs, inverse, gather)
+        labels[idx] = inverse + n_labels
+        n_labels += int(inverse.max()) + 1
+    return labels
 
 
 def orbit_labels(candidates: list[SymOpList]) -> NDArray:
@@ -174,46 +281,39 @@ def orbit_labels(candidates: list[SymOpList]) -> NDArray:
     cell-symmetry self-isometry of the monomer (:mod:`.dressing`), so non-crystallographic congruences such as
     triazine's sigma_h merge here too.
 
-    All clusters are keyed in one batch: each distinct relative transform is dressed once
-    (:func:`_dressed_minima`) and rows are compared as packed int64 codes (:func:`lex_codes`).
+    Each distinct relative transform is dressed once (:func:`pair_codes`), and a cluster's key is gathered from
+    the codes of its member pairs (:func:`chunk_keys`). ``generate_neighbors`` builds the same codes from its
+    partner tables instead of from :class:`SymOpList` objects.
 
     A group whose members are all linear is then merged further by the exact dot-product key
     (:mod:`.dotkey`), which also absorbs twists about a molecular axis that no dressing contains.
 
-    :param candidates: clusters to label; the dedup context must be bound
+    :param candidates: clusters of one size to label; the dedup context must be bound
     :returns: an ``(N,)`` int64 array of labels
     """
-    labels = np.empty(len(candidates), dtype=np.int64)
-    groups: dict[tuple[int, ...], list[int]] = defaultdict(list)
-    for i, g in enumerate(candidates):
-        groups[tuple(sorted(g.ref_indices.tolist(), key=context.anchor_rank.__getitem__))].append(i)
-
-    n_labels = 0
-    for refs, idx in groups.items():
-        group = [candidates[i] for i in idx]
-        _, inverse = np.unique(_group_keys(group, refs), axis=0, return_inverse=True)
-        inverse = inverse.ravel()
-        if all(context.linear_by_ref[r] for r in refs):
-            inverse = _merge_by_dot_key(group, refs, inverse)
-        labels[idx] = inverse + n_labels
-        n_labels += int(inverse.max()) + 1
-    return labels
+    if not candidates:
+        return np.empty(0, dtype=np.int64)
+    group, keys = _list_keys(candidates)
+    return labels_from_keys(group, keys, lambda ks: _stack([candidates[k] for k in ks.tolist()]))
 
 
-def _merge_by_dot_key(group: list[SymOpList], refs: tuple[int, ...], frame: NDArray) -> NDArray:
+def _merge_by_dot_key(
+    idx: NDArray, refs: tuple[int, ...], frame: NDArray, gather: Gather
+) -> NDArray:
     """Coarsen the frame labels of an all-linear group to its dot-key classes
 
     Every frame class is one multimer, so only its first cluster is keyed (:func:`.dotkey.dot_keys`).
     If the key could overflow int64, the frame labels are kept and a :class:`RuntimeWarning` is raised.
 
-    :param group: clusters that share ``refs``
+    :param idx: ``(N,)`` indices of the group's clusters, passed to ``gather``
     :param refs: their base references sorted by ``context.anchor_rank``, every one linear
-    :param frame: ``(N,)`` frame labels of ``group``, numbered ``0..m-1``
+    :param frame: ``(N,)`` frame labels of the group, numbered ``0..m-1``
+    :param gather: returns the stacked member arrays of clusters ``ks``
     :returns: ``(N,)`` labels numbered ``0..k-1``, ``k <= m``
     """
     _, first = np.unique(frame, return_index=True)
     try:
-        keys = dotkey.dot_keys([group[i] for i in first], refs)
+        keys = dotkey.dot_keys_arrays(*gather(idx[first]), refs)
     except OverflowError as err:
         warnings.warn(
             f"{err} for references {refs}; keeping their frame key, which may leave duplicates",

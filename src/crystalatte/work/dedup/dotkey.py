@@ -76,7 +76,7 @@ def _check_overflow(rot: NDArray, tr: NDArray, refs: tuple[int, ...], G: NDArray
     """Raise if building the forms or their dot-product tables could leave int64
 
     The bound is taken in Python integers before any form is built, so a wrapped intermediate cannot hide.
-    Entries stay below ``2**62`` so that :func:`~.invariants.lex_codes` can subtract any two of them.
+    Entries stay below ``2**62``, so the int64 sentinel of :func:`~.invariants.segmented_lexmin` exceeds them all.
 
     :param rot: ``(N, n, 3, 3)`` member rotations
     :param tr: ``(N, n, 3)`` member translations, in twelfths
@@ -169,24 +169,40 @@ def dot_keys(cands: list[SymOpList], refs: tuple[int, ...]) -> NDArray:
     :raises ValueError: if a reference in ``refs`` has no line unknowns or a cluster's references differ
     :raises OverflowError: if the integer formulas could exceed int64
     """
+    n = len(refs)
+    if not cands:
+        return dot_keys_arrays(
+            np.zeros((0, n, 3, 3), np.int64), np.zeros((0, n, 3), np.int64), np.zeros((0, n), np.int64), refs
+        )
+    return dot_keys_arrays(
+        np.stack([g.rot_cache for g in cands]),
+        np.stack([g.tr_cache for g in cands]),
+        np.stack([g.ref_indices for g in cands]),
+        refs,
+    )
+
+
+def dot_keys_arrays(rot: NDArray, tr: NDArray, ref_idx: NDArray, refs: tuple[int, ...]) -> NDArray:
+    """:func:`dot_keys` of clusters given as stacked member arrays
+
+    :param rot: ``(N, n, 3, 3)`` member rotations
+    :param tr: ``(N, n, 3)`` member translations, in twelfths
+    :param ref_idx: ``(N, n)`` member base references
+    :param refs: the clusters' reference indices sorted by :data:`~.context.anchor_rank`
+    :returns: an ``(N, L)`` int64 array, as :func:`dot_keys`
+    :raises ValueError: if a reference in ``refs`` has no line unknowns or a cluster's references differ
+    :raises OverflowError: if the integer formulas could exceed int64
+    """
     refs = tuple(int(i) for i in refs)
     n = len(refs)
     if any(context.line_by_ref[i] is None for i in refs):
         raise ValueError(f"references {refs} are not all linear")
 
-    if cands:
-        ref_idx = np.stack([g.ref_indices for g in cands])
-        order = np.argsort(context.anchor_rank[ref_idx], axis=1, kind="stable")
-        if not (np.take_along_axis(ref_idx, order, axis=1) == np.array(refs)).all():
-            raise ValueError(f"every cluster must have references {refs}")
-        rot = np.take_along_axis(
-            np.stack([g.rot_cache for g in cands]).astype(np.int64), order[:, :, None, None], axis=1
-        )
-        tr = np.take_along_axis(
-            np.stack([g.tr_cache for g in cands]).astype(np.int64), order[:, :, None], axis=1
-        )
-    else:
-        rot, tr = np.zeros((0, n, 3, 3), np.int64), np.zeros((0, n, 3), np.int64)
+    order = np.argsort(context.anchor_rank[ref_idx], axis=1, kind="stable")
+    if not (np.take_along_axis(ref_idx, order, axis=1) == np.array(refs, dtype=np.int64)).all():
+        raise ValueError(f"every cluster must have references {refs}")
+    rot = np.take_along_axis(rot.astype(np.int64), order[:, :, None, None], axis=1)
+    tr = np.take_along_axis(tr.astype(np.int64), order[:, :, None], axis=1)
 
     G = context.metric_pieces
     _check_overflow(rot, tr, refs, G)
@@ -200,17 +216,16 @@ def dot_keys(cands: list[SymOpList], refs: tuple[int, ...]) -> NDArray:
         + n_ax * (n_ax + 1) // 2 * _n_tri(U.shape[-1])
     )
     if width == 0:
-        return np.zeros((len(cands), 0), dtype=np.int64)
+        return np.zeros((len(rot), 0), dtype=np.int64)
 
     step = max(1, DOT_CHUNK_ENTRIES // (len(variants) * width))
-    out = np.empty((len(cands), width), dtype=np.int64)
-    for lo in range(0, len(cands), step):
+    out = np.empty((len(rot), width), dtype=np.int64)
+    for lo in range(0, len(rot), step):
         Pc, Uc = P[lo : lo + step], U[lo : lo + step]
         PP = _collapse(np.einsum("naxi,kxy,nbyj->nkabij", Pc, G, Pc))
         PU = np.einsum("naxi,kxy,nbyj->nkabij", Pc, G, Uc)
         UU = _collapse(np.einsum("naxi,kxy,nbyj->nkabij", Uc, G, Uc))
         stack = np.stack([_variant_rows(PP, PU, UU, pi, eps, axis_pos) for pi, eps in variants], axis=1)
-        win = invariants.lex_codes(stack).argmin(axis=1)
-        out[lo : lo + step] = stack[np.arange(len(stack)), win]
+        out[lo : lo + step] = invariants.segmented_lexmin(stack)
     return out
 

@@ -1,6 +1,7 @@
 import warnings
 
 import numpy as np
+from numpy.typing import NDArray
 from tqdm import tqdm
 
 from ..core.crystal import Crystal
@@ -11,24 +12,55 @@ from .dedup import context
 from .neighbors import generate_neighbors
 
 
-def _process_multimer(g_N: SymOpList) -> Multimer:
-    """Construct a :class:`Multimer` from a deduped candidate cluster
+def _process_multimers(clusters: list[SymOpList], verbose: int = 1) -> list[Multimer]:
+    """Construct a :class:`Multimer` from each deduped candidate cluster
 
-    :param g_N: Deduplicated cluster to materialize
-    :returns: Constructed :class:`~crystalatte.core.multimer.Multimer`
+    Members are transformed in batches of one member slot and base reference, each product keeping the shape it
+    has for a single monomer (``SymOp.apply`` and ``Crystal.to_cartesian``), so the coordinates and geometric
+    means are bit-for-bit those of transforming each monomer on its own.
+
+    :param clusters: Deduplicated clusters of one size to materialize
+    :param verbose: Show a progress bar if nonzero
+    :returns: Constructed :class:`~crystalatte.core.multimer.Multimer` objects, in the order of ``clusters``
     """
-    refs = g_N.ref_indices
-    ops = list(g_N)
+    if not clusters:
+        return []
+    rot = np.stack([g.rot_cache for g in clusters])
+    tr = np.stack([g.tr_cache for g in clusters]) / 12
+    refs = np.stack([g.ref_indices for g in clusters])
+    U, n = refs.shape
+    F2C = context.active_crystal.lattice_vectors  # the matrix to_cartesian applies
 
-    mons: list[Monomer] = []
-    for k, g in enumerate(ops):
-        base = context.references[refs[k]]
-        mon_frac = g.apply(base.frac_coords)
-        mon_cart = context.active_crystal.to_cartesian(mon_frac)
-        com_frac = g.apply(base.centroid_frac)
-        com_cart = context.active_crystal.to_cartesian(com_frac)
-        mons.append(Monomer(base.symbols, mon_frac, mon_cart, com_frac, com_cart, g))
-    return Multimer(mons, g_N, g_N.multiplicity)
+    frac: list[list[NDArray]] = [[None] * n for _ in range(U)]
+    cart: list[list[NDArray]] = [[None] * n for _ in range(U)]
+    com_frac = np.empty((U, n, 3))
+    com_cart = np.empty((U, n, 3))
+    for k in range(n):
+        for r in np.unique(refs[:, k]).tolist():
+            at = np.flatnonzero(refs[:, k] == r)
+            base = context.references[r]
+            f = np.swapaxes(rot[at, k] @ base.frac_coords.T, 1, 2) + tr[at, k, None]
+            c = np.swapaxes(F2C @ np.swapaxes(f, 1, 2), 1, 2)
+            com_frac[at, k] = rot[at, k] @ base.centroid_frac + tr[at, k]
+            com_cart[at, k] = (F2C @ com_frac[at, k, :, None])[:, :, 0]
+            for a, u in enumerate(at.tolist()):
+                frac[u][k], cart[u][k] = f[a], c[a]
+
+    # geometric mean of the centroid distances, in pdist's pair order and arithmetic
+    i, j = np.triu_indices(n, 1)
+    d = com_cart[:, i] - com_cart[:, j]
+    prods = np.prod(np.sqrt(d[..., 0] * d[..., 0] + d[..., 1] * d[..., 1] + d[..., 2] * d[..., 2]), axis=1)
+
+    out = []
+    for u, g_N in enumerate(
+        tqdm(clusters, desc="Processing unique multimers", leave=False, disable=not verbose)
+    ):
+        mons = [
+            Monomer(context.references[refs[u, k]].symbols, frac[u][k], cart[u][k], com_frac[u, k], com_cart[u, k], g)
+            for k, g in enumerate(g_N.sym_ops)
+        ]
+        out.append(Multimer.from_parts(mons, g_N, g_N.multiplicity, float(prods[u] ** (1 / len(i)))))
+    return out
 
 
 def generate(
@@ -95,13 +127,4 @@ def generate(
     unique_neighbors = generate_neighbors(crystal, monomers, bounds, R, N, **kwargs)
 
     # process each unique multimer into a Multimer object
-    return [
-        _process_multimer(g_N)
-        for g_N in tqdm(
-            unique_neighbors,
-            total=len(unique_neighbors),
-            desc="Processing unique multimers",
-            leave=False,
-            disable=not kwargs.get("verbose", 1),
-        )
-    ]
+    return _process_multimers(unique_neighbors, kwargs.get("verbose", 1))
