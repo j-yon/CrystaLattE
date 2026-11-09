@@ -118,6 +118,25 @@ class Multimer:
         dists = pdist([m._centroid_cart for m in self._monomers])
         self._geometric_mean = float(np.prod(dists) ** (1 / len(dists)))
 
+    @classmethod
+    def from_parts(
+        cls, monomers: list[Monomer], sym_ops: SymOpList, multiplicity: int, geometric_mean: float
+    ) -> Multimer:
+        """Create a :class:`Multimer` whose geometric mean was already computed
+
+        :param monomers: :class:`Monomer` instances making up the multimer
+        :param sym_ops: :class:`SymOp` instances that generate the multimer
+        :param multiplicity: How many times the multimer occurs in the crystal by symmetry
+        :param geometric_mean: Geometric mean of the inter-monomer centroid distances, as ``__post_init__`` computes it
+        :returns: the :class:`Multimer`
+        """
+        multimer = cls.__new__(cls)
+        multimer._monomers = monomers
+        multimer._sym_ops = sym_ops
+        multimer._multiplicity = multiplicity
+        multimer._geometric_mean = geometric_mean
+        return multimer
+
     def __eq__(self, value: object, /) -> bool:
         if not isinstance(value, Multimer):
             return NotImplemented
