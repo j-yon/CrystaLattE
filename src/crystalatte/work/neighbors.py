@@ -162,15 +162,29 @@ class Candidates:
         :param multiplicities: ``(K,)`` multiplicity to give each
         :returns: the clusters in the order of ``ks``, each with its anchor first
         """
+        rot, tr, ref = self.arrays(ks)
+        return [
+            SymOpList.from_components(rot[n], tr[n], int(m), ref[n])
+            for n, m in enumerate(multiplicities.tolist())
+        ]
+
+    def arrays(self, ks: NDArray) -> tuple[NDArray, NDArray, NDArray]:
+        """Return the stacked member arrays of clusters ``ks``, gathering each table's members at once
+
+        :param ks: ``(K,)`` cluster indices across all tables
+        :returns: ``(rot, tr, ref)`` of shapes ``(K, N, 3, 3)``, ``(K, N, 3)`` and ``(K, N)``, each cluster's
+            anchor first
+        """
+        N = self.members[0].shape[1]
+        rot = np.empty((len(ks), N, 3, 3), dtype=self.rot[0].dtype)
+        tr = np.empty((len(ks), N, 3), dtype=self.tr[0].dtype)
+        ref = np.empty((len(ks), N), dtype=np.int64)
         table = np.searchsorted(self._offsets, ks, side="right") - 1
-        out: list[SymOpList | None] = [None] * len(ks)
         for i in np.unique(table).tolist():
             at = np.flatnonzero(table == i)
             rows = self.members[i][ks[at] - self._offsets[i]]
-            rot, tr, ref = self.rot[i][rows], self.tr[i][rows], self.ref[i][rows]
-            for n, a in enumerate(at.tolist()):
-                out[a] = SymOpList.from_components(rot[n], tr[n], int(multiplicities[a]), ref[n])
-        return out
+            rot[at], tr[at], ref[at] = self.rot[i][rows], self.tr[i][rows], self.ref[i][rows]
+        return rot, tr, ref
 
 
 def enumerate_candidates(
@@ -332,7 +346,7 @@ def generate_neighbors(
         return []
 
     # exact pass: clusters sharing an orbit label are the same multimer
-    labels = labels_from_keys(candidates.group, candidates.keys, candidates.cluster)
+    labels = labels_from_keys(candidates.group, candidates.keys, candidates.arrays)
     rep, multiplicity = representatives(labels, candidates.tnorm)
 
     if kwargs.get("verbose", 1):

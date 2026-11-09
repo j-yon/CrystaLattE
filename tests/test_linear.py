@@ -268,7 +268,7 @@ def test_orbit_labels_keeps_frame_labels_on_overflow(monkeypatch):
     def _overflow(*args):
         raise OverflowError("dot-product formulas would overflow int64")
 
-    monkeypatch.setattr(dotkey, "dot_keys", _overflow)
+    monkeypatch.setattr(dotkey, "dot_keys_arrays", _overflow)
     with pytest.warns(RuntimeWarning, match="overflow"):
         labels = invariants.orbit_labels(cands)
     assert np.array_equal(labels, frame.ravel())

@@ -29,6 +29,9 @@ def int_inv(M: NDArray) -> NDArray:
 #: dressed rows materialised per chunk in :func:`_dressed_minima`; bounds its intermediates to ~100 MB
 DRESS_CHUNK_ROWS: Final[int] = 1 << 19
 
+#: returns the stacked ``(rot (K, n, 3, 3), tr (K, n, 3), ref (K, n))`` member arrays of clusters ``ks``
+Gather = Callable[[NDArray], tuple[NDArray, NDArray, NDArray]]
+
 
 def lex_codes(rows: NDArray) -> NDArray:
     """Return order-preserving int64 codes for the rows of an integer array
@@ -187,21 +190,21 @@ def chunk_keys(codes: NDArray, edges: NDArray, refs: NDArray) -> tuple[NDArray, 
 
         # lexicographic minimum over (anchor, anchor dressing) for each cluster, one slot at a time: a row
         # stays in the running while it ties the minimum of every slot so far
-        keys[rows] = _segmented_lexmin(K.reshape(len(rows), c * S, n - 1))
+        keys[rows] = segmented_lexmin(K.reshape(len(rows), c * S, n - 1))
     return group, keys
 
 
-def _segmented_lexmin(rows: NDArray) -> NDArray:
+def segmented_lexmin(rows: NDArray) -> NDArray:
     """Return the lexicographically smallest row of each segment, without sorting
 
-    :param rows: ``(C, m, k)`` int32 array, ``m`` rows of ``k`` codes per segment, all below ``2**31 - 1``
-    :returns: ``(C, k)`` int32 minima
+    :param rows: ``(C, m, k)`` integer array, ``m`` rows of ``k`` entries per segment, all below the dtype's maximum
+    :returns: ``(C, k)`` minima, same dtype
     """
     C, _, k = rows.shape
-    out = np.empty((C, k), dtype=np.int32)
+    out = np.empty((C, k), dtype=rows.dtype)
     alive = None
     for j in range(k):
-        col = rows[:, :, j] if alive is None else np.where(alive, rows[:, :, j], np.iinfo(np.int32).max)
+        col = rows[:, :, j] if alive is None else np.where(alive, rows[:, :, j], np.iinfo(rows.dtype).max)
         out[:, j] = col.min(axis=1)
         tied = col == out[:, j, None]
         alive = tied if alive is None else alive & tied
@@ -236,12 +239,21 @@ def _group_keys(cands: list[SymOpList], refs: tuple[int, ...]) -> NDArray:
     return _list_keys(cands)[1]
 
 
-def labels_from_keys(group: NDArray, keys: NDArray, cluster: Callable[[int], SymOpList]) -> NDArray:
+def _stack(cands: list[SymOpList]) -> tuple[NDArray, NDArray, NDArray]:
+    """Return the stacked ``(rot, tr, ref)`` member arrays of a list of clusters of one size"""
+    return (
+        np.stack([g.rot_cache for g in cands]),
+        np.stack([g.tr_cache for g in cands]),
+        np.stack([g.ref_indices for g in cands]),
+    )
+
+
+def labels_from_keys(group: NDArray, keys: NDArray, gather: Gather) -> NDArray:
     """Label clusters from their :func:`chunk_keys`, merging all-linear groups by the dot-product key
 
     :param group: ``(N,)`` group codes
     :param keys: ``(N, n - 1)`` orbit keys
-    :param cluster: returns cluster ``k`` as a :class:`SymOpList`, for the dot-product key
+    :param gather: returns the stacked member arrays of clusters ``ks``, for the dot-product key
     :returns: an ``(N,)`` int64 array of labels
     """
     labels = np.empty(len(group), dtype=np.int64)
@@ -252,7 +264,7 @@ def labels_from_keys(group: NDArray, keys: NDArray, cluster: Callable[[int], Sym
         _, inverse = np.unique(keys[idx], axis=0, return_inverse=True)
         inverse = inverse.ravel()
         if all(context.linear_by_ref[r] for r in refs):
-            inverse = _merge_by_dot_key(idx, refs, inverse, cluster)
+            inverse = _merge_by_dot_key(idx, refs, inverse, gather)
         labels[idx] = inverse + n_labels
         n_labels += int(inverse.max()) + 1
     return labels
@@ -282,26 +294,26 @@ def orbit_labels(candidates: list[SymOpList]) -> NDArray:
     if not candidates:
         return np.empty(0, dtype=np.int64)
     group, keys = _list_keys(candidates)
-    return labels_from_keys(group, keys, candidates.__getitem__)
+    return labels_from_keys(group, keys, lambda ks: _stack([candidates[k] for k in ks.tolist()]))
 
 
 def _merge_by_dot_key(
-    idx: NDArray, refs: tuple[int, ...], frame: NDArray, cluster: Callable[[int], SymOpList]
+    idx: NDArray, refs: tuple[int, ...], frame: NDArray, gather: Gather
 ) -> NDArray:
     """Coarsen the frame labels of an all-linear group to its dot-key classes
 
     Every frame class is one multimer, so only its first cluster is keyed (:func:`.dotkey.dot_keys`).
     If the key could overflow int64, the frame labels are kept and a :class:`RuntimeWarning` is raised.
 
-    :param idx: ``(N,)`` indices of the group's clusters, passed to ``cluster``
+    :param idx: ``(N,)`` indices of the group's clusters, passed to ``gather``
     :param refs: their base references sorted by ``context.anchor_rank``, every one linear
     :param frame: ``(N,)`` frame labels of the group, numbered ``0..m-1``
-    :param cluster: returns cluster ``k`` as a :class:`SymOpList`
+    :param gather: returns the stacked member arrays of clusters ``ks``
     :returns: ``(N,)`` labels numbered ``0..k-1``, ``k <= m``
     """
     _, first = np.unique(frame, return_index=True)
     try:
-        keys = dotkey.dot_keys([cluster(int(idx[i])) for i in first], refs)
+        keys = dotkey.dot_keys_arrays(*gather(idx[first]), refs)
     except OverflowError as err:
         warnings.warn(
             f"{err} for references {refs}; keeping their frame key, which may leave duplicates",
