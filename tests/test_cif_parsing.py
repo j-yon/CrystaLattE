@@ -390,6 +390,17 @@ def _write_cif(tmp_path, symmetry: str, name: str = "probe"):
     return str(path)
 
 
+def test_repr_of_crystal_whose_group_comes_only_from_listed_ops(tmp_path):
+    crystal = next(cle.from_cif(_write_cif(tmp_path, """
+loop_
+_symmetry_equiv_pos_as_xyz
+x,y,z
+-x,-y,-z
+""")))
+    assert crystal.space_group.number is None
+    assert "Crystal" in repr(crystal)
+
+
 def test_accepts_cif1_symmetry_field_names(tmp_path):
     crystal = next(cle.from_cif(_write_cif(tmp_path, """
 _symmetry_int_tables_number       19

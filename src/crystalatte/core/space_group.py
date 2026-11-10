@@ -110,7 +110,11 @@ class SpaceGroup:
         return f"SpaceGroup(number={self._number}, symbol='{self._symbol}')"
 
     def __str__(self) -> str:
-        return f"Space Group {self._number} ({self._symbol}) - {self._crystal_system.name.capitalize()}"
+        number = self._number if self._number is not None else "unknown"
+        text = f"Space Group {number} ({self._symbol})"
+        if self._crystal_system is not None:
+            text += f" - {self._crystal_system.name.capitalize()}"
+        return text
 
     def __reduce__(self):
         if getattr(self, "_detected", False):

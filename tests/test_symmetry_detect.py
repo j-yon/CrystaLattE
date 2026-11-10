@@ -16,6 +16,16 @@ def test_from_sym_ops_holds_explicit_ops():
     assert SpaceGroup(2) is not sg
 
 
+def test_str_of_group_built_from_ops_without_number():
+    sg = SpaceGroup.from_sym_ops([SymOp.identity(), SymOp("-x,-y,-z")])
+    assert "Space Group" in str(sg)
+
+
+def test_str_of_detected_group_names_its_number():
+    sg = SpaceGroup.from_sym_ops([SymOp.identity(), SymOp("-x,-y,-z")], number=2)
+    assert "2" in str(sg)
+
+
 def test_from_sym_ops_pickles_with_its_ops():
     # a pickled detected group (e.g. a Crystal sent to another process) must keep
     # their explicit input-basis ops, NOT reload the DB standard setting.
