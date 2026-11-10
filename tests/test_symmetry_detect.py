@@ -187,3 +187,37 @@ def test_detection_keeps_declared_symmetry_when_origin_cannot_be_moved(tmp_path,
     monkeypatch.setattr(spglib, "get_symmetry_dataset", boom)
     with pytest.warns(RuntimeWarning, match="twelfths grid"):
         assert shifted.detect_symmetry() is shifted
+
+
+def _loosely_shifted_succinic_acid(tmp_path):
+    import crystalatte as cle
+
+    original = load("succinic_acid")
+    path = _p1_cif_with_shifted_origin(
+        original, np.array([0.001, 0.0015, 0.002]), tmp_path / "shifted.cif"
+    )
+    return original, next(cle.from_cif(path))
+
+
+def test_loose_symprec_still_moves_an_off_grid_origin(tmp_path):
+    # the rounding error here (~0.02 A) is below symprec = 0.05; the origin must move anyway
+    # rather than the translation being rounded
+    _, shifted = _loosely_shifted_succinic_acid(tmp_path)
+    detected = shifted.detect_symmetry(symprec=0.05)
+    assert len(detected.space_group.sym_ops) == 4
+    assert not np.allclose(detected._asu.positions, shifted._asu.positions)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="detected symmetry is applied to the declared (P1) ASU without reducing it; atoms "
+    "that deviate from the detected symmetry by more than expand_cell's 1e-3 fractional merge "
+    "tolerance but less than symprec expand into near-duplicate images",
+)
+def test_loose_symprec_keeps_monomers_whole(tmp_path):
+    import crystalatte as cle
+
+    original, shifted = _loosely_shifted_succinic_acid(tmp_path)
+    n_atoms = len(original.get_references()[0].symbols)
+    dimers = cle.generate(shifted, N=2, R=6.0, verbose=0, symprec=0.05)
+    assert {len(m.symbols) for d in dimers for m in d.monomers} == {n_atoms}

@@ -30,6 +30,12 @@ class DisorderState:
     groups: tuple[tuple[str, str], ...] = ()
 
 
+# largest Cartesian move (Angstroms) a detected translation may take when rounded to twelfths.
+# spglib returns exactly symmetrised translations (~1e-14 A off the grid for a standard origin),
+# so this is independent of symprec: a loose symprec must not license rounding an origin offset
+_GRID_ATOL = 1e-4
+
+
 def _on_twelfths(sym: dict, lattice: NDArray[np.float64]) -> tuple[list[SymOp], float]:
     """Convert ``spglib`` operations to :class:`SymOp` with translations in twelfths
 
@@ -484,7 +490,7 @@ class Crystal:
 
         # an origin off the twelfths grid (e.g. a P1 CIF from a relaxation) puts the detected
         # translations between twelfths; move the origin to spglib's standard one and retry
-        if offgrid > symprec:
+        if offgrid > _GRID_ATOL:
             try:
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
@@ -510,7 +516,7 @@ class Crystal:
                 return self
             detected, offgrid = _on_twelfths(sym, lattice)
             declared, declared_off = _shift_ops(declared, shift, lattice)
-            if max(offgrid, declared_off) > symprec:
+            if max(offgrid, declared_off) > _GRID_ATOL:
                 warnings.warn(
                     "Symmetry detection could not place the origin on the twelfths grid, "
                     "using declared symmetry",
