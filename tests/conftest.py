@@ -5,7 +5,7 @@ import pytest
 
 import crystalatte as cle
 
-# root of fixture tree, crystals live in x23/ and other/
+# root of fixture tree, crystals live in x23/, other/ and cocrystals/
 DATA = Path(__file__).parent
 
 GENERATE_KW = {"use_origin": True, "verbose": 0}
@@ -30,7 +30,7 @@ def cif(name: str) -> str:
     :returns: absolute path to ``<name>/<name>.cif`` as a string
     :raises FileNotFoundError: if there is no such fixture directory, or it does not hold a CIF
     """
-    for sub_dir in ("x23", "other"):
+    for sub_dir in ("x23", "other", "cocrystals"):
         folder = DATA / sub_dir / name
         if not folder.is_dir():
             continue
@@ -43,7 +43,7 @@ def cif(name: str) -> str:
             f"{name}.cif" + (f" (found {others})" if others else " at all")
         )
     available = sorted(
-        p.name for d in ("x23", "other") for p in (DATA / d).iterdir() if p.is_dir()
+        p.name for d in ("x23", "other", "cocrystals") for p in (DATA / d).iterdir() if p.is_dir()
     )
     raise FileNotFoundError(
         f"no CIF fixture named {name!r}; available fixtures are {available}"

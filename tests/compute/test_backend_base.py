@@ -72,7 +72,7 @@ def test_psi4_input_contains_tight_defaults(tmp_path, benzene):
     assert "'freeze_core': 'true'" in text
 
 
-COCRYSTAL = Path(__file__).parents[1] / "other/salicylic_hydroxybenzamide/salicylic_hydroxybenzamide.cif"
+COCRYSTAL = Path(__file__).parents[1] / "cocrystals/salicylic_hydroxybenzamide/salicylic_hydroxybenzamide.cif"
 
 
 def _closest_atoms(multimer) -> float:

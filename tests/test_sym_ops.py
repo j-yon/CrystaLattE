@@ -14,7 +14,7 @@ from crystalatte.core.sym_ops import SymOp
 
 from conftest import DATA, GENERATE_KW, crystal
 
-FIXTURES = sorted(p.name for sub in ("x23", "other") for p in (DATA / sub).iterdir() if p.is_dir())
+FIXTURES = sorted(p.name for sub in ("x23", "other", "cocrystals") for p in (DATA / sub).iterdir() if p.is_dir())
 
 
 def _table_ops() -> list[str]:

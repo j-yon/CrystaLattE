@@ -61,8 +61,9 @@ a dressing is only accepted when it is an exact symmetry of its monomer
 
 ## Fixtures and shared helpers
 
-Crystals live in `x23/` (23 benchmark molecular crystals) and `other/`
-(fomepizole, `Z′ = 3`; hydroxyurea). `conftest.py` resolves them by bare name so
+Crystals live in `x23/` (23 benchmark molecular crystals), `other/`
+(fomepizole, `Z′ = 3`; hydroxyurea) and `cocrystals/` (multi-component crystals,
+e.g. salicylic acid : 4-hydroxybenzamide). `conftest.py` resolves them by bare name so
 no test needs to know which directory a crystal is in:
 
 ```python
