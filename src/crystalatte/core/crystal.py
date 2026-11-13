@@ -30,6 +30,54 @@ class DisorderState:
     groups: tuple[tuple[str, str], ...] = ()
 
 
+# largest Cartesian move (Angstroms) a detected translation may take when rounded to twelfths.
+# spglib returns exactly symmetrised translations (~1e-14 A off the grid for a standard origin),
+# so this is independent of symprec: a loose symprec must not license rounding an origin offset
+_GRID_ATOL = 1e-4
+
+
+def _on_twelfths(sym: dict, lattice: NDArray[np.float64]) -> tuple[list[SymOp], float]:
+    """Convert ``spglib`` operations to :class:`SymOp` with translations in twelfths
+
+    :param sym: Output of ``spglib.get_symmetry``
+    :param lattice: Lattice vectors as rows, in Angstroms
+    :returns: The operations, and the largest Cartesian distance (Angstroms) a translation moved
+        when rounded to the grid
+    """
+    ops, worst = [], 0.0
+    for r, t in zip(sym["rotations"], sym["translations"]):
+        t = np.asarray(t, dtype=float)
+        twelfths = np.round(t * 12)
+        worst = max(worst, float(np.linalg.norm((t - twelfths / 12) @ lattice)))
+        ops.append(
+            SymOp.from_components(
+                np.asarray(r, dtype=np.int16), twelfths.astype(np.int16)
+            )
+        )
+    return ops, worst
+
+
+def _shift_ops(
+    ops: list[SymOp], shift: NDArray[np.float64], lattice: NDArray[np.float64]
+) -> tuple[list[SymOp], float]:
+    """Express operations about an origin moved by ``-shift``, i.e. for coordinates ``x + shift``
+
+    :param ops: Operations about the old origin
+    :param shift: Fractional vector added to every coordinate
+    :param lattice: Lattice vectors as rows, in Angstroms
+    :returns: The operations about the new origin, and the largest Cartesian distance
+        (Angstroms) a translation moved when rounded to the twelfths grid
+    """
+    out, worst = [], 0.0
+    for op in ops:
+        rot = np.asarray(op.rot, dtype=float)
+        t = np.asarray(op.tr, dtype=float) / 12 + (np.eye(3) - rot) @ shift
+        twelfths = np.round(t * 12)
+        worst = max(worst, float(np.linalg.norm((t - twelfths / 12) @ lattice)))
+        out.append(SymOp.from_components(op.rot, twelfths.astype(np.int16)))
+    return out, worst
+
+
 def expand_cell(
     positions: NDArray[np.float64], symbols: list[str], sym_ops: list[SymOp]
 ) -> tuple[NDArray[np.float64], NDArray[np.str_], NDArray[np.intp]]:
@@ -393,7 +441,9 @@ class Crystal:
     def detect_symmetry(self, symprec: float = 1e-3) -> Crystal:
         """Attempt to detect a higher space group with ``spglib``. CIFs often declare a lower symmetry 
         than is actually present, which interferes with symmetry-based deduplication, so we try to
-        detect the true symmetry before proceeding
+        detect the true symmetry before proceeding. If the detected translations fall between
+        twelfths (an arbitrary origin, as in P1 CIFs from relaxations), the returned crystal is
+        rigidly translated onto ``spglib``'s standard origin; if that fails, ``self`` is returned
 
         :param symprec: ``spglib`` symmetry tolerance
         :returns: Equivalent :class:`Crystal` with higher symmetry, or ``self``
@@ -434,14 +484,47 @@ class Crystal:
             )
             return self
 
-        detected = [
-            SymOp.from_components(
-                np.asarray(r, dtype=np.int16),
-                np.round(np.asarray(t) * 12).astype(np.int16),
-            )
-            for r, t in zip(sym["rotations"], sym["translations"])
-        ]
+        asu = self._asu
         declared = self._space_group.sym_ops
+        detected, offgrid = _on_twelfths(sym, lattice)
+
+        # an origin off the twelfths grid (e.g. a P1 CIF from a relaxation) puts the detected
+        # translations between twelfths; move the origin to spglib's standard one and retry
+        if offgrid > _GRID_ATOL:
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    ds = spglib.get_symmetry_dataset(
+                        (lattice, positions, numbers), symprec=symprec
+                    )
+                    shift = np.linalg.solve(
+                        np.asarray(ds.transformation_matrix, dtype=float),
+                        np.asarray(ds.origin_shift, dtype=float),
+                    )
+                    sym = spglib.get_symmetry(
+                        (lattice, positions + shift, numbers), symprec=symprec
+                    )
+            except Exception:
+                sym = None
+            if sym is None:
+                warnings.warn(
+                    "Symmetry detection could not place the origin on the twelfths grid, "
+                    "using declared symmetry",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                return self
+            detected, offgrid = _on_twelfths(sym, lattice)
+            declared, declared_off = _shift_ops(declared, shift, lattice)
+            if max(offgrid, declared_off) > _GRID_ATOL:
+                warnings.warn(
+                    "Symmetry detection could not place the origin on the twelfths grid, "
+                    "using declared symmetry",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                return self
+            asu = ASU(list(asu.atoms), np.asarray(asu.positions) + shift)
 
         # if detected symmetry is <= declared, return with declared symmetry
         if len(detected) <= len(declared):
@@ -480,4 +563,4 @@ class Crystal:
             number = None
 
         new_sg = SpaceGroup.from_sym_ops(detected, number=number)
-        return Crystal(self._vectors, self._angles, new_sg, self._asu, self._state)
+        return Crystal(self._vectors, self._angles, new_sg, asu, self._state)

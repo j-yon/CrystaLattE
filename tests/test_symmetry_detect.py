@@ -125,3 +125,109 @@ def test_generate_detection_uses_single_reference_path_ammonia():
 def test_generate_benzene_regression_with_detection():
     crystal = load("benzene")
     assert len(generate.generate(crystal, 2, 5.0, use_origin=True)) == 3
+
+
+def _p1_cif_with_shifted_origin(crystal, shift, path):
+    """Write ``crystal`` as a P1 CIF with every atom moved by ``shift`` (fractional)."""
+    from crystalatte.core.crystal import expand_cell
+
+    positions, symbols, _ = expand_cell(
+        crystal._asu.positions, crystal._asu.atoms, crystal.space_group.sym_ops
+    )
+    (a, b, c), (alpha, beta, gamma) = crystal.lattice_parameters
+    lines = [
+        "data_shifted",
+        f"_cell_length_a {a:.6f}",
+        f"_cell_length_b {b:.6f}",
+        f"_cell_length_c {c:.6f}",
+        f"_cell_angle_alpha {alpha:.6f}",
+        f"_cell_angle_beta {beta:.6f}",
+        f"_cell_angle_gamma {gamma:.6f}",
+        "loop_",
+        "_symmetry_equiv_pos_as_xyz",
+        "x,y,z",
+        "loop_",
+        "_atom_site_label",
+        "_atom_site_type_symbol",
+        "_atom_site_fract_x",
+        "_atom_site_fract_y",
+        "_atom_site_fract_z",
+    ]
+    for i, (sym, pos) in enumerate(zip(symbols, (positions + shift) % 1.0)):
+        lines.append(f"{sym}{i + 1} {sym} {pos[0]:.9f} {pos[1]:.9f} {pos[2]:.9f}")
+    path.write_text("\n".join(lines) + "\n")
+    return str(path)
+
+
+def test_detection_survives_an_origin_off_the_twelfths_grid(tmp_path):
+    # succinic acid sits on an inversion centre (P2_1/c, Z' = 1/2). Written in P1 with an
+    # arbitrary origin, the detected inversion's translation falls between twelfths; rounding
+    # it used to overlay each molecule with a copy offset by about 0.1 A
+    import crystalatte as cle
+
+    original = load("succinic_acid")
+    path = _p1_cif_with_shifted_origin(
+        original, np.array([0.0137, 0.0291, 0.0423]), tmp_path / "shifted.cif"
+    )
+    shifted = next(cle.from_cif(path))
+
+    detected = shifted.detect_symmetry()
+    assert len(detected.space_group.sym_ops) == 4
+
+    n_atoms = len(original.get_references()[0].symbols)
+    dimers = cle.generate(shifted, N=2, R=6.0, verbose=0)
+    assert {len(m.symbols) for d in dimers for m in d.monomers} == {n_atoms}
+    assert len(dimers) == len(cle.generate(original, N=2, R=6.0, verbose=0))
+
+
+def test_detection_keeps_declared_symmetry_when_origin_cannot_be_moved(tmp_path, monkeypatch):
+    import spglib
+
+    import crystalatte as cle
+
+    original = load("succinic_acid")
+    path = _p1_cif_with_shifted_origin(
+        original, np.array([0.0137, 0.0291, 0.0423]), tmp_path / "shifted.cif"
+    )
+    shifted = next(cle.from_cif(path))
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("no dataset")
+
+    monkeypatch.setattr(spglib, "get_symmetry_dataset", boom)
+    with pytest.warns(RuntimeWarning, match="twelfths grid"):
+        assert shifted.detect_symmetry() is shifted
+
+
+def _loosely_shifted_succinic_acid(tmp_path):
+    import crystalatte as cle
+
+    original = load("succinic_acid")
+    path = _p1_cif_with_shifted_origin(
+        original, np.array([0.001, 0.0015, 0.002]), tmp_path / "shifted.cif"
+    )
+    return original, next(cle.from_cif(path))
+
+
+def test_loose_symprec_still_moves_an_off_grid_origin(tmp_path):
+    # the rounding error here (~0.02 A) is below symprec = 0.05; the origin must move anyway
+    # rather than the translation being rounded
+    _, shifted = _loosely_shifted_succinic_acid(tmp_path)
+    detected = shifted.detect_symmetry(symprec=0.05)
+    assert len(detected.space_group.sym_ops) == 4
+    assert not np.allclose(detected._asu.positions, shifted._asu.positions)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="detected symmetry is applied to the declared (P1) ASU without reducing it; atoms "
+    "that deviate from the detected symmetry by more than expand_cell's 1e-3 fractional merge "
+    "tolerance but less than symprec expand into near-duplicate images",
+)
+def test_loose_symprec_keeps_monomers_whole(tmp_path):
+    import crystalatte as cle
+
+    original, shifted = _loosely_shifted_succinic_acid(tmp_path)
+    n_atoms = len(original.get_references()[0].symbols)
+    dimers = cle.generate(shifted, N=2, R=6.0, verbose=0, symprec=0.05)
+    assert {len(m.symbols) for d in dimers for m in d.monomers} == {n_atoms}
